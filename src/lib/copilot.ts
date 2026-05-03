@@ -801,6 +801,9 @@ function toUserQuotaResultFromCopilotInternal(response: unknown): CopilotQuotaRe
     ["quota_limit"],
     ["monthly_limit"],
     ["included_premium_requests"],
+    // Copilot Free tier: `monthly_quotas.chat` and `monthly_quotas.completions`
+    ["monthly_quotas", "chat"],
+    ["monthly_quotas", "completions"],
   ];
   const usedPaths = [
     ["quota", "used"],
@@ -823,6 +826,9 @@ function toUserQuotaResultFromCopilotInternal(response: unknown): CopilotQuotaRe
     ["quota_remaining"],
     ["monthly_remaining"],
     ["premium_requests_remaining"],
+    // Copilot Free tier: `limited_user_quotas` tracks remaining
+    ["limited_user_quotas", "chat"],
+    ["limited_user_quotas", "completions"],
   ];
   const resetPaths = [
     ["quota", "reset_at"],
@@ -833,6 +839,8 @@ function toUserQuotaResultFromCopilotInternal(response: unknown): CopilotQuotaRe
     ["quota_reset_date_utc"],
     ["quota_reset_date"],
     ["quota_reset_at"],
+    // Copilot Free tier
+    ["limited_user_reset_date"],
   ];
   const percentRemainingPaths = [
     ["quota", "percent_remaining"],
