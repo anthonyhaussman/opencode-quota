@@ -70,21 +70,30 @@
   "homepage": "https://github.com/slkiser/opencode-quota#readme",
   "devDependencies": {
     "@opencode-ai/plugin": "^1.4.3",
+    "@opentui/core": "^0.2.7",
+    "@opentui/solid": "^0.2.7",
     "@types/node": "^22.0.0",
     "husky": "^9.1.7",
     "lint-staged": "^16.2.7",
     "prettier": "^3.8.0",
+    "solid-js": "^1.9.12",
     "typescript": "^5.8.0",
     "vitest": "^4.0.17",
     "zod": "4.1.8"
   },
   "dependencies": {
     "@clack/prompts": "^1.2.0",
+    "comment-json": "^5.0.0",
+    "xdg-basedir": "^5.1.0"
+  },
+  "overrides": {
+    "zod": "4.1.8"
+  },
+  "peerDependencies": {
+    "@opencode-ai/plugin": "^1.4.3",
     "@opentui/core": "^0.2.7",
     "@opentui/solid": "^0.2.7",
-    "comment-json": "^5.0.0",
-    "solid-js": "^1.9.12",
-    "xdg-basedir": "^5.1.0"
+    "solid-js": "^1.9.12"
   },
   "overrides": {
     "zod": "4.1.8"
