@@ -7,7 +7,7 @@ import { isCanonicalAccountingDecimal } from "../lib/accounting-format.js";
 import { API_KEY_VENDORS, hasVendorKey, readVendorKeys } from "../lib/api-key-resolver.js";
 import { sanitizeDisplaySnippet, sanitizeDisplayText } from "../lib/display-sanitize.js";
 import type { QuotaProvider, QuotaProviderContext } from "../lib/entries.js";
-import { fetchWithTimeout } from "../lib/http.js";
+import { requestJson } from "../lib/http.js";
 import { isRecord, nonEmptyString } from "../lib/json-guards.js";
 import { isCanonicalProviderAvailable } from "../lib/provider-availability.js";
 import { modelProviderIncludesAny } from "../lib/provider-model-matching.js";
@@ -92,24 +92,24 @@ async function queryDeepSeekBalance(
   apiKey: string,
   requestTimeoutMs?: number,
 ): Promise<DeepSeekBalance | QuotaError> {
+  const reply = await requestJson(DEEPSEEK_BALANCE_URL, {
+    method: "GET",
+    headers: { Authorization: `Bearer ${apiKey}`, "User-Agent": USER_AGENT },
+    secrets: [apiKey],
+    timeoutMs: requestTimeoutMs,
+  });
+  if (!reply.ok) {
+    const { failure } = reply;
+    return {
+      success: false,
+      error:
+        failure.kind === "http"
+          ? `DeepSeek API error ${failure.status}: ${sanitizeDisplaySnippet(failure.detail, 120)}`
+          : failure.detail,
+    };
+  }
   try {
-    return await fetchWithTimeout(DEEPSEEK_BALANCE_URL, {
-      request: {
-        method: "GET",
-        headers: { Authorization: `Bearer ${apiKey}`, "User-Agent": USER_AGENT },
-      },
-      timeoutMs: requestTimeoutMs,
-      consume: async (response): Promise<DeepSeekBalance | QuotaError> => {
-        if (!response.ok) {
-          const text = await response.text();
-          return {
-            success: false,
-            error: `DeepSeek API error ${response.status}: ${sanitizeDisplaySnippet(text, 120)}`,
-          };
-        }
-        return parseDeepSeekBalance(await response.json());
-      },
-    });
+    return parseDeepSeekBalance(reply.json);
   } catch (err) {
     return {
       success: false,

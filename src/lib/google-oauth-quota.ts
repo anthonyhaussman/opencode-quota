@@ -8,7 +8,7 @@ import {
   makeAccountCacheKey,
   setCachedAccessToken,
 } from "./google-token-cache.js";
-import { fetchWithTimeout } from "./http.js";
+import { requestJson } from "./http.js";
 import { nonEmptyString } from "./json-guards.js";
 import {
   activeCredentialRowsAuthData,
@@ -271,43 +271,35 @@ async function refreshAccessToken(
   credentials: GoogleCompanionConfiguredCredentials,
   timeoutMs: number | undefined,
 ): Promise<{ accessToken: string; expiresIn: number } | { error: string }> {
+  const reply = await requestJson(TOKEN_REFRESH_URL, {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams({
+      client_id: credentials.clientId,
+      client_secret: credentials.clientSecret,
+      refresh_token: refreshToken,
+      grant_type: "refresh_token",
+    }),
+    secrets: [credentials.clientSecret, refreshToken],
+    timeoutMs: timeoutMs ?? TOKEN_TIMEOUT_MS,
+  });
+  if (reply.ok) {
+    const data = reply.json as { access_token: string; expires_in: number } | null;
+    if (!data) return { error: "Token refresh failed" };
+    return { accessToken: data.access_token, expiresIn: data.expires_in };
+  }
+  const { failure } = reply;
+  if (failure.kind === "timeout") return { error: "Token refresh timeout" };
+  if (failure.kind !== "http") return { error: "Token refresh failed" };
   try {
-    return await fetchWithTimeout(TOKEN_REFRESH_URL, {
-      request: {
-        method: "POST",
-        headers: { "Content-Type": "application/x-www-form-urlencoded" },
-        body: new URLSearchParams({
-          client_id: credentials.clientId,
-          client_secret: credentials.clientSecret,
-          refresh_token: refreshToken,
-          grant_type: "refresh_token",
-        }),
-      },
-      timeoutMs: timeoutMs ?? TOKEN_TIMEOUT_MS,
-      consume: async (response, timeoutSignal) => {
-        if (!response.ok) {
-          try {
-            const errorData = (await response.json()) as {
-              error?: string;
-              error_description?: string;
-            };
-            if (errorData.error === "invalid_grant") return { error: "Token revoked" };
-            return { error: errorData.error_description || `HTTP ${response.status}` };
-          } catch (error) {
-            if (timeoutSignal.aborted) throw error;
-            return { error: `HTTP ${response.status}` };
-          }
-        }
-
-        const data = (await response.json()) as { access_token: string; expires_in: number };
-        return { accessToken: data.access_token, expiresIn: data.expires_in };
-      },
-    });
-  } catch (err) {
-    if (err instanceof Error && err.message.includes("timeout")) {
-      return { error: "Token refresh timeout" };
-    }
-    return { error: "Token refresh failed" };
+    const errorData = JSON.parse(failure.detail) as {
+      error?: string;
+      error_description?: string;
+    } | null;
+    if (errorData?.error === "invalid_grant") return { error: "Token revoked" };
+    return { error: errorData?.error_description || `HTTP ${failure.status}` };
+  } catch {
+    return { error: `HTTP ${failure.status}` };
   }
 }
 
@@ -359,27 +351,24 @@ async function retrieveQuota<Response>(
   projectId: string,
   timeoutMs: number | undefined,
 ): Promise<Response> {
-  return await fetchWithTimeout(flavor.quotaUrl, {
-    request: {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${accessToken}`,
-        ...flavor.quotaHeaders(),
-      },
-      body: JSON.stringify({ project: projectId }),
+  const reply = await requestJson(flavor.quotaUrl, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${accessToken}`,
+      ...flavor.quotaHeaders(),
     },
+    body: JSON.stringify({ project: projectId }),
+    secrets: [accessToken],
     timeoutMs: timeoutMs ?? QUOTA_TIMEOUT_MS,
-    consume: async (response) => {
-      if (!response.ok) {
-        if (response.status === 401 || response.status === 403) {
-          throw new Error(`${flavor.name} quota auth error: ${response.status}`);
-        }
-        throw new Error(`${flavor.name} quota API error: ${response.status}`);
-      }
-      return (await response.json()) as Response;
-    },
   });
+  if (reply.ok) return reply.json as Response;
+  const { failure } = reply;
+  if (failure.kind === "http" && (failure.status === 401 || failure.status === 403)) {
+    throw new Error(`${flavor.name} quota auth error: ${failure.status}`);
+  }
+  if (failure.kind === "http") throw new Error(`${flavor.name} quota API error: ${failure.status}`);
+  throw new Error(failure.detail);
 }
 
 /** Retries once with a fresh token when the quota API rejects the token. */

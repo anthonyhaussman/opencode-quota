@@ -15,7 +15,7 @@ import {
 import { sanitizeDisplaySnippet, sanitizeDisplayText } from "../lib/display-sanitize.js";
 import type { QuotaProvider, QuotaProviderContext } from "../lib/entries.js";
 import { clampPercent } from "../lib/format-utils.js";
-import { fetchWithTimeout } from "../lib/http.js";
+import { requestJson } from "../lib/http.js";
 import { nonEmptyString } from "../lib/json-guards.js";
 import { isCanonicalProviderAvailable } from "../lib/provider-availability.js";
 import { normalizeQuotaProviderId } from "../lib/provider-metadata.js";
@@ -192,31 +192,31 @@ async function queryKimiWindows(
   apiKey: string,
   requestTimeoutMs?: number,
 ): Promise<KimiReply> {
+  const reply = await requestJson(`${spec.apiBaseUrl}/usages`, {
+    headers: { Authorization: `Bearer ${apiKey}`, "User-Agent": USER_AGENT },
+    secrets: [apiKey],
+    timeoutMs: requestTimeoutMs,
+  });
+  if (!reply.ok) {
+    const { failure } = reply;
+    return {
+      success: false,
+      error:
+        failure.kind === "http"
+          ? `Kimi API error ${failure.status}: ${sanitizeDisplaySnippet(failure.detail, 120)}`
+          : failure.detail,
+    };
+  }
+
   try {
-    return await fetchWithTimeout(`${spec.apiBaseUrl}/usages`, {
-      request: {
-        headers: { Authorization: `Bearer ${apiKey}`, "User-Agent": USER_AGENT },
-      },
-      timeoutMs: requestTimeoutMs,
-      consume: async (resp): Promise<KimiReply> => {
-        if (!resp.ok) {
-          const text = await resp.text();
-          return {
-            success: false,
-            error: `Kimi API error ${resp.status}: ${sanitizeDisplaySnippet(text, 120)}`,
-          };
-        }
+    const payload = reply.json as Record<string, unknown>;
+    // Read the keys first: a `null` body must fail with Object.keys' error.
+    const topLevelKeys = Object.keys(payload);
+    const windows = parseKimiWindows(payload);
+    if (windows.length > 0) return { success: true, windows };
 
-        const payload = (await resp.json()) as Record<string, unknown>;
-        // Read the keys first: a `null` body must fail with Object.keys' error.
-        const topLevelKeys = Object.keys(payload);
-        const windows = parseKimiWindows(payload);
-        if (windows.length > 0) return { success: true, windows };
-
-        const keys = topLevelKeys.length ? topLevelKeys.join(", ") : "(empty)";
-        return { success: false, error: `Unexpected response structure (keys: ${keys})` };
-      },
-    });
+    const keys = topLevelKeys.length ? topLevelKeys.join(", ") : "(empty)";
+    return { success: false, error: `Unexpected response structure (keys: ${keys})` };
   } catch (err) {
     return {
       success: false,

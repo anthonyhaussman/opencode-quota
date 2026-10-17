@@ -15,7 +15,7 @@ import { homedir } from "os";
 import { join } from "path";
 
 import { sanitizeDisplaySnippet, sanitizeDisplayText } from "./display-sanitize.js";
-import { fetchWithTimeout } from "./http.js";
+import { requestJson } from "./http.js";
 import { asRecord, finiteNumber, nonEmptyString } from "./json-guards.js";
 import { type CredentialRow, credentialRowAuthData, readCredentialRows } from "./opencode-auth.js";
 import {
@@ -564,78 +564,55 @@ function retainAnthropicOAuthCooldownForToken(tokenFingerprint: string): void {
   }
 }
 
-/** Sanitizes a detail and removes the token, also in the form sanitizing may reassemble. */
-function redactAccessToken(detail: string, accessToken: string): string {
-  const sanitizedAccessToken = sanitizeDisplayText(accessToken);
-  const redactedDetail = sanitizeDisplayText(detail).split(accessToken).join("[redacted]");
-  return sanitizedAccessToken
-    ? redactedDetail.split(sanitizedAccessToken).join("[redacted]")
-    : redactedDetail;
-}
-
 async function performAnthropicOAuthUsageRequest(
   accessToken: string,
   tokenFingerprint: string,
   requestTimeoutMs?: number,
 ): Promise<AnthropicFallbackQuota> {
-  try {
-    return await fetchWithTimeout(ANTHROPIC_USAGE_URL, {
-      request: {
-        headers: {
-          Authorization: `Bearer ${accessToken}`,
-          "anthropic-beta": ANTHROPIC_BETA_HEADER,
-        },
-      },
-      timeoutMs: requestTimeoutMs,
-      consume: async (response, timeoutSignal): Promise<AnthropicFallbackQuota> => {
-        // The cooldown starts before the body is read, so a stalled 429 body still pauses retries.
-        const cooldownMs =
-          response.status === 429
-            ? startAnthropicOAuthCooldown(tokenFingerprint, response.headers.get("Retry-After"))
-            : undefined;
-        if (cooldownMs === undefined) anthropicOAuthCooldowns.delete(tokenFingerprint);
-
-        if (!response.ok) {
-          const authenticationFailure = response.status === 401 || response.status === 403;
-          let detail = "";
-          try {
-            detail = redactAccessToken(await response.text(), accessToken).slice(0, 120);
-          } catch (error) {
-            // A rejected token needs no body (it triggers the Claude credentials fallback);
-            // any other timed-out body read fails the whole request.
-            if (timeoutSignal.aborted && !authenticationFailure) throw error;
-          }
-
-          const errorDetail = detail
-            ? `Anthropic API error ${response.status}: ${detail}`
-            : `Anthropic API returned ${response.status}`;
-          return {
-            state: "unavailable",
-            detail:
-              cooldownMs === undefined
-                ? errorDetail
-                : `${errorDetail} ${getAnthropicOAuthCooldownMessage(cooldownMs)}`,
-            ...(authenticationFailure ? { rejected: true as const } : {}),
-          };
-        }
-
-        let data: unknown;
-        try {
-          data = await response.json();
-        } catch (error) {
-          if (timeoutSignal.aborted) throw error;
-          return { state: "unavailable", detail: "Failed to parse Anthropic quota response" };
-        }
-
-        const quota = parseOAuthUsageResponse(data);
-        return quota
-          ? { state: "success", quota }
-          : { state: "unavailable", detail: "Unexpected Anthropic quota response shape" };
-      },
-    });
-  } catch (error) {
-    return { state: "unavailable", detail: redactAccessToken(errorText(error), accessToken) };
+  const reply = await requestJson(ANTHROPIC_USAGE_URL, {
+    headers: { Authorization: `Bearer ${accessToken}`, "anthropic-beta": ANTHROPIC_BETA_HEADER },
+    secrets: [accessToken],
+    timeoutMs: requestTimeoutMs,
+  });
+  const status = reply.ok ? reply.status : reply.failure.status;
+  // Any reply but a 429 ends the backoff; a 429 starts or extends it, even when its body stalls.
+  const cooldownMs =
+    status === 429 && !reply.ok
+      ? startAnthropicOAuthCooldown(
+          tokenFingerprint,
+          reply.failure.headers?.get("Retry-After") ?? null,
+        )
+      : undefined;
+  if (status !== undefined && cooldownMs === undefined) {
+    anthropicOAuthCooldowns.delete(tokenFingerprint);
   }
+
+  if (reply.ok) {
+    const quota = parseOAuthUsageResponse(reply.json);
+    return quota
+      ? { state: "success", quota }
+      : { state: "unavailable", detail: "Unexpected Anthropic quota response shape" };
+  }
+  const { failure } = reply;
+  if (failure.kind === "invalid_json") {
+    return { state: "unavailable", detail: "Failed to parse Anthropic quota response" };
+  }
+  if (failure.kind !== "http" || failure.status === undefined) {
+    return { state: "unavailable", detail: failure.detail };
+  }
+
+  const detail = failure.detail.slice(0, 120);
+  const errorDetail = detail
+    ? `Anthropic API error ${failure.status}: ${detail}`
+    : `Anthropic API returned ${failure.status}`;
+  return {
+    state: "unavailable",
+    detail:
+      cooldownMs === undefined
+        ? errorDetail
+        : `${errorDetail} ${getAnthropicOAuthCooldownMessage(cooldownMs)}`,
+    ...(failure.status === 401 || failure.status === 403 ? { rejected: true as const } : {}),
+  };
 }
 
 async function queryAnthropicQuotaFromOAuthAccessToken(

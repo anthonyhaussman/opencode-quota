@@ -1,7 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
-const httpMocks = vi.hoisted(() => ({ fetchResponse: vi.fn() }));
-
 /** The stored OpenCode logins as an auth map: at most one `anthropic` entry. */
 const authMocks = vi.hoisted(() => ({ storedAuth: vi.fn() }));
 
@@ -28,7 +26,6 @@ import {
   readAnthropicLogins,
   resolveAnthropicOAuth,
 } from "../src/lib/anthropic.js";
-import { fetchWithTimeout } from "../src/lib/http.js";
 import fableWeeklyUsage from "./fixtures/anthropic/fable-weekly.sanitized.json";
 
 vi.mock("child_process", () => ({ execFile: vi.fn() }));
@@ -51,18 +48,6 @@ vi.mock("../src/lib/opencode-auth.js", async (importOriginal) => ({
       { id: "login-1", integrationId: "anthropic", label: "", active: true, value, resolveError },
     ];
   },
-}));
-
-vi.mock("../src/lib/http.js", () => ({
-  fetchWithTimeout: vi.fn(
-    async (
-      _url: string,
-      options: { consume: (response: Response, signal: AbortSignal) => Promise<unknown> | unknown },
-    ) => {
-      const response = await httpMocks.fetchResponse();
-      return await options.consume(response, new AbortController().signal);
-    },
-  ),
 }));
 
 vi.mock("../src/lib/resolved-auth-identity.js", async (importOriginal) => ({
@@ -97,8 +82,11 @@ const ENOENT_ERROR = Object.assign(new Error("missing credentials"), { code: "EN
 const execFileMock = vi.mocked(execFile);
 const readFileMock = vi.mocked(readFile);
 const storedAuthMock = authMocks.storedAuth;
-const fetchWithTimeoutMock = vi.mocked(fetchWithTimeout);
-const fetchResponseMock = httpMocks.fetchResponse;
+/** The reply of each usage request, in order. */
+const fetchResponseMock = vi.fn<() => Promise<Response>>();
+const fetchMock = vi.fn(async (_url: RequestInfo | URL, _init?: RequestInit) =>
+  fetchResponseMock(),
+);
 const originalProcessPlatformDescriptor = Object.getOwnPropertyDescriptor(process, "platform");
 
 function setProcessPlatform(platform: NodeJS.Platform): void {
@@ -126,13 +114,32 @@ function mockExecSequence(steps: ExecSequenceStep[]): void {
 }
 
 function mockResponse(status: number, body: unknown, retryAfter?: string): Response {
-  return {
-    ok: status >= 200 && status < 300,
+  return new Response(typeof body === "string" ? body : JSON.stringify(body), {
     status,
-    headers: new Headers(retryAfter === undefined ? {} : { "Retry-After": retryAfter }),
-    json: vi.fn().mockResolvedValue(body),
-    text: vi.fn().mockResolvedValue(typeof body === "string" ? body : JSON.stringify(body)),
-  } as unknown as Response;
+    headers: retryAfter === undefined ? {} : { "Retry-After": retryAfter },
+  });
+}
+
+/** A reply whose body fails when read; `stall` keeps it pending until the request is aborted. */
+function unreadableResponse(status: number, options: { retryAfter?: string; stall?: boolean }) {
+  return (_url: RequestInfo | URL, init?: RequestInit) =>
+    Promise.resolve(
+      new Response(
+        new ReadableStream({
+          start(controller) {
+            if (options.stall) {
+              init?.signal?.addEventListener("abort", () => controller.error(new Error("aborted")));
+            } else {
+              controller.error(new Error("body stalled"));
+            }
+          },
+        }),
+        {
+          status,
+          headers: options.retryAfter === undefined ? {} : { "Retry-After": options.retryAfter },
+        },
+      ),
+    );
 }
 
 function cliQuotaStatus(fiveHourUsed: number, sevenDayUsed: number): ExecSequenceStep {
@@ -174,13 +181,14 @@ function useFakeNow(): void {
 }
 
 function bearerTokensSent(): string[] {
-  return fetchWithTimeoutMock.mock.calls.map(
-    ([, options]) => (options.request.headers as Record<string, string>)["Authorization"] ?? "",
+  return fetchMock.mock.calls.map(
+    ([, init]) => new Headers(init?.headers).get("Authorization") ?? "",
   );
 }
 
 beforeEach(() => {
   storedAuthMock.mockResolvedValue(null);
+  vi.stubGlobal("fetch", fetchMock);
 });
 
 afterEach(() => {
@@ -190,8 +198,9 @@ afterEach(() => {
   fsMocks.existsSync.mockReturnValue(false);
   readFileMock.mockReset();
   storedAuthMock.mockReset();
-  fetchWithTimeoutMock.mockClear();
+  fetchMock.mockClear();
   fetchResponseMock.mockReset();
+  vi.unstubAllGlobals();
   clearAnthropicDiagnosticsCacheForTests();
   if (originalProcessPlatformDescriptor) {
     Object.defineProperty(process, "platform", originalProcessPlatformDescriptor);
@@ -534,7 +543,7 @@ describe("Claude CLI probe", () => {
     expect(diagnostics.message).toContain("claude auth login");
     await expect(hasAnthropicCredentialsConfigured()).resolves.toBe(false);
     expect(readFileMock).not.toHaveBeenCalled();
-    expect(fetchWithTimeoutMock).not.toHaveBeenCalled();
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 
   it("falls back to plain auth status when --json is unsupported", async () => {
@@ -600,13 +609,13 @@ describe("Claude CLI probe", () => {
     expect(first.quota?.five_hour.percentRemaining).toBe(90);
     expect(second.quota?.five_hour.percentRemaining).toBe(90);
     expect(second.quotaSource).toBe("claude-credentials-oauth-api");
-    expect(fetchWithTimeoutMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
 
     clearAnthropicDiagnosticsCacheForTests();
 
     const third = await getAnthropicDiagnostics();
     expect(third.quota?.five_hour.percentRemaining).toBe(70);
-    expect(fetchWithTimeoutMock).toHaveBeenCalledTimes(2);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 });
 
@@ -623,7 +632,7 @@ describe("OAuth credential sources", () => {
     // Availability stays local-only: no credential read or usage request.
     await expect(hasAnthropicCredentialsConfigured()).resolves.toBe(true);
     expect(readFileMock).not.toHaveBeenCalled();
-    expect(fetchWithTimeoutMock).not.toHaveBeenCalled();
+    expect(fetchMock).not.toHaveBeenCalled();
 
     const diagnostics = await getAnthropicDiagnostics();
     expect(diagnostics.installed).toBe(true);
@@ -637,16 +646,11 @@ describe("OAuth credential sources", () => {
       extra_usage: { percentRemaining: 62 },
       fable_weekly: { percentRemaining: 98, resetTimeIso: "2026-07-27T07:00:00.268Z" },
     });
-    expect(fetchWithTimeoutMock).toHaveBeenCalledWith(ANTHROPIC_USAGE_URL, {
-      request: {
-        headers: {
-          Authorization: "Bearer oauth-access-token",
-          "anthropic-beta": "oauth-2025-04-20",
-        },
-      },
-      timeoutMs: undefined,
-      consume: expect.any(Function),
-    });
+    expect(fetchMock.mock.calls[0]?.[0]).toBe(ANTHROPIC_USAGE_URL);
+    expect(new Headers(fetchMock.mock.calls[0]?.[1]?.headers).get("anthropic-beta")).toBe(
+      "oauth-2025-04-20",
+    );
+    expect(bearerTokensSent()).toEqual(["Bearer oauth-access-token"]);
   });
 
   it("uses the macOS Keychain token when the Claude CLI gives no quota windows", async () => {
@@ -698,21 +702,9 @@ describe("OAuth credential sources", () => {
     expect(bearerTokensSent()).toEqual(["Bearer oauth-access-token-from-file"]);
   });
 
-  it("reports a rejected token whose error body cannot be read in time", async () => {
+  it("reports a rejected token whose error body cannot be read", async () => {
     setUpCredentialsFileFallback(1);
-    fetchWithTimeoutMock.mockImplementationOnce(async (_url, options) => {
-      const controller = new AbortController();
-      controller.abort();
-      return await options.consume(
-        {
-          ok: false,
-          status: 401,
-          headers: new Headers(),
-          text: vi.fn().mockRejectedValue(new Error("timed out while reading body")),
-        } as unknown as Response,
-        controller.signal,
-      );
-    });
+    fetchMock.mockImplementationOnce(unreadableResponse(401, {}));
 
     const diagnostics = await getAnthropicDiagnostics();
 
@@ -752,22 +744,14 @@ describe("OAuth credential sources", () => {
       expect(diagnostics.quotaSource).toBe("none");
       expect(diagnostics.message).toContain(NO_QUOTA_MESSAGE);
       for (const detail of expectedDetails) expect(diagnostics.message).toContain(detail);
-      expect(fetchWithTimeoutMock).not.toHaveBeenCalled();
+      expect(fetchMock).not.toHaveBeenCalled();
     },
   );
 });
 
 describe("OAuth usage request", () => {
   it.each([
-    [
-      "invalid JSON",
-      () => {
-        const response = mockResponse(200, "{");
-        vi.mocked(response.json).mockRejectedValue(new Error("invalid json"));
-        return response;
-      },
-      "Failed to parse Anthropic quota response",
-    ],
+    ["invalid JSON", () => mockResponse(200, "{"), "Failed to parse Anthropic quota response"],
     [
       "an unexpected JSON shape",
       () => mockResponse(200, { ok: true }),
@@ -802,12 +786,12 @@ describe("OAuth usage request", () => {
     expect(suppressed.message).toContain(
       "Anthropic OAuth usage probe paused after HTTP 429; retry in 40s.",
     );
-    expect(fetchWithTimeoutMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
 
     await vi.advanceTimersByTimeAsync(40_000);
     const retried = await getAnthropicDiagnostics();
     expect(retried.quotaSupported).toBe(true);
-    expect(fetchWithTimeoutMock).toHaveBeenCalledTimes(2);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 
   it("redacts an access token reconstructed while sanitizing a request error", async () => {
@@ -840,7 +824,7 @@ describe("OAuth usage request", () => {
 
     await vi.advanceTimersByTimeAsync(5_001);
     await getAnthropicDiagnostics();
-    expect(fetchWithTimeoutMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
   it.each([
@@ -848,30 +832,27 @@ describe("OAuth usage request", () => {
       "cannot be read",
       false,
       undefined,
+      0,
       "Anthropic API returned 429 Anthropic OAuth usage probe paused after HTTP 429; retry in 30s.",
       "retry in 25s.",
     ],
-    ["times out", true, "45", "body stalled", "retry in 40s."],
+    ["stalls past the deadline", true, "45", 5_000, "Request timeout after 5s", "retry in 40s."],
   ])(
     "establishes a cooldown when the 429 response body %s",
-    async (_label, bodyReadTimesOut, retryAfter, firstMessage, suppressedMessage) => {
+    async (_label, stall, retryAfter, stallMs, firstMessage, suppressedMessage) => {
       useFakeNow();
       setUpCredentialsFileFallback(2);
-      const response = mockResponse(429, "rate limited", retryAfter);
-      vi.mocked(response.text).mockRejectedValue(new Error("body stalled"));
-      fetchWithTimeoutMock.mockImplementationOnce(async (_url, options) => {
-        const controller = new AbortController();
-        if (bodyReadTimesOut) controller.abort();
-        return await options.consume(response, controller.signal);
-      });
+      fetchMock.mockImplementationOnce(unreadableResponse(429, { retryAfter, stall }));
 
-      const first = await getAnthropicDiagnostics();
+      const pending = getAnthropicDiagnostics();
+      await vi.advanceTimersByTimeAsync(stallMs);
+      const first = await pending;
       expect(first.message).toContain(firstMessage);
 
       await vi.advanceTimersByTimeAsync(5_001);
       const suppressed = await getAnthropicDiagnostics();
       expect(suppressed.message).toContain(suppressedMessage);
-      expect(fetchWithTimeoutMock).toHaveBeenCalledTimes(1);
+      expect(fetchMock).toHaveBeenCalledTimes(1);
     },
   );
 
@@ -892,11 +873,11 @@ describe("OAuth usage request", () => {
 
     await vi.advanceTimersByTimeAsync(30_001);
     await getAnthropicDiagnostics();
-    expect(fetchWithTimeoutMock).toHaveBeenCalledTimes(2);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
 
     await vi.advanceTimersByTimeAsync(30_000);
     await getAnthropicDiagnostics();
-    expect(fetchWithTimeoutMock).toHaveBeenCalledTimes(3);
+    expect(fetchMock).toHaveBeenCalledTimes(3);
   });
 
   it("resets the backoff sequence after a non-429 response", async () => {
@@ -919,7 +900,7 @@ describe("OAuth usage request", () => {
 
     await vi.advanceTimersByTimeAsync(30_001);
     await getAnthropicDiagnostics();
-    expect(fetchWithTimeoutMock).toHaveBeenCalledTimes(4);
+    expect(fetchMock).toHaveBeenCalledTimes(4);
   });
 
   it("deduplicates concurrent OAuth usage requests for the same observed token", async () => {
@@ -933,13 +914,13 @@ describe("OAuth usage request", () => {
 
     const first = getAnthropicDiagnostics({ binaryPath: "claude-a" });
     const second = getAnthropicDiagnostics({ binaryPath: "claude-b" });
-    await vi.waitFor(() => expect(fetchWithTimeoutMock).toHaveBeenCalledTimes(1));
+    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
     resolveFetch(mockResponse(200, USAGE_10_20));
 
     const [firstResult, secondResult] = await Promise.all([first, second]);
     expect(firstResult.quotaSupported).toBe(true);
     expect(secondResult.quotaSupported).toBe(true);
-    expect(fetchWithTimeoutMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
   it("does not apply an old token cooldown to a newly observed token", async () => {
@@ -956,7 +937,7 @@ describe("OAuth usage request", () => {
     expect(first.quotaSupported).toBe(false);
     const second = await getAnthropicDiagnostics({ binaryPath: "claude-b" });
     expect(second.quotaSupported).toBe(true);
-    expect(fetchWithTimeoutMock).toHaveBeenCalledTimes(2);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 });
 

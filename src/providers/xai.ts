@@ -13,7 +13,7 @@ import type {
   QuotaProviderMatchContext,
 } from "../lib/entries.js";
 import { clampPercent } from "../lib/format-utils.js";
-import { fetchWithTimeout } from "../lib/http.js";
+import { requestJson } from "../lib/http.js";
 import { isRecord, nonEmptyString } from "../lib/json-guards.js";
 import {
   type CredentialRow,
@@ -196,23 +196,22 @@ function parseXaiLabel(payload: unknown): XaiLabel {
 
 /** Subscription metadata only refines the label, so any failure keeps the standard one. */
 async function queryXaiLabel(accessToken: string, requestTimeoutMs?: number): Promise<XaiLabel> {
+  const reply = await requestJson(SUBSCRIPTIONS_URL, {
+    method: "GET",
+    headers: xaiHeaders(accessToken),
+    secrets: [accessToken],
+    timeoutMs: Math.min(requestTimeoutMs ?? SUBSCRIPTIONS_TIMEOUT_MS, SUBSCRIPTIONS_TIMEOUT_MS),
+  });
+  if (!reply.ok) return "xAI SuperGrok";
   try {
-    return await fetchWithTimeout<XaiLabel>(SUBSCRIPTIONS_URL, {
-      request: {
-        method: "GET",
-        headers: xaiHeaders(accessToken),
-      },
-      timeoutMs: Math.min(requestTimeoutMs ?? SUBSCRIPTIONS_TIMEOUT_MS, SUBSCRIPTIONS_TIMEOUT_MS),
-      consume: async (response) =>
-        response.ok ? parseXaiLabel(await response.json()) : "xAI SuperGrok",
-    });
+    return parseXaiLabel(reply.json);
   } catch {
     return "xAI SuperGrok";
   }
 }
 
-function safeErrorText(message: string, accessToken: string): string {
-  return sanitizeSingleLineDisplaySnippet(message.split(accessToken).join("[redacted]"), 160);
+function safeErrorText(message: string): string {
+  return sanitizeSingleLineDisplaySnippet(message, 160);
 }
 
 function failedLogin(message: string): XaiLoginFetch {
@@ -235,34 +234,30 @@ async function queryXaiLogin(
     );
   }
 
-  try {
-    const credits = await fetchWithTimeout<XaiLoginFetch>(CREDITS_URL, {
-      request: {
-        method: "GET",
-        headers: xaiHeaders(auth.accessToken),
-      },
-      timeoutMs: requestTimeoutMs,
-      consume: async (response) => {
-        if (!response.ok) {
-          const body = await response.text();
-          return failedLogin(
-            `xAI API error ${response.status}: ${safeErrorText(body, auth.accessToken)}`,
-          );
-        }
-
-        const row = parseCreditsRow(await response.json());
-        return row ? { rows: [row], errors: [] } : failedLogin("No quota data");
-      },
-    });
-    if (credits.errors.length > 0) return credits;
-
-    const label = await queryXaiLabel(auth.accessToken, requestTimeoutMs);
-    return { ...credits, fallbackName: label };
-  } catch (error) {
+  const reply = await requestJson(CREDITS_URL, {
+    method: "GET",
+    headers: xaiHeaders(auth.accessToken),
+    secrets: [auth.accessToken],
+    timeoutMs: requestTimeoutMs,
+  });
+  if (!reply.ok) {
+    const { failure } = reply;
     return failedLogin(
-      safeErrorText(error instanceof Error ? error.message : String(error), auth.accessToken),
+      failure.kind === "http"
+        ? `xAI API error ${failure.status}: ${safeErrorText(failure.detail)}`
+        : safeErrorText(failure.detail),
     );
   }
+
+  let row: ProviderRow | null;
+  try {
+    row = parseCreditsRow(reply.json);
+  } catch (error) {
+    return failedLogin(safeErrorText(error instanceof Error ? error.message : String(error)));
+  }
+  if (!row) return failedLogin("No quota data");
+  const label = await queryXaiLabel(auth.accessToken, requestTimeoutMs);
+  return { rows: [row], errors: [], fallbackName: label };
 }
 
 export const xaiProvider: QuotaProvider = {

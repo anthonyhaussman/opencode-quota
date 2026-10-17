@@ -13,7 +13,7 @@ import {
 import { sanitizeDisplaySnippet, sanitizeDisplayText } from "../lib/display-sanitize.js";
 import type { QuotaProvider, QuotaProviderContext } from "../lib/entries.js";
 import { clampPercent } from "../lib/format-utils.js";
-import { fetchWithTimeout } from "../lib/http.js";
+import { requestJson } from "../lib/http.js";
 import { isCanonicalProviderAvailable } from "../lib/provider-availability.js";
 import type { QuotaError } from "../lib/types.js";
 import { vendorKeysPolicy } from "./cache-policies.js";
@@ -125,39 +125,42 @@ async function queryGlmRows(
   apiKey: string,
   requestTimeoutMs?: number,
 ): Promise<GlmReply> {
+  const apiError = `${endpoint.label} API error`;
+  const reply = await requestJson(endpoint.url, {
+    headers: {
+      Authorization: apiKey,
+      "User-Agent": "OpenCode-Quota-Toast/1.0",
+      "Content-Type": "application/json",
+    },
+    secrets: [apiKey],
+    timeoutMs: requestTimeoutMs,
+  });
+  if (!reply.ok) {
+    const { failure } = reply;
+    return {
+      success: false,
+      error:
+        failure.kind === "http"
+          ? `${apiError} ${failure.status}: ${sanitizeDisplaySnippet(failure.detail, 120)}`
+          : failure.detail,
+    };
+  }
+
   try {
-    return await fetchWithTimeout(endpoint.url, {
-      request: {
-        headers: {
-          Authorization: apiKey,
-          "User-Agent": "OpenCode-Quota-Toast/1.0",
-          "Content-Type": "application/json",
-        },
-      },
-      timeoutMs: requestTimeoutMs,
-      consume: async (response): Promise<GlmReply> => {
-        const apiError = `${endpoint.label} API error`;
-        if (!response.ok) {
-          const body = sanitizeDisplaySnippet(await response.text(), 120);
-          return { success: false, error: `${apiError} ${response.status}: ${body}` };
-        }
+    const body = reply.json as GlmEnvelope;
+    if (
+      endpoint.envelope === "zai" &&
+      (body.success === false || (typeof body.code === "number" && body.code >= 400))
+    ) {
+      const message = typeof body.msg === "string" ? sanitizeDisplayText(body.msg) : "";
+      const fallback = typeof body.code === "number" ? `${apiError} ${body.code}` : apiError;
+      return { success: false, error: message || fallback };
+    }
 
-        const body = (await response.json()) as GlmEnvelope;
-        if (
-          endpoint.envelope === "zai" &&
-          (body.success === false || (typeof body.code === "number" && body.code >= 400))
-        ) {
-          const message = typeof body.msg === "string" ? sanitizeDisplayText(body.msg) : "";
-          const fallback = typeof body.code === "number" ? `${apiError} ${body.code}` : apiError;
-          return { success: false, error: message || fallback };
-        }
-
-        const limits =
-          endpoint.envelope === "zai" ? (body.data?.limits ?? body.limits) : body.data?.limits;
-        if (!Array.isArray(limits)) return { success: false, error: "Invalid quota data" };
-        return { success: true, rows: glmRows(limits as GlmLimit[]) };
-      },
-    });
+    const limits =
+      endpoint.envelope === "zai" ? (body.data?.limits ?? body.limits) : body.data?.limits;
+    if (!Array.isArray(limits)) return { success: false, error: "Invalid quota data" };
+    return { success: true, rows: glmRows(limits as GlmLimit[]) };
   } catch (error) {
     return {
       success: false,

@@ -14,7 +14,7 @@ import type {
   QuotaProviderContext,
   QuotaProviderMatchContext,
 } from "../lib/entries.js";
-import { fetchWithTimeout } from "../lib/http.js";
+import { requestJson } from "../lib/http.js";
 import { asRecord } from "../lib/json-guards.js";
 import {
   isAnyProviderIdAvailable,
@@ -221,39 +221,36 @@ async function queryMiniMaxQuota(
   endpointId: MiniMaxQuotaEndpointId,
   requestTimeoutMs: number | undefined,
 ): Promise<{ rows: ProviderRow[] } | { error: string }> {
+  const reply = await requestJson(MINIMAX_ENDPOINTS[endpointId].quotaUrl, {
+    method: "GET",
+    headers: { Authorization: `Bearer ${apiKey}`, "User-Agent": USER_AGENT },
+    secrets: [apiKey],
+    timeoutMs: requestTimeoutMs,
+  });
+  if (!reply.ok) {
+    const { failure } = reply;
+    return {
+      error:
+        failure.kind === "http"
+          ? `MiniMax API error ${failure.status}: ${sanitizeMiniMaxMessage(failure.detail)}`
+          : sanitizeMiniMaxMessage(failure.detail),
+    };
+  }
+
   try {
-    return await fetchWithTimeout(MINIMAX_ENDPOINTS[endpointId].quotaUrl, {
-      request: {
-        method: "GET",
-        headers: {
-          Authorization: `Bearer ${apiKey}`,
-          "User-Agent": USER_AGENT,
-        },
-      },
-      timeoutMs: requestTimeoutMs,
-      consume: async (response) => {
-        if (!response.ok) {
-          const text = await response.text();
-          return {
-            error: `MiniMax API error ${response.status}: ${sanitizeMiniMaxMessage(text)}`,
-          };
-        }
+    const payload = reply.json as MiniMaxApiResponse;
+    if (payload.base_resp?.status_code !== 0) {
+      return {
+        error: `MiniMax API error: ${sanitizeMiniMaxMessage(payload.base_resp?.status_msg ?? "unknown")}`,
+      };
+    }
 
-        const payload = (await response.json()) as MiniMaxApiResponse;
-        if (payload.base_resp?.status_code !== 0) {
-          return {
-            error: `MiniMax API error: ${sanitizeMiniMaxMessage(payload.base_resp?.status_msg ?? "unknown")}`,
-          };
-        }
-
-        const matchingModels = (payload.model_remains ?? []).filter(
-          (model): model is MiniMaxModelRemain =>
-            isMiniMaxModelRecord(model) && isMiniMaxCodingModelName(model.model_name),
-        );
-        const canonicalModel = selectCanonicalMiniMaxModel(matchingModels, endpointId);
-        return { rows: canonicalModel ? minimaxRows(canonicalModel, endpointId) : [] };
-      },
-    });
+    const matchingModels = (payload.model_remains ?? []).filter(
+      (model): model is MiniMaxModelRemain =>
+        isMiniMaxModelRecord(model) && isMiniMaxCodingModelName(model.model_name),
+    );
+    const canonicalModel = selectCanonicalMiniMaxModel(matchingModels, endpointId);
+    return { rows: canonicalModel ? minimaxRows(canonicalModel, endpointId) : [] };
   } catch (err) {
     return { error: sanitizeMiniMaxMessage(err instanceof Error ? err.message : String(err)) };
   }

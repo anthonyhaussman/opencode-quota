@@ -38,11 +38,11 @@ const PROFILE_JWT = jwt({
   "https://api.openai.com/auth": { chatgpt_account_id: "acct_jwt" },
 });
 
-/** Queries a valid login; the usage reply is passed through as-is, so NaN stays NaN. */
+/** Queries a valid login that gets `usage` as its JSON reply. */
 function queryUsage(usage: unknown) {
   vi.stubGlobal(
     "fetch",
-    vi.fn(async () => ({ ok: true, json: async () => usage })),
+    vi.fn(async () => Response.json(usage)),
   );
   return queryOpenAIQuota({ auth: LOGIN });
 }
@@ -229,7 +229,7 @@ describe("queryOpenAIQuota", () => {
   });
 
   it("sends the bearer token and the ChatGPT account id", async () => {
-    const fetchMock = vi.fn(async () => ({ ok: true, json: async () => ({}) }));
+    const fetchMock = vi.fn(async () => Response.json({}));
     vi.stubGlobal("fetch", fetchMock);
 
     await queryOpenAIQuota({ auth: { ...LOGIN, accountId: "acct_1" } });
@@ -415,11 +415,6 @@ describe("queryOpenAIQuota", () => {
     { name: "missing value", spendControl: { individual_limit: {} } },
     { name: "null value", spendControl: { individual_limit: { remaining_percent: null } } },
     { name: "wrong type", spendControl: { individual_limit: { remaining_percent: "50" } } },
-    { name: "NaN", spendControl: { individual_limit: { remaining_percent: Number.NaN } } },
-    {
-      name: "infinite",
-      spendControl: { individual_limit: { remaining_percent: Number.POSITIVE_INFINITY } },
-    },
   ])("omits $name while preserving personal and code-review paths", async ({ spendControl }) => {
     const out = await queryUsage({
       plan_type: "plus",
