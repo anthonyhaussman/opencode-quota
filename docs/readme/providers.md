@@ -373,7 +373,7 @@ GitHub references: [AI Credit billing reports](https://docs.github.com/en/rest/b
 
 ### Anthropic (Claude)
 
-OpenCode's Anthropic login is enough; Claude Code is optional. To also use Claude Code as the quota source and credential fallback, install it and sign in:
+OpenCode's Anthropic login is enough; Claude Code is optional. Each OpenCode `anthropic` login is asked once per check at Anthropic's OAuth usage endpoint, and Claude Code is not started. An expired login shows "Sign in again". To use Claude Code as the quota source when OpenCode has no Anthropic login, install it and sign in:
 
 ```bash
 claude auth login
@@ -381,7 +381,8 @@ claude auth status
 ```
 
 - OpenCode Quota runs `claude` from OpenCode's `PATH`, or else the first working one of `~/.claude/local/claude`, `~/.local/bin/claude`, `/opt/homebrew/bin/claude`, and `/usr/local/bin/claude` (not on Windows). If Claude lives elsewhere, or on Windows when `claude` is not on OpenCode's `PATH`, set `providers.anthropic.binaryPath`. `/quota_status` shows the one it ran as `binary_path`.
-- When Claude Code does not expose quota windows itself, quota comes from Anthropic's OAuth usage endpoint, using the first usable token: OpenCode's own `anthropic` login, then Claude Code's credentials. `/quota_status` shows which one as `oauth_credential_source`.
+- When Claude Code does not expose quota windows itself, quota comes from Anthropic's OAuth usage endpoint with Claude Code's own credentials (macOS Keychain, then `~/.claude/.credentials.json`). `/quota_status` shows `oauth_credential_source`: `opencode-auth` for OpenCode logins, `claude-credentials` for Claude Code's.
+- When Anthropic rejects an OpenCode login, that login shows its error, and `/quota_status` shows whether Claude Code and its credentials still work.
 - **Claude Usage Credits:** a separate monthly group when that response includes enabled Usage Credits with numeric utilization. Missing or invalid credit data never changes the regular 5-hour and weekly rows.
 - **Fable:** a separate weekly row when Anthropic returns that model-scoped window. It is never guessed from your plan name. See [Claude Fable models on your plan](https://support.claude.com/en/articles/15424964-claude-fable-models-on-your-plan).
 

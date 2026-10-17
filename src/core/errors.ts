@@ -1,7 +1,8 @@
 /**
- * One error vocabulary for every surface: `classifyError` turns a provider's free-text failure
- * into a `QuotaError`, and `describeError` gives the short words users see. The raw text is
- * kept in `detail`, scrubbed by `publicDetail`; /quota_status shows the code, status and words.
+ * One error vocabulary for every surface: `providerError` turns a provider's failure into a
+ * `QuotaError` (from the facts its request gave, else by reading its words with
+ * `classifyError`), and `describeError` gives the short words users see. The raw text is kept
+ * in `detail`, scrubbed by `publicDetail`; /quota_status shows the code, status and words.
  */
 import { publicDetail } from "./redact.js";
 import type { QuotaError, QuotaErrorCode } from "./types.js";
@@ -59,7 +60,7 @@ const RULES: ReadonlyArray<readonly [QuotaErrorCode, RegExp]> = [
   ],
   [
     "login_expired",
-    /token (?:expired|revoked)|token refresh failed|sign-in could not be|sign-in expired|session (?:is missing or )?expired|requires login|could not read this login|invalid api key|login fail|\b401\b|unauthorized/i,
+    /token (?:expired|revoked)|token refresh failed|sign-in could not be|sign-in expired|session (?:is missing or )?expired|requires login|could not read this login|invalid api key|login fail|\bauth error\b|\b401\b|unauthorized/i,
   ],
   [
     "not_configured",
@@ -69,10 +70,13 @@ const RULES: ReadonlyArray<readonly [QuotaErrorCode, RegExp]> = [
     "network",
     /fetch failed|\beconn(?:refused|reset|aborted)\b|\benotfound\b|\beai_again\b|socket hang up|request failed:/i,
   ],
-  ["provider_error", /\b(?:http|api error|error|status)\s*\(?\d{3}\b|\(http \d{3}\)/i],
+  [
+    "provider_error",
+    /\b(?:http|api error|error|status):?\s*\(?\d{3}\b|\(http \d{3}\)|\breturned [3-5]\d{2}\b/i,
+  ],
   [
     "bad_response",
-    /invalid|parse|valid json|unexpected response|response missing|exceeded \d+ bytes|redirect rejected|expected a json|did not match/i,
+    /invalid|parse|valid json|unexpected\b.*\bresponse|response shape|response missing|exceeded \d+ bytes|redirect rejected|expected a json|did not match/i,
   ],
   [
     "no_data",
@@ -110,6 +114,26 @@ export function classifyError(message: string, nowMs: number = Date.now()): Quot
     if (/not found|not supported/i.test(message)) error.missing = true;
   }
   return error;
+}
+
+/** What a failed request says about itself: its code, HTTP status and when to try again. */
+export type ErrorFacts = Pick<QuotaError, "code" | "status" | "retryAtMs">;
+
+/** A provider's failure: its own facts when its request gave them, else read from its words. */
+export function providerError(
+  message: string,
+  facts: ErrorFacts | undefined,
+  nowMs: number = Date.now(),
+): QuotaError {
+  if (!facts || !isQuotaErrorCode(facts.code)) return classifyError(message, nowMs);
+  const detail = publicDetail(message, DETAIL_MAX_LENGTH);
+  const status = httpStatus(facts.status);
+  return {
+    code: facts.code,
+    ...(detail ? { detail } : {}),
+    ...(status !== undefined ? { status } : {}),
+    ...(facts.retryAtMs !== undefined ? { retryAtMs: facts.retryAtMs } : {}),
+  };
 }
 
 function formatWait(ms: number): string {

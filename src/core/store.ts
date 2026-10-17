@@ -196,7 +196,11 @@ function isDue(
   let waitMs = reason === "turn" ? Math.min(minIntervalMs, TURN_MIN_INTERVAL_MS) : minIntervalMs;
   if (entry.failures > 0) waitMs = Math.max(waitMs, backoffMs(entry.failures));
   if (nowMs - entry.checkedAtMs < waitMs) return false;
-  return entry.error?.retryAtMs === undefined || nowMs >= entry.error.retryAtMs;
+  // A provider's retry time waits at most the longest backoff, so a far one never stalls checks.
+  const retryAtMs = entry.error?.retryAtMs;
+  return (
+    retryAtMs === undefined || nowMs >= Math.min(retryAtMs, entry.checkedAtMs + BACKOFF_MAX_MS)
+  );
 }
 
 /** Each fetched row with its login, shortened to a hash of the keyed id it arrives as. */
