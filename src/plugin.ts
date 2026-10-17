@@ -35,7 +35,7 @@ import {
   notifyCredentialsChanged,
 } from "./lib/opencode-auth.js";
 import { reconcileDetectedProvidersInGlobalConfig } from "./lib/opencode-config-providers.js";
-import { buildQuotaDialogCommandOutput } from "./lib/quota-dialog-commands.js";
+import { statusReport } from "./lib/quota-dialog-commands.js";
 import { QUOTA_PROVIDERS_AGGREGATE_ID } from "./lib/quota-providers.js";
 import {
   containsQuotaReport,
@@ -115,31 +115,32 @@ export const QuotaToastPlugin = Plugin.define({
     const liveSettings = await createLiveSettings({ projectDir });
     // /quota_status reports the providers it detected. The slash commands and
     // the tool add them to the global OpenCode config; the TUI palette (via RPC) never writes it.
-    const buildStatusOutput = (
+    const buildStatusOutput = async (
       sessionID: string | undefined,
       options: { origin: StatusOrigin; reconcileDetectedProviders: boolean },
-    ) =>
-      buildQuotaDialogCommandOutput({
-        host: sourceHost,
+    ): Promise<string> => {
+      const report = await statusReport(sourceHost, {
         origin: options.origin,
         opencode: ctx.app ? { version: ctx.app.version, channel: ctx.app.channel } : undefined,
-        sessionID,
-        resolveSessionModel: sessionModel,
+        sessionModel: sessionID ? await sessionModel(sessionID) : undefined,
         conversion: liveSettings.conversion,
-        onDetectedProviderIds: options.reconcileDetectedProviders
-          ? async (providerIds) => {
-              if (providerIds.length === 0) return;
-              try {
-                await reconcileDetectedProvidersInGlobalConfig({
-                  configRootDir: roots.configRoot,
-                  detectedProviderIds: providerIds,
-                });
-              } catch (error) {
-                console.warn("Failed to add detected providers to global OpenCode config", error);
-              }
-            }
-          : undefined,
+        nowMs: Date.now(),
       });
+      const detected = report.json.providers
+        .filter((provider) => provider.enabled && provider.available)
+        .map((provider) => provider.id);
+      if (options.reconcileDetectedProviders && detected.length > 0) {
+        try {
+          await reconcileDetectedProvidersInGlobalConfig({
+            configRootDir: roots.configRoot,
+            detectedProviderIds: detected,
+          });
+        } catch (error) {
+          console.warn("Failed to add detected providers to global OpenCode config", error);
+        }
+      }
+      return report.text;
+    };
 
     // The v6 quota store: last known rows, saved in the state dir, refreshed in the background.
     // Building it reads nothing; the first snapshot or refresh call loads the file.
@@ -246,11 +247,11 @@ export const QuotaToastPlugin = Plugin.define({
         })),
       status: (input) =>
         logRpcFailure("status", async () => {
-          const result = await buildStatusOutput(input.sessionID, {
+          const text = await buildStatusOutput(input.sessionID, {
             origin: "tui",
             reconcileDetectedProviders: false,
           });
-          return { text: sanitizeDisplayText(result.output) };
+          return { text: sanitizeDisplayText(text) };
         }),
       usage: (input) =>
         logRpcFailure("usage", async () => {
@@ -323,11 +324,11 @@ export const QuotaToastPlugin = Plugin.define({
           additionalProperties: false,
         },
         async execute(_input, context) {
-          const result = await buildStatusOutput(context.sessionID, {
+          const text = await buildStatusOutput(context.sessionID, {
             origin: "tool",
             reconcileDetectedProviders: true,
           });
-          return { content: sanitizeDisplayText(result.output) };
+          return { content: sanitizeDisplayText(text) };
         },
       });
     });
@@ -394,11 +395,11 @@ export const QuotaToastPlugin = Plugin.define({
         name: "quota_status",
         description: "Diagnostics for quota, TUI, pricing, and local storage.",
         async execute(invocation) {
-          const result = await buildStatusOutput(invocation.sessionID, {
+          const text = await buildStatusOutput(invocation.sessionID, {
             origin: "slash_command",
             reconcileDetectedProviders: true,
           });
-          await postReport(invocation.sessionID, "quota_status", result.output);
+          await postReport(invocation.sessionID, "quota_status", text);
         },
       });
       editor.add({

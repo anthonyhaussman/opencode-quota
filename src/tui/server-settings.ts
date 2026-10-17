@@ -12,15 +12,14 @@ import {
   clientSettings,
   defaultSettings,
   isRecordSetting,
+  offProviderId,
 } from "../settings/schema.js";
 
 /** The ids switched off; every other provider is checked when found. */
 export const PROVIDERS_KEY = "providers.off";
 
 export function foundProviderIds(snapshot: QuotaSnapshot | undefined): string[] {
-  return (snapshot?.providers ?? []).map(({ providerId }) =>
-    providerId === "quota-providers" ? "custom" : providerId,
-  );
+  return (snapshot?.providers ?? []).map(({ providerId }) => offProviderId(providerId));
 }
 
 export function isTicked(off: readonly string[], id: string): boolean {
