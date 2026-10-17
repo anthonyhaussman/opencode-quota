@@ -441,6 +441,25 @@ describe("queryOpenAIQuota", () => {
     });
   });
 
+  it("omits a remaining_percent too large to be a number (1e999 in the reply)", async () => {
+    const usage = {
+      plan_type: "plus",
+      rate_limit: { primary_window: HOURLY_20_USED },
+      spend_control: { individual_limit: { remaining_percent: "INFINITE" } },
+    };
+    const body = JSON.stringify(usage).replace('"INFINITE"', "1e999");
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => new Response(body)),
+    );
+
+    await expect(queryOpenAIQuota({ auth: LOGIN })).resolves.toEqual({
+      success: true,
+      label: "OpenAI (Plus)",
+      windows: { hourly: HOURLY_80 },
+    });
+  });
+
   it.each([
     ["business", "OpenAI (Business)"],
     [" TEAM ", "OpenAI (Business)"],

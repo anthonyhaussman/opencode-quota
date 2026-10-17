@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
-import { fetchWithTimeout, requestJson } from "../src/lib/http.js";
+import { describeError, providerError } from "../src/core/errors.js";
+import { failureFacts, fetchWithTimeout, parseRetryAfterMs, requestJson } from "../src/lib/http.js";
 
 function createPendingFetch() {
   return vi.fn((_url: string | URL | Request, options?: RequestInit) => {
@@ -338,5 +339,49 @@ describe("requestJson", () => {
       failure: { kind: "timeout", status: 429, detail: "Request timeout after 2s" },
     });
     expect(!reply.ok && reply.failure.headers?.get("Retry-After")).toBe("45");
+  });
+});
+
+describe("parseRetryAfterMs", () => {
+  const NOW_MS = Date.parse("2026-10-10T12:00:00.000Z");
+  const DAY_MS = 24 * 60 * 60_000;
+
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.unstubAllGlobals();
+  });
+
+  it.each([
+    ["seconds", "120", 120_000],
+    ["fractional seconds", "1.5", 1_500],
+    ["a huge number of seconds, capped at a day", "99999999999", DAY_MS],
+    ["an HTTP date ahead", "Sat, 10 Oct 2026 12:01:30 GMT", 90_000],
+    ["an HTTP date days ahead, capped at a day", "Tue, 13 Oct 2026 12:00:00 GMT", DAY_MS],
+    ["an HTTP date in the past", "Fri, 09 Oct 2026 12:00:00 GMT", undefined],
+    ["zero", "0", undefined],
+    ["a negative number", "-5", undefined],
+    ["garbage", "soon", undefined],
+    ["digits too long to be a number", "9".repeat(400), undefined],
+    ["blank", "  ", undefined],
+    ["no header", null, undefined],
+  ])("reads %s", (_name, value, expected) => {
+    expect(parseRetryAfterMs(value, NOW_MS)).toBe(expected);
+  });
+
+  it("shows a huge Retry-After as a wait of at most a day", async () => {
+    vi.useFakeTimers({ now: NOW_MS, toFake: ["Date"] });
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(
+        async () => new Response("", { status: 429, headers: { "Retry-After": "99999999999" } }),
+      ),
+    );
+
+    const reply = await requestJson("https://example.test/quota");
+    if (reply.ok) throw new Error("expected a failure");
+    const error = providerError("HTTP 429", failureFacts(reply.failure), NOW_MS);
+
+    expect(error).toMatchObject({ code: "rate_limited", retryAtMs: NOW_MS + DAY_MS });
+    expect(describeError(error, "Kimi", NOW_MS)).toBe("Rate limited, retry in 24h");
   });
 });

@@ -705,11 +705,17 @@ describe("OAuth credential sources", () => {
     expect(bearerTokensSent()).toEqual(["Bearer oauth-access-token-from-file"]);
   });
 
-  it("reports a rejected token whose error body cannot be read", async () => {
+  it.each([
+    ["fails", false],
+    ["stalls past the deadline", true],
+  ])("reports a rejected token whose error body %s", async (_label, stall) => {
+    useFakeNow();
     setUpCredentialsFileFallback(1);
-    fetchMock.mockImplementationOnce(unreadableResponse(401, {}));
+    fetchMock.mockImplementationOnce(unreadableResponse(401, { stall }));
 
-    const diagnostics = await getAnthropicDiagnostics();
+    const pending = getAnthropicDiagnostics();
+    await vi.advanceTimersByTimeAsync(5_000);
+    const diagnostics = await pending;
 
     expect(diagnostics.quotaSupported).toBe(false);
     expect(diagnostics.oauthCredentialSource).toBe("claude-credentials");

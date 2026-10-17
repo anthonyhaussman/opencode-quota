@@ -932,11 +932,11 @@ describe("renderQuotaStatusReport", () => {
     {
       name: "an env variable this plugin does not read",
       canary: "SECRET_CANARY_0123456789",
-      shows: "- auth_source: env:(other)",
+      shows: "- api_key_source: env:(other)",
       overrides: {
         providers: [
           snapshot("opencode-go", {
-            debug: [{ key: "auth_source", value: "env:SECRET_CANARY_0123456789" }],
+            debug: [{ key: "api_key_source", value: "env:SECRET_CANARY_0123456789" }],
           }),
         ],
       },

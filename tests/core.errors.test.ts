@@ -272,6 +272,16 @@ const PRODUCED: ReadonlyArray<{
   },
   {
     code: "bad_response",
+    from: "src/providers/ollama-cloud.ts",
+    text: "Included: missing or invalid, expected an object",
+  },
+  {
+    code: "bad_response",
+    from: "src/providers/ollama-cloud.ts",
+    text: "Included: invalid, expected credits or session and weekly limits",
+  },
+  {
+    code: "bad_response",
     from: "src/providers/mimo.ts",
     text: "response did not match the expected schema",
     message: "Xiaomi MiMo usage response did not match the expected schema",
@@ -412,6 +422,89 @@ describe("providerError", () => {
     });
   });
 
+  /**
+   * Failed requests as providers report them: the message (`text` checked in `from`, as above)
+   * with the facts its request gave. Words naming a rate limit, a missing plan, an expired login
+   * or a timeout beat a bare `provider_error`; the status and retry time stay.
+   */
+  it.each([
+    {
+      from: "src/lib/copilot.ts",
+      text: " error ${failure.status}: ",
+      message:
+        "GitHub API error 403: You have exceeded a secondary rate limit. Please wait a few minutes before you try again.",
+      facts: { code: "provider_error", status: 403, retryAtMs: NOW_MS + 60_000 },
+      expected: { code: "rate_limited", status: 403, retryAtMs: NOW_MS + 60_000 },
+    },
+    {
+      from: "src/providers/kimi-code.ts",
+      text: "Kimi API error ${failure.status}: ",
+      message: "Kimi API error 403: not subscribed to the coding plan",
+      facts: { code: "provider_error", status: 403 },
+      expected: { code: "no_plan", status: 403 },
+    },
+    {
+      from: "src/providers/deepseek.ts",
+      text: "DeepSeek API error ${failure.status}: ",
+      message: "DeepSeek API error 400: token expired",
+      facts: { code: "provider_error", status: 400 },
+      expected: { code: "login_expired", status: 400 },
+    },
+    {
+      from: "src/providers/xai.ts",
+      text: "xAI API error ${failure.status}: ",
+      message: "xAI API error 400: rate limit reached for this team",
+      facts: { code: "provider_error", status: 400 },
+      expected: { code: "rate_limited", status: 400 },
+    },
+    {
+      from: "src/providers/kimi-code.ts",
+      text: "Kimi API error ${failure.status}: ",
+      message: "Kimi API error 504: Gateway Timeout",
+      facts: { code: "provider_error", status: 504 },
+      expected: { code: "timeout", status: 504 },
+    },
+    {
+      from: "src/providers/glm-coding-plan.ts",
+      text: "${apiError} ${failure.status}: ",
+      message: "Z.ai API error 500: invalid config on the server",
+      facts: { code: "provider_error", status: 500 },
+      expected: { code: "provider_error", status: 500 },
+    },
+    {
+      from: "src/lib/google-oauth-quota.ts",
+      text: "quota API error: ${failure.status}",
+      message: "Gemini CLI quota API error: 500",
+      facts: { code: "provider_error", status: 500 },
+      expected: { code: "provider_error", status: 500 },
+    },
+    {
+      from: "src/lib/google-oauth-quota.ts",
+      text: "quota auth error: ${failure.status}",
+      message: "Google AGY quota auth error: 403",
+      facts: { code: "login_expired", status: 403 },
+      expected: { code: "login_expired", status: 403 },
+    },
+    {
+      from: "src/lib/google-oauth-quota.ts",
+      text: "`HTTP ${failure.status}`",
+      message: "HTTP 400",
+      facts: { code: "login_expired", status: 400 },
+      expected: { code: "login_expired", status: 400 },
+    },
+    {
+      from: "src/lib/anthropic.ts",
+      text: "Anthropic API returned ${failure.status}",
+      message: "Anthropic API returned 503",
+      facts: { code: "provider_error", status: 503 },
+      expected: { code: "provider_error", status: 503 },
+    },
+  ] as const)("$message → $expected.code", ({ from, text, message, facts, expected }) => {
+    expect(message).toContain(text.replace(/^`/u, "").split("${")[0]);
+    expect(readFileSync(from, "utf8")).toContain(text);
+    expect(providerError(message, facts, NOW_MS)).toEqual({ ...expected, detail: message });
+  });
+
   it("reads the words without facts", () => {
     expect(providerError("HTTP 503", undefined, NOW_MS)).toEqual(classifyError("HTTP 503", NOW_MS));
   });
@@ -426,6 +519,7 @@ describe("describeError", () => {
     [{ code: "rate_limited", retryAtMs: NOW_MS + 42_000 }, "Rate limited, retry in 1m"],
     [{ code: "rate_limited", retryAtMs: NOW_MS + 7 * 60_000 }, "Rate limited, retry in 7m"],
     [{ code: "rate_limited", retryAtMs: NOW_MS + 90 * 60_000 }, "Rate limited, retry in 2h"],
+    [{ code: "rate_limited", retryAtMs: NOW_MS + 24 * 60 * 60_000 }, "Rate limited, retry in 24h"],
     [{ code: "rate_limited", retryAtMs: NOW_MS - 1 }, "Rate limited"],
     [{ code: "timeout" }, "Timed out"],
     [{ code: "network" }, "Can't reach Copilot"],

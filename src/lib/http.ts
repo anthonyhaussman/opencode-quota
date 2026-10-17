@@ -3,7 +3,7 @@
  * size cap, and says why it got none, with the caller's own secrets redacted.
  */
 
-import type { ErrorFacts } from "../core/errors.js";
+import { type ErrorFacts, RETRY_WAIT_MAX_MS } from "../core/errors.js";
 import { secretValuesRedactor } from "../core/redact.js";
 import type { QuotaErrorCode } from "../core/types.js";
 import { sanitizeDisplayText } from "./display-sanitize.js";
@@ -130,7 +130,10 @@ function failureCode(kind: RequestFailure["kind"], status: number | undefined): 
   }
 }
 
-/** A Retry-After header as a wait: delta-seconds or an HTTP date; none when absent or past. */
+/**
+ * A Retry-After header as a wait: delta-seconds or an HTTP date, at most `RETRY_WAIT_MAX_MS`;
+ * none when absent, past or unreadable.
+ */
 export function parseRetryAfterMs(
   value: string | null,
   nowMs: number = Date.now(),
@@ -138,13 +141,12 @@ export function parseRetryAfterMs(
   const trimmed = value?.trim();
   if (!trimmed) return undefined;
 
-  if (/^[+-]?(?:\d+(?:\.\d+)?|\.\d+)$/u.test(trimmed)) {
-    const seconds = Number(trimmed);
-    return Number.isFinite(seconds) && seconds > 0 ? seconds * 1_000 : undefined;
-  }
-
-  const durationMs = Date.parse(trimmed) - nowMs;
-  return Number.isFinite(durationMs) && durationMs > 0 ? durationMs : undefined;
+  const durationMs = /^[+-]?(?:\d+(?:\.\d+)?|\.\d+)$/u.test(trimmed)
+    ? Number(trimmed) * 1_000
+    : Date.parse(trimmed) - nowMs;
+  return Number.isFinite(durationMs) && durationMs > 0
+    ? Math.min(durationMs, RETRY_WAIT_MAX_MS)
+    : undefined;
 }
 
 /**
