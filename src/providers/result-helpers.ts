@@ -3,7 +3,6 @@ import type { DebugDetail } from "../core/types.js";
 import {
   type ApiKeySpec,
   getApiKeyCheckedPaths,
-  hasVendorKey,
   type VendorKeys,
 } from "../lib/api-key-resolver.js";
 import { sanitizeDisplayText } from "../lib/display-sanitize.js";
@@ -48,13 +47,32 @@ export function simpleApiKeyStatusDetails(diagnostics: {
   });
 }
 
-/** Where a vendor's API key was looked for, and whether one was found. */
+type KeyState =
+  | { state: "none"; source: null }
+  | { state: "configured"; source: string }
+  | { state: "invalid"; source: "opencode.db"; error: string };
+
+/** The key the vendor uses first: the env or config key, else its first stored login. */
+export function vendorKeyState(keys: VendorKeys): KeyState {
+  if (keys.envOrConfig) return { state: "configured", source: keys.envOrConfig.source };
+  const first = keys.logins[0]?.auth;
+  if (first?.state === "configured") return { state: "configured", source: "opencode.db" };
+  const error = first?.error ?? keys.broken;
+  return error === null || error === undefined
+    ? { state: "none", source: null }
+    : { state: "invalid", source: "opencode.db", error };
+}
+
+/** Where a vendor's API key was looked for, and what its first key holds. */
 export function vendorKeyDetails(spec: ApiKeySpec, keys: VendorKeys): DebugDetail[] {
-  return simpleApiKeyStatusDetails({
-    configured: hasVendorKey(keys),
-    source: keys.envOrConfig?.source ?? (keys.logins.length > 0 ? "opencode.db" : null),
-    checkedPaths: getApiKeyCheckedPaths(spec),
-    credentialDatabasePaths: getCredentialDatabasePaths(),
+  const key = vendorKeyState(keys);
+  return statusDetailsFromRecord({
+    auth_state: key.state,
+    api_key_configured: key.state === "configured" ? "true" : "false",
+    api_key_source: key.source ?? "(none)",
+    api_key_checked_paths: getApiKeyCheckedPaths(spec).join(" | ") || "(none)",
+    api_key_credential_database_paths: getCredentialDatabasePaths().join(" | ") || "(none)",
+    auth_error: key.state === "invalid" ? sanitizeDisplayText(key.error) : undefined,
   });
 }
 

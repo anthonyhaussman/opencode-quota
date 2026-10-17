@@ -5,31 +5,24 @@
  */
 
 import { classifyWindow } from "../core/windows.js";
-import {
-  API_KEY_VENDORS,
-  type ApiKeyLoginSpec,
-  readKeyLogins,
-  resolveApiKeyLogin,
-  resolveApiKeyLoginWithDiagnostics,
-} from "../lib/api-key-resolver.js";
+import { API_KEY_VENDORS, type ApiKeyLoginSpec, readVendorKeys } from "../lib/api-key-resolver.js";
 import { sanitizeDisplaySnippet, sanitizeDisplayText } from "../lib/display-sanitize.js";
 import type { QuotaProvider, QuotaProviderContext } from "../lib/entries.js";
 import { clampPercent } from "../lib/format-utils.js";
 import { requestJson } from "../lib/http.js";
 import { nonEmptyString } from "../lib/json-guards.js";
-import { isCanonicalProviderAvailable } from "../lib/provider-availability.js";
 import { normalizeQuotaProviderId } from "../lib/provider-metadata.js";
 import type { QuotaError } from "../lib/types.js";
 import { vendorKeysPolicy } from "./cache-policies.js";
 import {
   failedAccount,
-  fetchKeyLogins,
   keySlug,
   type ProviderFetchResult,
   type ProviderRow,
   quotaRow,
 } from "./contract.js";
-import { apiKeyStatusDetails, statusDetailsFromRecord } from "./result-helpers.js";
+import { fetchStoredKeys, isKeyVendorAvailable } from "./key-vendor.js";
+import { statusDetailsFromRecord, vendorKeyDetails } from "./result-helpers.js";
 
 type KimiSpec = {
   id: "kimi-code-plan-global" | "kimi-code-plan-cn";
@@ -241,42 +234,29 @@ async function fetchKimiQuota(
   spec: KimiSpec,
   ctx: QuotaProviderContext,
 ): Promise<ProviderFetchResult> {
-  const { auth, diagnostics } = await resolveApiKeyLoginWithDiagnostics(spec.auth);
+  const keys = await readVendorKeys(spec.auth);
   const authDetails = [
-    ...apiKeyStatusDetails(diagnostics),
+    ...vendorKeyDetails(spec.auth, keys),
     ...statusDetailsFromRecord({ api_endpoint: spec.endpoint, api_base_url: spec.apiBaseUrl }),
   ];
-  if (auth.state === "none") return { attempted: false, accounts: [], debug: authDetails };
-
   const query = (apiKey: string) => queryKimiWindows(spec, apiKey, ctx.config?.requestTimeoutMs);
 
-  if (diagnostics.source === "opencode.db") {
-    const logins = await readKeyLogins(spec.auth);
-    if (logins.length > 0) {
-      const accounts = await fetchKeyLogins({
-        providerName: spec.label,
-        logins,
-        brokenFirst: true,
-        async fetchLogin({ auth: login }) {
-          const result = await query(login.apiKey);
-          return result.success
-            ? { rows: kimiRows(result.windows), errors: [] }
-            : { rows: [], errors: [{ message: result.error }] };
-        },
-      });
-      return { attempted: true, accounts, debug: authDetails };
-    }
+  if (!keys.envOrConfig) {
+    const stored = await fetchStoredKeys({
+      providerName: spec.label,
+      keys,
+      brokenFirst: true,
+      async fetchKey(apiKey) {
+        const result = await query(apiKey);
+        return result.success
+          ? { rows: kimiRows(result.windows), errors: [] }
+          : { rows: [], errors: [{ message: result.error }] };
+      },
+    });
+    return { ...stored, debug: authDetails };
   }
 
-  if (auth.state === "invalid") {
-    return {
-      attempted: true,
-      accounts: [failedAccount(spec.label, auth.error)],
-      debug: authDetails,
-    };
-  }
-
-  const result = await query(auth.apiKey);
+  const result = await query(keys.envOrConfig.key);
   if (!result.success) {
     return {
       attempted: true,
@@ -303,15 +283,12 @@ function kimiProvider(spec: KimiSpec): QuotaProvider {
     cachePolicy: vendorKeysPolicy(spec.id, spec.endpoint),
 
     async isAvailable(ctx: QuotaProviderContext): Promise<boolean> {
-      const providerAvailable = await isCanonicalProviderAvailable({
+      return await isKeyVendorAvailable({
         ctx,
         providerId: spec.id,
-        fallbackOnError: false,
+        availability: "listed-and-key",
+        readKeys: () => readVendorKeys(spec.auth),
       });
-      if (!providerAvailable) return false;
-
-      const auth = await resolveApiKeyLogin(spec.auth);
-      return auth.state === "configured" || auth.state === "invalid";
     },
 
     matchesCurrentModel(model: string): boolean {

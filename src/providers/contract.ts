@@ -102,7 +102,7 @@ export function failedAccount(name: string, message: string): AccountResult {
 }
 
 /** What one login gave: its rows and errors, or null when it had nothing to query. */
-type LoginFetch = {
+export type LoginFetch = {
   rows: ProviderRow[];
   errors: FetchError[];
   /** The name of a login without an alias of its own, for example "Copilot (pro)". */
@@ -142,40 +142,4 @@ export async function fetchEachLogin<Login extends { row: CredentialRow }>(param
       },
     ];
   });
-}
-
-/** A stored key login OpenCode could not use: what `readKeyLogins` gives for a broken one. */
-type BrokenKeyLogin = { state: "invalid"; error: string };
-
-/**
- * Fetches each stored key login of an API-key vendor (see `readKeyLogins`). A broken login is
- * an account with its error; `brokenFirst` lists those before the fetched ones.
- */
-export async function fetchKeyLogins<Auth extends { state: string }>(params: {
-  providerName: string;
-  logins: ReadonlyArray<{ row: CredentialRow; auth: Auth }>;
-  brokenFirst: boolean;
-  fetchLogin: (login: {
-    row: CredentialRow;
-    auth: Exclude<Auth, BrokenKeyLogin>;
-  }) => Promise<LoginFetch>;
-}): Promise<AccountResult[]> {
-  const accounts = await fetchEachLogin({
-    providerName: params.providerName,
-    logins: params.logins,
-    async fetchLogin({ row, auth }) {
-      if (auth.state === "invalid") {
-        return { rows: [], errors: [{ message: (auth as unknown as BrokenKeyLogin).error }] };
-      }
-      return params.fetchLogin({ row, auth: auth as Exclude<Auth, BrokenKeyLogin> });
-    },
-  });
-  if (!params.brokenFirst) return accounts;
-  const broken = new Set(
-    params.logins.filter(({ auth }) => auth.state === "invalid").map(({ row }) => row.id),
-  );
-  return [
-    ...accounts.filter((account) => broken.has(account.login ?? "")),
-    ...accounts.filter((account) => !broken.has(account.login ?? "")),
-  ];
 }

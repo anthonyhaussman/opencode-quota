@@ -4,23 +4,22 @@
  */
 
 import { isCanonicalAccountingDecimal } from "../lib/accounting-format.js";
-import { API_KEY_VENDORS, hasVendorKey, readVendorKeys } from "../lib/api-key-resolver.js";
+import { API_KEY_VENDORS, readVendorKeys } from "../lib/api-key-resolver.js";
 import { sanitizeDisplaySnippet, sanitizeDisplayText } from "../lib/display-sanitize.js";
 import type { QuotaProvider, QuotaProviderContext } from "../lib/entries.js";
 import { requestJson } from "../lib/http.js";
 import { isRecord, nonEmptyString } from "../lib/json-guards.js";
-import { isCanonicalProviderAvailable } from "../lib/provider-availability.js";
 import { modelProviderIncludesAny } from "../lib/provider-model-matching.js";
 import type { QuotaError } from "../lib/types.js";
 import { vendorKeysPolicy } from "./cache-policies.js";
 import {
   type AccountResult,
   failedAccount,
-  fetchKeyLogins,
   keySlug,
   type ProviderFetchResult,
   type ProviderRow,
 } from "./contract.js";
+import { fetchStoredKeys, isKeyVendorAvailable } from "./key-vendor.js";
 import { vendorKeyDetails } from "./result-helpers.js";
 
 const LABEL = "DeepSeek";
@@ -133,14 +132,12 @@ export const deepseekProvider: QuotaProvider = {
   cachePolicy: vendorKeysPolicy("deepseek"),
 
   async isAvailable(ctx: QuotaProviderContext): Promise<boolean> {
-    const providerAvailable = await isCanonicalProviderAvailable({
+    return await isKeyVendorAvailable({
       ctx,
       providerId: "deepseek",
-      fallbackOnError: false,
+      availability: "listed-or-key",
+      readKeys: () => readVendorKeys(SPEC),
     });
-    if (providerAvailable) return true;
-
-    return hasVendorKey(await readVendorKeys(SPEC));
   },
 
   matchesCurrentModel(model: string): boolean {
@@ -160,12 +157,12 @@ export const deepseekProvider: QuotaProvider = {
       return { attempted: true, accounts, debug };
     }
 
-    const accounts = await fetchKeyLogins({
+    const { attempted, accounts } = await fetchStoredKeys({
       providerName: LABEL,
-      logins: keys.logins,
+      keys,
       brokenFirst: false,
-      async fetchLogin({ auth }) {
-        const result = await query(auth.apiKey);
+      async fetchKey(apiKey) {
+        const result = await query(apiKey);
         if (!result.success) return { rows: [], errors: [{ message: result.error }] };
         return {
           rows: result.rows,
@@ -175,6 +172,6 @@ export const deepseekProvider: QuotaProvider = {
         };
       },
     });
-    return { attempted: keys.logins.length > 0, accounts, debug };
+    return { attempted, accounts, debug };
   },
 };

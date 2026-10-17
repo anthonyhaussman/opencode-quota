@@ -5,7 +5,7 @@
  */
 
 import type { Amount, DebugDetail } from "../core/types.js";
-import { API_KEY_VENDORS, hasVendorKey, readVendorKeys } from "../lib/api-key-resolver.js";
+import { API_KEY_VENDORS, readVendorKeys } from "../lib/api-key-resolver.js";
 import { sanitizeSingleLineDisplayText } from "../lib/display-sanitize.js";
 import type { QuotaProvider, QuotaProviderContext } from "../lib/entries.js";
 import { requestJson } from "../lib/http.js";
@@ -15,13 +15,13 @@ import { accountingDecimalFromNumber } from "./accounting-decimal.js";
 import { vendorKeysPolicy } from "./cache-policies.js";
 import {
   type FetchError,
-  fetchKeyLogins,
   MONTHLY,
   type ProviderFetchResult,
   type ProviderRow,
   quotaRow,
   WEEKLY,
 } from "./contract.js";
+import { fetchStoredKeys, isKeyVendorAvailable } from "./key-vendor.js";
 import { statusDetailsFromRecord, vendorKeyDetails } from "./result-helpers.js";
 
 const LABEL = "Ollama Cloud";
@@ -253,8 +253,13 @@ export const ollamaCloudProvider: QuotaProvider = {
   id: "ollama-cloud",
   cachePolicy: vendorKeysPolicy("ollama-cloud"),
 
-  async isAvailable(_ctx: QuotaProviderContext): Promise<boolean> {
-    return hasVendorKey(await readVendorKeys(SPEC));
+  async isAvailable(ctx: QuotaProviderContext): Promise<boolean> {
+    return await isKeyVendorAvailable({
+      ctx,
+      providerId: "ollama-cloud",
+      availability: "key",
+      readKeys: () => readVendorKeys(SPEC),
+    });
   },
 
   matchesCurrentModel(model: string): boolean {
@@ -276,18 +281,18 @@ export const ollamaCloudProvider: QuotaProvider = {
     }
 
     const debugByLogin = new Map<string, DebugDetail[]>();
-    const accounts = await fetchKeyLogins({
+    const { attempted, accounts } = await fetchStoredKeys({
       providerName: LABEL,
-      logins: keys.logins,
+      keys,
       brokenFirst: false,
-      async fetchLogin({ row, auth }) {
-        const { rows, errors, debug } = await query(auth.apiKey);
+      async fetchKey(apiKey, row) {
+        const { rows, errors, debug } = await query(apiKey);
         debugByLogin.set(row.id, debug);
         return { rows, errors };
       },
     });
     return {
-      attempted: keys.logins.length > 0,
+      attempted,
       accounts,
       debug: [...keyDetails, ...keys.logins.flatMap(({ row }) => debugByLogin.get(row.id) ?? [])],
     };
