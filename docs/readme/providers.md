@@ -373,7 +373,7 @@ GitHub references: [AI Credit billing reports](https://docs.github.com/en/rest/b
 
 ### Anthropic (Claude)
 
-OpenCode's Anthropic login is enough; Claude Code is optional. Each OpenCode `anthropic` login is asked once per check at Anthropic's OAuth usage endpoint, and Claude Code is not started. An expired login shows "Sign in again". To use Claude Code as the quota source when OpenCode has no Anthropic login, install it and sign in:
+OpenCode's Anthropic login is enough; Claude Code is optional. Each OpenCode `anthropic` login is asked once per check at Anthropic's OAuth usage endpoint. Claude Code is started only when Anthropic rejects a login, so `/quota_status` shows whether Claude Code is installed and signed in. An expired login shows "Sign in again". To use Claude Code as the quota source when OpenCode has no Anthropic login, install it and sign in:
 
 ```bash
 claude auth login

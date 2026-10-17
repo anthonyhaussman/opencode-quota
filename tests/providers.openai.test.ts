@@ -126,6 +126,21 @@ describe("openai provider", () => {
     ]);
   });
 
+  it("passes the request timeout to the usage request", async () => {
+    fakeHttp(
+      (_url, init) =>
+        new Promise((_resolve, reject) =>
+          init.signal?.addEventListener("abort", () => reject(new Error("aborted"))),
+        ),
+    );
+
+    const fetched = await fetchRows([oauthRow("work-id", { active: true })], {
+      requestTimeoutMs: 20,
+    });
+
+    expect(fetched.error).toMatchObject({ code: "timeout" });
+  });
+
   it("queries and names every stored login independently", async () => {
     const { tokens } = chatgptHttp({
       plan_type: "business",

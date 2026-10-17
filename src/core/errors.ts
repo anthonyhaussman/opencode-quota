@@ -95,8 +95,12 @@ function findRetryAtMs(message: string, nowMs: number): number | undefined {
   return match ? nowMs + Number(match[1]) * 1000 : undefined;
 }
 
+function codeFromWords(message: string): QuotaErrorCode {
+  return RULES.find(([, pattern]) => pattern.test(message))?.[0] ?? "internal";
+}
+
 export function classifyError(message: string, nowMs: number = Date.now()): QuotaError {
-  const code = RULES.find(([, pattern]) => pattern.test(message))?.[0] ?? "internal";
+  const code = codeFromWords(message);
   // Hidden before it is cut, so a cut never leaves part of an email address or home dir.
   const detail = publicDetail(message, DETAIL_MAX_LENGTH);
   const error: QuotaError = { code, ...(detail ? { detail } : {}) };
@@ -119,17 +123,38 @@ export function classifyError(message: string, nowMs: number = Date.now()): Quot
 /** What a failed request says about itself: its code, HTTP status and when to try again. */
 export type ErrorFacts = Pick<QuotaError, "code" | "status" | "retryAtMs">;
 
-/** A provider's failure: its own facts when its request gave them, else read from its words. */
+/** The latest retry time a provider's reply may set: a daily quota resets within it. */
+export const RETRY_WAIT_MAX_MS = 24 * 60 * 60_000;
+
+/**
+ * Codes the words name more exactly than a bare status: a 403 that says "secondary rate limit"
+ * or "not subscribed", a 504 "Gateway Timeout".
+ */
+const CODES_OVER_PROVIDER_ERROR: ReadonlySet<QuotaErrorCode> = new Set([
+  "rate_limited",
+  "no_plan",
+  "login_expired",
+  "timeout",
+]);
+
+/**
+ * A provider's failure: its own facts when its request gave them, else read from its words.
+ * When the facts only say `provider_error`, words that name a rate limit, a missing plan, an
+ * expired login or a timeout win; the status and retry time stay.
+ */
 export function providerError(
   message: string,
   facts: ErrorFacts | undefined,
   nowMs: number = Date.now(),
 ): QuotaError {
   if (!facts || !isQuotaErrorCode(facts.code)) return classifyError(message, nowMs);
+  const wordsCode = facts.code === "provider_error" ? codeFromWords(message) : undefined;
+  const code =
+    wordsCode !== undefined && CODES_OVER_PROVIDER_ERROR.has(wordsCode) ? wordsCode : facts.code;
   const detail = publicDetail(message, DETAIL_MAX_LENGTH);
   const status = httpStatus(facts.status);
   return {
-    code: facts.code,
+    code,
     ...(detail ? { detail } : {}),
     ...(status !== undefined ? { status } : {}),
     ...(facts.retryAtMs !== undefined ? { retryAtMs: facts.retryAtMs } : {}),

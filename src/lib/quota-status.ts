@@ -1128,8 +1128,6 @@ const DEBUG_DETAILS = {
     config_checked_paths: pathList,
   },
   "opencode-go": {
-    auth_source: keySource,
-    ...each(pathList, "auth_checked_paths", "credential_database_paths"),
     console_auth_state: oneOf(...CONSOLE_AUTH_STATES),
     console_error: present,
     go_source: oneOf("console", "legacy_key"),

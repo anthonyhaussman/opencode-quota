@@ -278,16 +278,19 @@ describe("quota store", () => {
     expect(copilot.fetch).toHaveBeenCalledTimes(3);
   });
 
-  it("waits for a far retry time at most as long as its longest backoff, 15 minutes", async () => {
+  it.each([
+    { name: "hours away", retryInMs: 3 * 60 * MINUTE, waitMs: 3 * 60 * MINUTE },
+    { name: "days away, at most a day", retryInMs: 3 * 24 * 60 * MINUTE, waitMs: 24 * 60 * MINUTE },
+  ])("waits for a retry time $name", async ({ retryInMs, waitMs }) => {
     const copilot = fakeProvider();
     copilot.fetch.mockResolvedValue({
       rows: [],
-      error: { code: "rate_limited", retryAtMs: START_MS + 3 * 60 * MINUTE },
+      error: { code: "rate_limited", retryAtMs: START_MS + retryInMs },
       debug: [],
     });
     const store = makeStore([copilot.provider], 0);
     await store.refresh({ reason: "poll" });
-    clock += 15 * MINUTE - SECOND;
+    clock += waitMs - SECOND;
     await store.refresh({ reason: "poll" });
     expect(copilot.fetch).toHaveBeenCalledTimes(1);
     clock += SECOND;
