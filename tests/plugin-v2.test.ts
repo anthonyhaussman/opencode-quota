@@ -96,6 +96,7 @@ describe("V2 server plugin", () => {
     expect(options).not.toHaveProperty("agent");
     expect(options).not.toHaveProperty("default_agent");
     expect((plugin as Record<string, unknown>)["command.execute.before"]).toBeUndefined();
+    expect((plugin as Record<string, unknown>).config).toBeUndefined();
   });
 
   it("registers /quota, /quota_status, /quota_usage and the /tokens_* names for Web and Desktop", async () => {
