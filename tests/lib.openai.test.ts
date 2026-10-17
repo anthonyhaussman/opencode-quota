@@ -249,6 +249,7 @@ describe("queryOpenAIQuota", () => {
       403,
       { error: "account alice@example.com account-id-123 access-secret" },
       "OpenAI API error 403",
+      { code: "provider_error", status: 403 },
     ],
     // #316: only OpenAI's short error code is added.
     [
@@ -261,16 +262,22 @@ describe("queryOpenAIQuota", () => {
         },
       },
       "OpenAI API error 401 (no_matching_rule)",
+      { code: "login_expired", status: 401 },
     ],
-    [401, { error: { code: "alice@example.com is blocked" } }, "OpenAI API error 401"],
-  ])("reports HTTP %i without echoing the body", async (status, body, error) => {
+    [
+      401,
+      { error: { code: "alice@example.com is blocked" } },
+      "OpenAI API error 401",
+      { code: "login_expired", status: 401 },
+    ],
+  ])("reports HTTP %i without echoing the body", async (status, body, error, facts) => {
     vi.stubGlobal(
       "fetch",
       vi.fn(async () => new Response(JSON.stringify(body), { status })),
     );
 
     const result = await queryOpenAIQuota({ auth: LOGIN });
-    expect(result).toEqual({ success: false, error });
+    expect(result).toEqual({ success: false, error, facts });
     expect(JSON.stringify(result)).not.toMatch(/alice@example\.com|account-id-123|access-secret/u);
   });
 

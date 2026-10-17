@@ -22,6 +22,7 @@ import {
   type FetchError,
   failedAccount,
   fetchEachLogin,
+  fetchError,
   type ProviderFetchResult,
   type ProviderRow,
   quotaRow,
@@ -95,7 +96,7 @@ async function fetchOpenCodeLogin(
   if (!result.success) {
     return {
       rows: [],
-      errors: [{ message: result.error }],
+      errors: [fetchError(result.error, result.facts)],
       ...(result.rejected ? { rejected: true } : {}),
     };
   }
@@ -170,7 +171,11 @@ async function fetchFromClaudeCli(options: {
   const signedIn =
     diagnostics.authStatus === "authenticated" || diagnostics.oauthCredentialSource !== undefined;
   if (signedIn && diagnostics.message) {
-    return { attempted: true, accounts: [failedAccount("Claude", diagnostics.message)], debug };
+    return {
+      attempted: true,
+      accounts: [failedAccount("Claude", diagnostics.message, diagnostics.facts)],
+      debug,
+    };
   }
   return { attempted: false, accounts: [], debug };
 }

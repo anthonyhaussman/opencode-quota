@@ -4,13 +4,15 @@
  * adding each row's id, provider and account.
  */
 
+import type { ErrorFacts } from "../core/errors.js";
 import type { DebugDetail, QuotaRow, QuotaWindow } from "../core/types.js";
 import { type CredentialRow, formatCredentialDisplayNames } from "../lib/opencode-auth.js";
 
 /** One row as a provider reports it; `key` is the part of the row id after the provider id. */
 export type ProviderRow = Omit<QuotaRow, "id" | "providerId" | "account"> & { key: string };
 
-export type FetchError = { message: string };
+/** One error: its words, and the facts of the request that failed when it gave them. */
+export type FetchError = { message: string; facts?: ErrorFacts };
 
 /**
  * One account's rows and errors. `name` is its display name, for example
@@ -97,8 +99,13 @@ export function windowRows(
 }
 
 /** An account with one error and no rows. */
-export function failedAccount(name: string, message: string): AccountResult {
-  return { name, rows: [], errors: [{ message }] };
+export function failedAccount(name: string, message: string, facts?: ErrorFacts): AccountResult {
+  return { name, rows: [], errors: [fetchError(message, facts)] };
+}
+
+/** An error with its request's facts, when there are some. */
+export function fetchError(message: string, facts?: ErrorFacts): FetchError {
+  return facts ? { message, facts } : { message };
 }
 
 /** What one login gave: its rows and errors, or null when it had nothing to query. */

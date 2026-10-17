@@ -19,6 +19,7 @@ import {
   type FetchError,
   FIVE_HOUR,
   failedAccount,
+  fetchError,
   MONTHLY,
   type ProviderFetchResult,
   type ProviderRow,
@@ -155,7 +156,7 @@ export const opencodeGoProvider: QuotaProvider = {
         };
       }
       consoleError = consoleResult.error;
-      consoleFailure = { message: consoleError };
+      consoleFailure = fetchError(consoleError, consoleResult.facts);
     } else {
       consoleError = safeErrorText(consoleAuth.error);
       consoleFailure = {
@@ -205,7 +206,11 @@ async function fetchWithApiKey(
     retainCurrentCredentialFingerprints(new Set(storedKeys.map(fingerprintCredential)));
     if (!hasVendorKey(keys)) {
       return consoleFailure
-        ? { attempted: true, accounts: [failedAccount(LABEL, consoleFailure.message)], debug }
+        ? {
+            attempted: true,
+            accounts: [{ name: LABEL, rows: [], errors: [consoleFailure] }],
+            debug,
+          }
         : { attempted: false, accounts: [], debug };
     }
 
@@ -225,7 +230,7 @@ async function fetchWithApiKey(
           notSubscribedCredentialFingerprints.add(fingerprint);
           return null;
         }
-        return { rows: [], errors: [{ message: result.error }] };
+        return { rows: [], errors: [fetchError(result.error, result.facts)] };
       },
     });
     const nothingShown = accounts.every(
@@ -253,7 +258,7 @@ async function fetchWithApiKey(
   if (!result.success) {
     return {
       attempted: true,
-      accounts: [failedAccount(LABEL, result.error)],
+      accounts: [failedAccount(LABEL, result.error, result.facts)],
       debug: [...debug, { key: "live_fetch_error", value: result.error }],
     };
   }

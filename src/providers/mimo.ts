@@ -4,10 +4,11 @@
  * Its usage, plan and balance endpoints are read at once; each one that fails is its own error.
  */
 
+import type { ErrorFacts } from "../core/errors.js";
 import type { AmountUnit } from "../core/types.js";
 import { sanitizeSingleLineDisplaySnippet } from "../lib/display-sanitize.js";
 import type { QuotaProvider, QuotaProviderContext } from "../lib/entries.js";
-import { requestJson } from "../lib/http.js";
+import { failureFacts, requestJson } from "../lib/http.js";
 import { isRecord } from "../lib/json-guards.js";
 import {
   DEFAULT_MIMO_CONFIG_CACHE_MAX_AGE_MS,
@@ -50,7 +51,9 @@ interface MimoBalance {
   currency: string | null;
 }
 
-type MimoEndpointResult<T> = { state: "success"; data: T } | { state: "error"; error: string };
+type MimoEndpointResult<T> =
+  | { state: "success"; data: T }
+  | { state: "error"; error: string; facts?: ErrorFacts };
 
 interface MimoDashboardResult {
   usage: MimoEndpointResult<MimoMonthlyQuota>;
@@ -150,9 +153,10 @@ async function fetchMimoEndpoint<T>(
   parse: (json: unknown) => T,
   context: MimoRequestContext,
 ): Promise<MimoEndpointResult<T>> {
-  const fail = (problem: string): MimoEndpointResult<T> => ({
+  const fail = (problem: string, facts?: ErrorFacts): MimoEndpointResult<T> => ({
     state: "error",
     error: `Xiaomi MiMo ${name} ${problem}`,
+    ...(facts ? { facts } : {}),
   });
 
   const reply = await requestJson(`${MIMO_ORIGIN}/api/v1${path}`, {
@@ -174,14 +178,17 @@ async function fetchMimoEndpoint<T>(
   if (!reply.ok) {
     const { failure } = reply;
     if (failure.kind === "http" && failure.status !== undefined) {
-      if (failure.status >= 300 && failure.status < 400) return fail("request requires login");
-      return fail(`request failed (HTTP ${failure.status})`);
+      // A redirect goes to the sign-in page.
+      if (failure.status >= 300 && failure.status < 400) {
+        return fail("request requires login", failureFacts(failure, "login_expired"));
+      }
+      return fail(`request failed (HTTP ${failure.status})`, failureFacts(failure));
     }
     if (failure.kind === "too_large" || failure.kind === "invalid_json") {
-      return fail("response could not be parsed");
+      return fail("response could not be parsed", failureFacts(failure));
     }
     const detail = sanitizeSingleLineDisplaySnippet(failure.detail, 120) || "request failed";
-    return fail(`request failed: ${detail}`);
+    return fail(`request failed: ${detail}`, failureFacts(failure));
   }
 
   try {
@@ -280,7 +287,7 @@ function mimoAccounts(result: MimoDashboardResult): AccountResult[] {
   return [
     { name: plan ? `${MIMO_LABEL}: ${plan}` : MIMO_LABEL, rows, errors: [] },
     ...[result.usage, result.detail, result.balance].flatMap((endpoint) =>
-      endpoint.state === "error" ? [failedAccount(MIMO_LABEL, endpoint.error)] : [],
+      endpoint.state === "error" ? [failedAccount(MIMO_LABEL, endpoint.error, endpoint.facts)] : [],
     ),
   ];
 }

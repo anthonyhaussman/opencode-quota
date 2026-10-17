@@ -14,8 +14,9 @@ import { readFile } from "fs/promises";
 import { homedir } from "os";
 import { join } from "path";
 
+import type { ErrorFacts } from "../core/errors.js";
 import { sanitizeDisplaySnippet, sanitizeDisplayText } from "./display-sanitize.js";
-import { requestJson } from "./http.js";
+import { failureFacts, parseRetryAfterMs, requestJson } from "./http.js";
 import { asRecord, finiteNumber, nonEmptyString } from "./json-guards.js";
 import { type CredentialRow, credentialRowAuthData, readCredentialRows } from "./opencode-auth.js";
 import {
@@ -88,6 +89,7 @@ export interface AnthropicQuotaResult {
 interface AnthropicQuotaError {
   success: false;
   error: string;
+  facts?: ErrorFacts;
   /** Anthropic rejected the token (HTTP 401 or 403). */
   rejected?: true;
 }
@@ -111,6 +113,8 @@ export interface AnthropicDiagnostics {
   binaryPath: string | null;
   checkedCommands: string[];
   message?: string;
+  /** The facts of the usage request that failed. */
+  facts?: ErrorFacts;
   quota?: AnthropicQuotaResult;
 }
 
@@ -159,7 +163,7 @@ type ClaudeCredentialSourceResult =
 
 type AnthropicFallbackQuota =
   | { state: "success"; quota: AnthropicQuotaResult }
-  | { state: "unavailable"; detail: string; rejected?: true };
+  | { state: "unavailable"; detail: string; facts?: ErrorFacts; rejected?: true };
 
 type ParsedAuthProbe = {
   authStatus: AnthropicAuthStatus;
@@ -513,19 +517,6 @@ async function readClaudeOAuthAccessToken(): Promise<AnthropicCredentialsAccess>
   };
 }
 
-function parseRetryAfterMs(value: string | null, nowMs: number): number | undefined {
-  const trimmed = value?.trim();
-  if (!trimmed) return undefined;
-
-  if (/^[+-]?(?:\d+(?:\.\d+)?|\.\d+)$/u.test(trimmed)) {
-    const seconds = Number(trimmed);
-    return Number.isFinite(seconds) && seconds > 0 ? seconds * 1_000 : undefined;
-  }
-
-  const durationMs = Date.parse(trimmed) - nowMs;
-  return Number.isFinite(durationMs) && durationMs > 0 ? durationMs : undefined;
-}
-
 /** Records a 429 for this token and returns how long the usage probe stays paused. */
 function startAnthropicOAuthCooldown(tokenFingerprint: string, retryAfter: string | null): number {
   const nowMs = Date.now();
@@ -594,11 +585,16 @@ async function performAnthropicOAuthUsageRequest(
       : { state: "unavailable", detail: "Unexpected Anthropic quota response shape" };
   }
   const { failure } = reply;
+  // A 429 waits out the cooldown, which is at least its Retry-After.
+  const facts =
+    cooldownMs === undefined
+      ? failureFacts(failure)
+      : { ...failureFacts(failure), retryAtMs: Date.now() + cooldownMs };
   if (failure.kind === "invalid_json") {
-    return { state: "unavailable", detail: "Failed to parse Anthropic quota response" };
+    return { state: "unavailable", detail: "Failed to parse Anthropic quota response", facts };
   }
   if (failure.kind !== "http" || failure.status === undefined) {
-    return { state: "unavailable", detail: failure.detail };
+    return { state: "unavailable", detail: failure.detail, facts };
   }
 
   const detail = failure.detail.slice(0, 120);
@@ -611,6 +607,7 @@ async function performAnthropicOAuthUsageRequest(
       cooldownMs === undefined
         ? errorDetail
         : `${errorDetail} ${getAnthropicOAuthCooldownMessage(cooldownMs)}`,
+    facts,
     ...(failure.status === 401 || failure.status === 403 ? { rejected: true as const } : {}),
   };
 }
@@ -628,6 +625,7 @@ async function queryAnthropicQuotaFromOAuthAccessToken(
     return {
       state: "unavailable",
       detail: getAnthropicOAuthCooldownMessage(cooldown.blockedUntilMs - nowMs),
+      facts: { code: "rate_limited", status: 429, retryAtMs: cooldown.blockedUntilMs },
     };
   }
 
@@ -656,7 +654,12 @@ export async function queryAnthropicQuotaWithOAuth(
 ): Promise<AnthropicQuotaResult | AnthropicQuotaError> {
   const result = await queryAnthropicQuotaFromOAuthAccessToken(accessToken, requestTimeoutMs);
   if (result.state === "success") return result.quota;
-  return { success: false, error: result.detail, ...(result.rejected ? { rejected: true } : {}) };
+  return {
+    success: false,
+    error: result.detail,
+    ...(result.facts ? { facts: result.facts } : {}),
+    ...(result.rejected ? { rejected: true } : {}),
+  };
 }
 
 function extractAuthBoolean(data: unknown): boolean | undefined {
@@ -855,6 +858,7 @@ function buildDiagnostics(
     quotaSource: AnthropicQuotaSource;
     oauthCredentialSource?: "claude-credentials";
     message?: string;
+    facts?: ErrorFacts;
     quota?: AnthropicQuotaResult;
   },
 ): AnthropicDiagnostics {
@@ -870,6 +874,7 @@ function buildDiagnostics(
     binaryPath: local.binaryPath,
     checkedCommands: local.checkedCommands,
     ...(outcome.message ? { message: outcome.message } : {}),
+    ...(outcome.facts ? { facts: outcome.facts } : {}),
     ...(outcome.quota ? { quota: outcome.quota } : {}),
   };
 }
@@ -906,6 +911,7 @@ async function probeAnthropicDiagnostics(
       quotaSource: "none",
       oauthCredentialSource: "claude-credentials",
       message: buildAnthropicNoQuotaDiagnosticsMessage(fallbackQuota.detail),
+      facts: fallbackQuota.facts,
     });
   }
   return buildDiagnostics(local, {

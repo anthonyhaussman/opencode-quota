@@ -4,17 +4,19 @@
  * as its own account; an env or config key is used alone.
  */
 
+import type { ErrorFacts } from "../core/errors.js";
 import type { Amount, DebugDetail } from "../core/types.js";
 import { API_KEY_VENDORS, readVendorKeys } from "../lib/api-key-resolver.js";
 import { sanitizeSingleLineDisplayText } from "../lib/display-sanitize.js";
 import type { QuotaProvider, QuotaProviderContext } from "../lib/entries.js";
-import { requestJson } from "../lib/http.js";
+import { failureFacts, requestJson } from "../lib/http.js";
 import { finiteNumber, isRecord } from "../lib/json-guards.js";
 import { modelProviderMatchesRuntimeId } from "../lib/provider-model-matching.js";
 import { accountingDecimalFromNumber } from "./accounting-decimal.js";
 import { vendorKeysPolicy } from "./cache-policies.js";
 import {
   type FetchError,
+  fetchError,
   MONTHLY,
   type ProviderFetchResult,
   type ProviderRow,
@@ -120,8 +122,8 @@ function includedCreditsRow(included: IncludedCredits, percentRemaining: number)
   };
 }
 
-function failedKeyFetch(message: string): KeyFetch {
-  return { rows: [], errors: [{ message }], debug: [] };
+function failedKeyFetch(message: string, facts?: ErrorFacts): KeyFetch {
+  return { rows: [], errors: [fetchError(message, facts)], debug: [] };
 }
 
 /** One balance reply as rows; a field that could not be used is an error next to them. */
@@ -232,7 +234,10 @@ async function queryOllamaCloudQuota(apiKey: string, requestTimeoutMs?: number):
     const { failure } = reply;
     if (failure.kind === "http") {
       const snippet = sanitizeMessage(failure.detail);
-      return failedKeyFetch(`Ollama Cloud balance API error ${failure.status}: ${snippet}`);
+      return failedKeyFetch(
+        `Ollama Cloud balance API error ${failure.status}: ${snippet}`,
+        failureFacts(failure),
+      );
     }
     return failedKeyFetch(
       sanitizeMessage(
@@ -240,6 +245,7 @@ async function queryOllamaCloudQuota(apiKey: string, requestTimeoutMs?: number):
           ? `Ollama Cloud balance API ${failure.detail}`
           : failure.detail,
       ),
+      failureFacts(failure),
     );
   }
   try {

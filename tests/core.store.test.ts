@@ -278,6 +278,23 @@ describe("quota store", () => {
     expect(copilot.fetch).toHaveBeenCalledTimes(3);
   });
 
+  it("waits for a far retry time at most as long as its longest backoff, 15 minutes", async () => {
+    const copilot = fakeProvider();
+    copilot.fetch.mockResolvedValue({
+      rows: [],
+      error: { code: "rate_limited", retryAtMs: START_MS + 3 * 60 * MINUTE },
+      debug: [],
+    });
+    const store = makeStore([copilot.provider], 0);
+    await store.refresh({ reason: "poll" });
+    clock += 15 * MINUTE - SECOND;
+    await store.refresh({ reason: "poll" });
+    expect(copilot.fetch).toHaveBeenCalledTimes(1);
+    clock += SECOND;
+    await store.refresh({ reason: "poll" });
+    expect(copilot.fetch).toHaveBeenCalledTimes(2);
+  });
+
   it.each([true, false])(
     "after a settings change (recheck %s), shows a new snapshot and checks a failed provider again only for a recheck",
     async (recheck) => {

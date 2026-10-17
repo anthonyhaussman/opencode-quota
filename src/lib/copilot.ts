@@ -8,8 +8,9 @@
 
 import { existsSync, readFileSync } from "fs";
 import { join } from "path";
+import type { ErrorFacts } from "../core/errors.js";
 import { sanitizeDisplaySnippet, sanitizeSingleLineDisplaySnippet } from "./display-sanitize.js";
-import { requestJson } from "./http.js";
+import { failureFacts, RequestFailedError, requestJson, thrownFacts } from "./http.js";
 import { finiteNumber } from "./json-guards.js";
 import {
   activeCredentialRowsAuthData,
@@ -222,8 +223,8 @@ function errorText(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
-function toQuotaError(message: string): QuotaError {
-  return { success: false, error: message };
+function toQuotaError(message: string, facts?: ErrorFacts): QuotaError {
+  return facts ? { success: false, error: message, facts } : { success: false, error: message };
 }
 
 function validateEnterpriseHost(value: unknown): { host?: string; error?: string } {
@@ -597,12 +598,15 @@ async function fetchGitHubJson<T>(params: {
       failure.headers?.get("x-ratelimit-remaining") === "0"
         ? " (GitHub API rate limit exhausted)"
         : "";
-    throw new Error(
+    throw new RequestFailedError(
       `${apiName} error ${failure.status}: ${gitHubErrorMessage(failure.detail)}${rateLimit}`,
+      failureFacts(failure, rateLimit ? "rate_limited" : failure.code),
     );
   }
-  if (failure.kind === "invalid_json") throw new Error(`${apiName} returned malformed JSON`);
-  throw new Error(failure.detail);
+  if (failure.kind === "invalid_json") {
+    throw new RequestFailedError(`${apiName} returned malformed JSON`, failureFacts(failure));
+  }
+  throw new RequestFailedError(failure.detail, failureFacts(failure));
 }
 
 async function fetchGitHubRestJson<T>(
@@ -1062,7 +1066,7 @@ async function queryCopilotOAuthQuota(
     }
     return parseCopilotInternalUser(response);
   } catch (error) {
-    return toQuotaError(errorText(error));
+    return toQuotaError(errorText(error), thrownFacts(error));
   }
 }
 
@@ -1106,7 +1110,7 @@ export async function queryCopilotQuota(
           requestTimeoutMs: options.requestTimeoutMs,
         });
   } catch (error) {
-    return toQuotaError(errorText(error));
+    return toQuotaError(errorText(error), thrownFacts(error));
   }
 }
 

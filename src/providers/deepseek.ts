@@ -7,7 +7,7 @@ import { isCanonicalAccountingDecimal } from "../lib/accounting-format.js";
 import { API_KEY_VENDORS, readVendorKeys } from "../lib/api-key-resolver.js";
 import { sanitizeDisplaySnippet, sanitizeDisplayText } from "../lib/display-sanitize.js";
 import type { QuotaProvider, QuotaProviderContext } from "../lib/entries.js";
-import { requestJson } from "../lib/http.js";
+import { failureFacts, requestJson } from "../lib/http.js";
 import { isRecord, nonEmptyString } from "../lib/json-guards.js";
 import { modelProviderIncludesAny } from "../lib/provider-model-matching.js";
 import type { QuotaError } from "../lib/types.js";
@@ -15,6 +15,7 @@ import { vendorKeysPolicy } from "./cache-policies.js";
 import {
   type AccountResult,
   failedAccount,
+  fetchError,
   keySlug,
   type ProviderFetchResult,
   type ProviderRow,
@@ -105,6 +106,7 @@ async function queryDeepSeekBalance(
         failure.kind === "http"
           ? `DeepSeek API error ${failure.status}: ${sanitizeDisplaySnippet(failure.detail, 120)}`
           : failure.detail,
+      facts: failureFacts(failure),
     };
   }
   try {
@@ -153,7 +155,7 @@ export const deepseekProvider: QuotaProvider = {
       const result = await query(keys.envOrConfig.key);
       const accounts = result.success
         ? deepseekAccounts(result)
-        : [failedAccount(LABEL, result.error)];
+        : [failedAccount(LABEL, result.error, result.facts)];
       return { attempted: true, accounts, debug };
     }
 
@@ -163,7 +165,7 @@ export const deepseekProvider: QuotaProvider = {
       brokenFirst: false,
       async fetchKey(apiKey) {
         const result = await query(apiKey);
-        if (!result.success) return { rows: [], errors: [{ message: result.error }] };
+        if (!result.success) return { rows: [], errors: [fetchError(result.error, result.facts)] };
         return {
           rows: result.rows,
           errors: result.parseIssues.map((issue) => ({

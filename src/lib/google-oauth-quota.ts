@@ -1,3 +1,4 @@
+import type { ErrorFacts } from "../core/errors.js";
 import { readGlobalProviderConfigString } from "./api-key-resolver.js";
 import type {
   GoogleCompanionConfiguredCredentials,
@@ -8,7 +9,7 @@ import {
   makeAccountCacheKey,
   setCachedAccessToken,
 } from "./google-token-cache.js";
-import { requestJson } from "./http.js";
+import { failureFacts, RequestFailedError, requestJson, thrownFacts } from "./http.js";
 import { nonEmptyString } from "./json-guards.js";
 import {
   activeCredentialRowsAuthData,
@@ -94,7 +95,7 @@ export type GoogleQuotaFlavor<
   toBuckets: (response: Response, account: GoogleAccount<Key>) => Bucket[];
 };
 
-type AccessTokenResult = { accessToken: string } | { error: string };
+type AccessTokenResult = { accessToken: string } | { error: string; facts?: ErrorFacts };
 
 export async function resolveGoogleConfiguredProjectId(flavor: {
   projectIdEnvVar: string;
@@ -270,7 +271,7 @@ async function refreshAccessToken(
   refreshToken: string,
   credentials: GoogleCompanionConfiguredCredentials,
   timeoutMs: number | undefined,
-): Promise<{ accessToken: string; expiresIn: number } | { error: string }> {
+): Promise<{ accessToken: string; expiresIn: number } | { error: string; facts?: ErrorFacts }> {
   const reply = await requestJson(TOKEN_REFRESH_URL, {
     method: "POST",
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
@@ -289,17 +290,20 @@ async function refreshAccessToken(
     return { accessToken: data.access_token, expiresIn: data.expires_in };
   }
   const { failure } = reply;
-  if (failure.kind === "timeout") return { error: "Token refresh timeout" };
+  if (failure.kind === "timeout")
+    return { error: "Token refresh timeout", facts: failureFacts(failure) };
   if (failure.kind !== "http") return { error: "Token refresh failed" };
+  // Google answers a refresh token or client it no longer accepts with 400.
+  const facts = failureFacts(failure, failure.status === 400 ? "login_expired" : failure.code);
   try {
     const errorData = JSON.parse(failure.detail) as {
       error?: string;
       error_description?: string;
     } | null;
-    if (errorData?.error === "invalid_grant") return { error: "Token revoked" };
-    return { error: errorData?.error_description || `HTTP ${failure.status}` };
+    if (errorData?.error === "invalid_grant") return { error: "Token revoked", facts };
+    return { error: errorData?.error_description || `HTTP ${failure.status}`, facts };
   } catch {
-    return { error: `HTTP ${failure.status}` };
+    return { error: `HTTP ${failure.status}`, facts };
   }
 }
 
@@ -365,10 +369,18 @@ async function retrieveQuota<Response>(
   if (reply.ok) return reply.json as Response;
   const { failure } = reply;
   if (failure.kind === "http" && (failure.status === 401 || failure.status === 403)) {
-    throw new Error(`${flavor.name} quota auth error: ${failure.status}`);
+    throw new RequestFailedError(
+      `${flavor.name} quota auth error: ${failure.status}`,
+      failureFacts(failure, "login_expired"),
+    );
   }
-  if (failure.kind === "http") throw new Error(`${flavor.name} quota API error: ${failure.status}`);
-  throw new Error(failure.detail);
+  if (failure.kind === "http") {
+    throw new RequestFailedError(
+      `${flavor.name} quota API error: ${failure.status}`,
+      failureFacts(failure),
+    );
+  }
+  throw new RequestFailedError(failure.detail, failureFacts(failure));
 }
 
 /** Retries once with a fresh token when the quota API rejects the token. */
@@ -377,7 +389,7 @@ async function fetchAccountBuckets<Key extends GoogleAuthSourceKey, Response, Bu
   account: GoogleAccount<Key>;
   credentials: GoogleCompanionConfiguredCredentials;
   timeoutMs: number | undefined;
-}): Promise<{ buckets: Bucket[] } | { error: string }> {
+}): Promise<{ buckets: Bucket[] } | { error: string; facts?: ErrorFacts }> {
   const { flavor, account, credentials, timeoutMs } = params;
   try {
     const token = await getAccessToken({ account, credentials, timeoutMs, force: false });
@@ -392,7 +404,7 @@ async function fetchAccountBuckets<Key extends GoogleAuthSourceKey, Response, Bu
         timeoutMs,
       );
     } catch (err) {
-      if (!(err instanceof Error && err.message.includes("auth error"))) throw err;
+      if (thrownFacts(err)?.code !== "login_expired") throw err;
       const retryToken = await getAccessToken({ account, credentials, timeoutMs, force: true });
       if ("error" in retryToken) return retryToken;
       response = await retrieveQuota<Response>(
@@ -405,8 +417,9 @@ async function fetchAccountBuckets<Key extends GoogleAuthSourceKey, Response, Bu
 
     return { buckets: flavor.toBuckets(response, account) };
   } catch (err) {
-    if (err instanceof Error && err.message.includes("timeout")) return { error: "API timeout" };
-    return { error: err instanceof Error ? err.message : String(err) };
+    const facts = thrownFacts(err);
+    if (facts?.code === "timeout") return { error: "API timeout", facts };
+    return { error: err instanceof Error ? err.message : String(err), ...(facts ? { facts } : {}) };
   }
 }
 
@@ -438,7 +451,13 @@ export async function queryGoogleQuota<Key extends GoogleAuthSourceKey, Response
     timeoutMs: options.requestTimeoutMs,
   });
   const noData = `No ${flavor.name} quota data available`;
-  if ("error" in result) return { success: false, error: result.error || noData };
+  if ("error" in result) {
+    return {
+      success: false,
+      error: result.error || noData,
+      ...(result.facts ? { facts: result.facts } : {}),
+    };
+  }
   if (result.buckets.length === 0) return { success: false, error: noData };
   return { success: true, buckets: result.buckets };
 }

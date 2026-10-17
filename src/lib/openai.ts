@@ -8,7 +8,7 @@
 import { sanitizeDisplayText } from "./display-sanitize.js";
 import type { FixedWindowProjectionEvidence } from "./entries.js";
 import { clampPercent } from "./format-utils.js";
-import { requestJson } from "./http.js";
+import { failureFacts, requestJson } from "./http.js";
 import { finiteNumber, isRecord } from "./json-guards.js";
 import {
   type CredentialRow,
@@ -319,11 +319,13 @@ export async function queryOpenAIQuota(options: {
   });
   if (!reply.ok) {
     const { failure } = reply;
-    if (failure.kind !== "http") return { success: false, error: failure.detail };
+    const facts = failureFacts(failure);
+    if (failure.kind !== "http") return { success: false, error: failure.detail, facts };
     const code = openAIErrorCode(failure.detail);
     return {
       success: false,
       error: `OpenAI API error ${failure.status}${code ? ` (${code})` : ""}`,
+      facts,
     };
   }
   try {

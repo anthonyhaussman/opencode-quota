@@ -3,7 +3,9 @@
  * size cap, and says why it got none, with the caller's own secrets redacted.
  */
 
+import type { ErrorFacts } from "../core/errors.js";
 import { secretValuesRedactor } from "../core/redact.js";
+import type { QuotaErrorCode } from "../core/types.js";
 import { sanitizeDisplayText } from "./display-sanitize.js";
 
 /** Request timeout in milliseconds. */
@@ -78,6 +80,13 @@ const DEFAULT_MAX_BYTES = 8 * 1024 * 1024;
  */
 export type RequestFailure = {
   kind: "http" | "timeout" | "network" | "too_large" | "invalid_json";
+  /**
+   * The error code: 401 is `login_expired`, 429 `rate_limited`, any other non-2xx
+   * `provider_error`; `timeout`; `network`; a reply too large or not JSON `bad_response`.
+   */
+  code: QuotaErrorCode;
+  /** When a non-2xx reply's Retry-After says to try again. */
+  retryAtMs?: number;
   /** The reply's status and headers, whenever a reply arrived. */
   status?: number;
   headers?: Headers;
@@ -106,6 +115,68 @@ type RequestJsonOptions = {
 };
 
 class TooLargeError extends Error {}
+
+function failureCode(kind: RequestFailure["kind"], status: number | undefined): QuotaErrorCode {
+  switch (kind) {
+    case "http":
+      return status === 401 ? "login_expired" : status === 429 ? "rate_limited" : "provider_error";
+    case "timeout":
+      return "timeout";
+    case "network":
+      return "network";
+    case "too_large":
+    case "invalid_json":
+      return "bad_response";
+  }
+}
+
+/** A Retry-After header as a wait: delta-seconds or an HTTP date; none when absent or past. */
+export function parseRetryAfterMs(
+  value: string | null,
+  nowMs: number = Date.now(),
+): number | undefined {
+  const trimmed = value?.trim();
+  if (!trimmed) return undefined;
+
+  if (/^[+-]?(?:\d+(?:\.\d+)?|\.\d+)$/u.test(trimmed)) {
+    const seconds = Number(trimmed);
+    return Number.isFinite(seconds) && seconds > 0 ? seconds * 1_000 : undefined;
+  }
+
+  const durationMs = Date.parse(trimmed) - nowMs;
+  return Number.isFinite(durationMs) && durationMs > 0 ? durationMs : undefined;
+}
+
+/**
+ * The facts the error vocabulary keeps of a failure: its code, the HTTP status of a non-2xx
+ * reply, and its Retry-After. `code` replaces the failure's own when the caller's words mean
+ * another (a 3xx that means "sign in again").
+ */
+export function failureFacts(
+  failure: RequestFailure,
+  code: QuotaErrorCode = failure.code,
+): ErrorFacts {
+  return {
+    code,
+    ...(failure.kind === "http" && failure.status !== undefined ? { status: failure.status } : {}),
+    ...(failure.retryAtMs !== undefined ? { retryAtMs: failure.retryAtMs } : {}),
+  };
+}
+
+/** A failed request as a thrown error, for callers that throw; its facts stay with it. */
+export class RequestFailedError extends Error {
+  constructor(
+    message: string,
+    readonly facts: ErrorFacts,
+  ) {
+    super(message);
+  }
+}
+
+/** The facts of a thrown request failure; none for any other error. */
+export function thrownFacts(error: unknown): ErrorFacts | undefined {
+  return error instanceof RequestFailedError ? error.facts : undefined;
+}
 
 function errorText(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
@@ -151,7 +222,20 @@ export async function requestJson(
   const secrets = (options.secrets ?? []).filter((secret): secret is string => Boolean(secret));
   const redact = secretValuesRedactor(secrets);
   const clean = (text: string) => redact(sanitizeDisplayText(text));
-  const fail = (failure: RequestFailure): JsonReply => ({ ok: false, failure });
+  const fail = (failure: Omit<RequestFailure, "code" | "retryAtMs">): JsonReply => {
+    const retryAfterMs =
+      failure.kind === "http"
+        ? parseRetryAfterMs(failure.headers?.get("Retry-After") ?? null)
+        : undefined;
+    return {
+      ok: false,
+      failure: {
+        ...failure,
+        code: failureCode(failure.kind, failure.status),
+        ...(retryAfterMs === undefined ? {} : { retryAtMs: Date.now() + retryAfterMs }),
+      },
+    };
+  };
   const maxBytes = options.maxBytes ?? DEFAULT_MAX_BYTES;
   let reply: { status: number; headers: Headers } | undefined;
 

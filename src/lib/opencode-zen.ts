@@ -1,4 +1,5 @@
-import { requestJson } from "./http.js";
+import type { ErrorFacts } from "../core/errors.js";
+import { failureFacts, requestJson } from "./http.js";
 import { asRecord } from "./json-guards.js";
 import {
   consoleBaseUrl,
@@ -61,7 +62,7 @@ interface OpenCodeZenBillingData {
  */
 type OpenCodeZenResult =
   | { success: true; data: OpenCodeZenBillingData; errors: string[] }
-  | { success: false; error: string };
+  | { success: false; error: string; facts?: ErrorFacts };
 
 type ConsoleRoute =
   | "billing/status"
@@ -70,7 +71,9 @@ type ConsoleRoute =
   | "policies/members"
   | "usage/cost-by-day";
 
-type ConsoleRouteResult<T> = { success: true; data: T } | { success: false; error: string };
+type ConsoleRouteResult<T> =
+  | { success: true; data: T }
+  | { success: false; error: string; facts?: ErrorFacts };
 
 /** Console micro-cent amounts arrive as decimal strings; numbers are accepted too. */
 function parseMicroCents(value: unknown): number | null {
@@ -305,7 +308,11 @@ async function fetchConsoleRoute<T>(params: {
     return { success: false, error: SESSION_ERROR };
   }
   if (!reply.ok && reply.failure.kind === "http") {
-    return { success: false, error: `OpenCode Console ${params.route} error ${status}` };
+    return {
+      success: false,
+      error: `OpenCode Console ${params.route} error ${status}`,
+      facts: failureFacts(reply.failure),
+    };
   }
   if (headers?.get("content-type")?.includes("text/html")) {
     return { success: false, error: SESSION_ERROR };
@@ -315,6 +322,7 @@ async function fetchConsoleRoute<T>(params: {
     return {
       success: false,
       error: `OpenCode Console ${params.route} request failed: ${(detail || "unknown").slice(0, 120)}`,
+      facts: failureFacts(reply.failure),
     };
   }
   const notParsed = {

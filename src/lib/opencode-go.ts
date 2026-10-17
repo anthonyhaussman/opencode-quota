@@ -1,5 +1,5 @@
 import { sanitizeDisplayText } from "./display-sanitize.js";
-import { requestJson } from "./http.js";
+import { failureFacts, requestJson } from "./http.js";
 import { asRecord } from "./json-guards.js";
 import {
   consoleBaseUrl,
@@ -134,12 +134,14 @@ export async function queryOpenCodeGoQuota(
         return {
           success: false,
           error: "OpenCode Go not subscribed (403 EntitlementError)",
+          facts: failureFacts(failure, "no_plan"),
           notSubscribed: true,
         };
       }
       return {
         success: false,
         error: `OpenCode Go API error ${failure.status}: ${sanitizeMessage(failure.detail, accessToken)}`,
+        facts: failureFacts(failure),
       };
     }
     if (failure.kind === "invalid_json") {
@@ -147,7 +149,11 @@ export async function queryOpenCodeGoQuota(
         `body is not valid JSON: ${sanitizeMessage(failure.detail, accessToken)}`,
       );
     }
-    return { success: false, error: sanitizeMessage(failure.detail, accessToken) };
+    return {
+      success: false,
+      error: sanitizeMessage(failure.detail, accessToken),
+      facts: failureFacts(failure),
+    };
   }
 
   const root = asRecord(reply.json);
@@ -223,6 +229,7 @@ export async function queryOpenCodeGoConsoleStatus(
       return {
         success: false,
         error: "OpenCode Go subscription not found for this console account (404)",
+        facts: failureFacts(failure, "no_plan"),
         notSubscribed: true,
       };
     }
@@ -230,10 +237,15 @@ export async function queryOpenCodeGoConsoleStatus(
       return {
         success: false,
         error: `OpenCode Console API error ${failure.status} (/api/go/status)`,
+        facts: failureFacts(failure),
       };
     }
     if (failure.kind === "invalid_json") return contractError("console response is not valid JSON");
-    return { success: false, error: sanitizeMessage(failure.detail, credential.accessToken) };
+    return {
+      success: false,
+      error: sanitizeMessage(failure.detail, credential.accessToken),
+      facts: failureFacts(failure),
+    };
   }
 
   const root = asRecord(reply.json);

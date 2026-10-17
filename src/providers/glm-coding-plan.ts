@@ -7,12 +7,13 @@ import { API_KEY_VENDORS, type ApiKeyLoginSpec, readVendorKeys } from "../lib/ap
 import { sanitizeDisplaySnippet, sanitizeDisplayText } from "../lib/display-sanitize.js";
 import type { QuotaProvider, QuotaProviderContext } from "../lib/entries.js";
 import { clampPercent } from "../lib/format-utils.js";
-import { requestJson } from "../lib/http.js";
+import { failureFacts, requestJson } from "../lib/http.js";
 import type { QuotaError } from "../lib/types.js";
 import { vendorKeysPolicy } from "./cache-policies.js";
 import {
   FIVE_HOUR,
   failedAccount,
+  fetchError,
   type ProviderFetchResult,
   type ProviderRow,
   WEEKLY,
@@ -136,6 +137,7 @@ async function queryGlmRows(
         failure.kind === "http"
           ? `${apiError} ${failure.status}: ${sanitizeDisplaySnippet(failure.detail, 120)}`
           : failure.detail,
+      facts: failureFacts(failure),
     };
   }
 
@@ -182,7 +184,7 @@ async function fetchGlmQuota(
       brokenFirst: false,
       async fetchKey(apiKey) {
         const result = await queryGlmRows(endpoint, apiKey, requestTimeoutMs);
-        if (!result.success) return { rows: [], errors: [{ message: result.error }] };
+        if (!result.success) return { rows: [], errors: [fetchError(result.error, result.facts)] };
         return { rows: result.rows, errors: [] };
       },
     });
@@ -205,7 +207,11 @@ async function fetchGlmQuota(
     }),
   ];
   if (!result.success) {
-    return { attempted: true, accounts: [failedAccount(endpoint.label, result.error)], debug };
+    return {
+      attempted: true,
+      accounts: [failedAccount(endpoint.label, result.error, result.facts)],
+      debug,
+    };
   }
   return { attempted: true, accounts: [{ name: endpoint.label, rows, errors: [] }], debug };
 }

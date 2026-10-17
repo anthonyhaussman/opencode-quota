@@ -5,6 +5,7 @@
  * OpenCode could not return shows as its own error. OpenCode alone refreshes the OAuth tokens.
  */
 
+import type { ErrorFacts } from "../core/errors.js";
 import { classifyWindow } from "../core/windows.js";
 import { sanitizeSingleLineDisplaySnippet } from "../lib/display-sanitize.js";
 import type {
@@ -13,7 +14,7 @@ import type {
   QuotaProviderMatchContext,
 } from "../lib/entries.js";
 import { clampPercent } from "../lib/format-utils.js";
-import { requestJson } from "../lib/http.js";
+import { failureFacts, requestJson } from "../lib/http.js";
 import { isRecord, nonEmptyString } from "../lib/json-guards.js";
 import {
   type CredentialRow,
@@ -33,6 +34,7 @@ import {
   type ProviderFetchResult,
   type ProviderRow,
   quotaRow,
+  fetchError,
 } from "./contract.js";
 
 const CREDITS_URL = "https://cli-chat-proxy.grok.com/v1/billing?format=credits";
@@ -214,8 +216,8 @@ function safeErrorText(message: string): string {
   return sanitizeSingleLineDisplaySnippet(message, 160);
 }
 
-function failedLogin(message: string): XaiLoginFetch {
-  return { rows: [], errors: [{ message }] };
+function failedLogin(message: string, facts?: ErrorFacts): XaiLoginFetch {
+  return { rows: [], errors: [fetchError(message, facts)] };
 }
 
 /** The credits row of one sign-in, named after its subscription. */
@@ -246,6 +248,7 @@ async function queryXaiLogin(
       failure.kind === "http"
         ? `xAI API error ${failure.status}: ${safeErrorText(failure.detail)}`
         : safeErrorText(failure.detail),
+      failureFacts(failure),
     );
   }
 

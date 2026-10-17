@@ -1,5 +1,6 @@
 /** MiniMax Token Plan quota (international and China endpoints), one canonical model per account. */
 
+import type { ErrorFacts } from "../core/errors.js";
 import type { Amount } from "../core/types.js";
 import { API_KEY_VENDORS, type ApiKeyLoginSpec, readVendorKeys } from "../lib/api-key-resolver.js";
 import { sanitizeDisplayText } from "../lib/display-sanitize.js";
@@ -8,7 +9,7 @@ import type {
   QuotaProviderContext,
   QuotaProviderMatchContext,
 } from "../lib/entries.js";
-import { requestJson } from "../lib/http.js";
+import { failureFacts, requestJson } from "../lib/http.js";
 import { asRecord } from "../lib/json-guards.js";
 import {
   isAnyProviderIdAvailable,
@@ -20,6 +21,7 @@ import { vendorKeysPolicy } from "./cache-policies.js";
 import {
   FIVE_HOUR,
   failedAccount,
+  fetchError,
   type ProviderFetchResult,
   type ProviderRow,
   quotaRow,
@@ -214,7 +216,7 @@ async function queryMiniMaxQuota(
   apiKey: string,
   endpointId: MiniMaxQuotaEndpointId,
   requestTimeoutMs: number | undefined,
-): Promise<{ rows: ProviderRow[] } | { error: string }> {
+): Promise<{ rows: ProviderRow[] } | { error: string; facts?: ErrorFacts }> {
   const reply = await requestJson(MINIMAX_ENDPOINTS[endpointId].quotaUrl, {
     method: "GET",
     headers: { Authorization: `Bearer ${apiKey}`, "User-Agent": USER_AGENT },
@@ -228,6 +230,7 @@ async function queryMiniMaxQuota(
         failure.kind === "http"
           ? `MiniMax API error ${failure.status}: ${sanitizeMiniMaxMessage(failure.detail)}`
           : sanitizeMiniMaxMessage(failure.detail),
+      facts: failureFacts(failure),
     };
   }
 
@@ -294,7 +297,7 @@ async function fetchMiniMaxQuota(
       async fetchKey(apiKey) {
         const result = await query(apiKey);
         return "error" in result
-          ? { rows: [], errors: [{ message: result.error }] }
+          ? { rows: [], errors: [fetchError(result.error, result.facts)] }
           : { rows: result.rows, errors: [] };
       },
     });
@@ -305,7 +308,7 @@ async function fetchMiniMaxQuota(
   if ("error" in result) {
     return {
       attempted: true,
-      accounts: [failedAccount(spec.label, result.error)],
+      accounts: [failedAccount(spec.label, result.error, result.facts)],
       debug: [...debug, { key: "live_fetch_error", value: result.error }],
     };
   }

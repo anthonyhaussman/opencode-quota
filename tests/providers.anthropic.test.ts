@@ -261,6 +261,18 @@ describe("anthropic provider", () => {
     },
   );
 
+  it("reports an empty 503 as a provider error, with its Retry-After", async () => {
+    world.storeLogins([claudeLogin("work")]);
+    fakeHttp(() => new Response("", { status: 503, headers: { "Retry-After": "60" } }));
+    const before = Date.now();
+
+    const fetched = await fetchRows(anthropicProvider, { anthropicBinaryPath: missingClaude() });
+
+    expect(fetched.error).toMatchObject({ code: "provider_error", status: 503 });
+    expect(fetched.error?.retryAtMs).toBeGreaterThanOrEqual(before + 60_000);
+    expect(errorDebug(fetched)).toEqual(["[Claude work]: Anthropic API returned 503"]);
+  });
+
   it("passes the request timeout to the usage request", async () => {
     world.storeLogins([claudeLogin("work")]);
     fakeHttp(

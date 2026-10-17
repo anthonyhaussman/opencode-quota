@@ -9,13 +9,14 @@ import { API_KEY_VENDORS, type ApiKeyLoginSpec, readVendorKeys } from "../lib/ap
 import { sanitizeDisplaySnippet, sanitizeDisplayText } from "../lib/display-sanitize.js";
 import type { QuotaProvider, QuotaProviderContext } from "../lib/entries.js";
 import { clampPercent } from "../lib/format-utils.js";
-import { requestJson } from "../lib/http.js";
+import { failureFacts, requestJson } from "../lib/http.js";
 import { nonEmptyString } from "../lib/json-guards.js";
 import { normalizeQuotaProviderId } from "../lib/provider-metadata.js";
 import type { QuotaError } from "../lib/types.js";
 import { vendorKeysPolicy } from "./cache-policies.js";
 import {
   failedAccount,
+  fetchError,
   keySlug,
   type ProviderFetchResult,
   type ProviderRow,
@@ -198,6 +199,7 @@ async function queryKimiWindows(
         failure.kind === "http"
           ? `Kimi API error ${failure.status}: ${sanitizeDisplaySnippet(failure.detail, 120)}`
           : failure.detail,
+      facts: failureFacts(failure),
     };
   }
 
@@ -250,7 +252,7 @@ async function fetchKimiQuota(
         const result = await query(apiKey);
         return result.success
           ? { rows: kimiRows(result.windows), errors: [] }
-          : { rows: [], errors: [{ message: result.error }] };
+          : { rows: [], errors: [fetchError(result.error, result.facts)] };
       },
     });
     return { ...stored, debug: authDetails };
@@ -260,7 +262,7 @@ async function fetchKimiQuota(
   if (!result.success) {
     return {
       attempted: true,
-      accounts: [failedAccount(spec.label, result.error)],
+      accounts: [failedAccount(spec.label, result.error, result.facts)],
       debug: [...authDetails, { key: "live_fetch_error", value: result.error }],
     };
   }
