@@ -64,6 +64,7 @@ export type LoadedSettings = {
   notRead: string[];
 };
 
+/** `providers.checking.requestTimeoutMs` is null while the file does not set it. */
 export type SettingsChange = { key: string; before: unknown; after: unknown };
 export type SaveResult = { ok: boolean; issues: SettingsIssue[]; diff: SettingsChange[] };
 export type SettingsWatch = { close(): void };
@@ -452,7 +453,11 @@ async function editLocked(
   if (planned === undefined) return { ok: true, issues: [], diff: [] };
   if ("issues" in planned) return { ok: false, issues: planned.issues, diff: [] };
   const updated = planned.text;
-  const diff = diffSettings(read.settings, readSettingsText(updated).settings);
+  const after = readSettingsText(updated);
+  const diff = diffSettings(read.settings, after.settings, {
+    before: read.fromFile,
+    after: after.fromFile,
+  });
   const issues = (conversion?.notes ?? []).map((message) => ({ key: "$conversion", message }));
   if (updated === original) return { ok: true, issues, diff };
 

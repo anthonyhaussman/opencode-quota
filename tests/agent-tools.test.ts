@@ -376,6 +376,21 @@ describe("quota_settings_set", () => {
     expect(existsSync(join(root, "config", "opencode.json"))).toBe(false);
   });
 
+  it("reports removing a request timeout set to its default as a change, since unset it is each provider's own", async () => {
+    writeSettings(JSON.stringify({ providers: { checking: { requestTimeoutMs: 5_000 } } }));
+
+    const result = await call("quota_settings_set", {
+      patch: { providers: { checking: { requestTimeoutMs: null } } },
+    });
+
+    expect(result).toMatchObject({
+      ok: true,
+      diff: [{ key: "providers.checking.requestTimeoutMs", before: 5_000, after: null }],
+      message: "Saved.",
+    });
+    expect((await loadSettings()).fromFile).not.toContain("providers.checking.requestTimeoutMs");
+  });
+
   it("never shows a saved key in the diff", async () => {
     saveOpenCodeKeys({ openrouter: "router-key-saved-in-opencode" });
     writeSettings(

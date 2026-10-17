@@ -381,7 +381,7 @@ describe("saveSettings", () => {
       ].join("\n");
     /** Switches the second provider on, as the user saw it in the file now. */
     const switchOnSecond = async () => {
-      const shown = clientSettings((await loadSettings()).settings, []).custom;
+      const shown = clientSettings(await loadSettings()).custom;
       const fingerprint = shown.find((entry) => entry.id === second.id)?.fingerprint ?? "";
       return { [second.id]: { enabled: true, fingerprint } };
     };

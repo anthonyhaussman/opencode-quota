@@ -73,7 +73,7 @@ Restart OpenCode. Coming from 5.x? Your old settings are converted automatically
 
 Full list: [Moving to OpenCode 2](docs/readme/updating.md#moving-to-opencode-2).
 
-All quota settings live in `opencode-quota/settings.jsonc`, which holds only the ones you change, in sections for Sidebar, Collapsed, Status line, Toast, Colors, Layout, Words, Providers and System. Save in `/quota_settings` keeps comments; file edits reach every open TUI within a few seconds. [Settings and defaults](docs/readme/configuration.md).
+All quota settings live in `opencode-quota/settings.jsonc`, which holds only the ones you change (a 6.0.0-beta.1 file holds them all; see [Updating](docs/readme/updating.md#updating)), in sections for Sidebar, Collapsed, Status line, Toast, Colors, Layout, Words, Providers and System. Save in `/quota_settings` keeps comments; file edits reach every open TUI within a few seconds. [Settings and defaults](docs/readme/configuration.md).
 
 ## Commands
 

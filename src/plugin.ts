@@ -181,7 +181,8 @@ export const QuotaToastPlugin = Plugin.define({
     // custom definition, and the settings, and none of the export parts the
     // server keeps for the export file.
     const forClients = (snapshot: QuotaSnapshot): QuotaSnapshot => {
-      const { settings, fromFile } = liveSettings.current();
+      const loaded = liveSettings.current();
+      const { settings } = loaded;
       const custom = settings.providers.custom;
       return {
         ...snapshot,
@@ -197,7 +198,7 @@ export const QuotaToastPlugin = Plugin.define({
               ),
             }
           : {}),
-        settings: clientSettings(settings, fromFile),
+        settings: clientSettings(loaded),
         ...(liveSettings.converted() ? { settingsConverted: true } : {}),
       };
     };
@@ -252,10 +253,7 @@ export const QuotaToastPlugin = Plugin.define({
       downloadPrices: () => logRpcFailure("downloadPrices", downloadPrices),
       // Read now, so a custom provider changed a moment ago shows as it is before a switch-on.
       settings: () =>
-        logRpcFailure("settings", async () => {
-          const loaded = await loadSettings({ projectDir });
-          return clientSettings(loaded.settings, loaded.fromFile);
-        }),
+        logRpcFailure("settings", async () => clientSettings(await loadSettings({ projectDir }))),
       // Answers once the new settings are in use. `customEnabled` is the user's switch in the
       // quota window; no agent tool calls this.
       saveSettings: (input) =>

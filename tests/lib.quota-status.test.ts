@@ -117,6 +117,7 @@ function params(overrides: ParamsOverrides = {}): QuotaStatusReportParams {
       exists: true,
       issues: [],
       notRead: [],
+      fromFile: [],
       ...settings,
       settings: values,
     },
@@ -2071,12 +2072,23 @@ describe("renderQuotaStatusReport", () => {
       await report({
         settings: {
           settings: changedSettings({ "providers.checking.requestTimeoutMs": 999_999.999 }),
+          fromFile: ["providers.checking.requestTimeoutMs"],
         },
       }),
       "settings",
     );
 
     expect(text).toContain("  - providers.checking.requestTimeoutMs: (out of range)");
+  });
+
+  it("lists the request timeout the file sets to its default, since unset it is each provider's own", async () => {
+    const timeout = "providers.checking.requestTimeoutMs";
+    const unset = section(await report(), "settings");
+    const set = section(await report({ settings: { fromFile: [timeout] } }), "settings");
+
+    expect(unset).toContain("- changed_from_defaults: (none)");
+    expect(set).toContain("- changed_from_defaults: 1 setting");
+    expect(set).toContain(`  - ${timeout}: 5000`);
   });
 
   it.each([

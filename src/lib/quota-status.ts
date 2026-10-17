@@ -185,7 +185,10 @@ export type QuotaStatusReportParams = {
   /** OpenCode's version and release channel; the CLI runs without OpenCode. */
   opencode?: { version: string; channel: string };
   /** The server settings as read now. */
-  settings: Pick<LoadedSettings, "path" | "exists" | "issues" | "notRead" | "settings">;
+  settings: Pick<
+    LoadedSettings,
+    "path" | "exists" | "issues" | "notRead" | "settings" | "fromFile"
+  >;
   /** The v5 settings conversion: written when this server started, or done in memory. */
   conversion?: V5Conversion;
   /** The project folder quota is computed for. */
@@ -546,11 +549,15 @@ function settingValueText(rule: SettingRule, value: unknown, homeDir: string): s
   }
 }
 
-/** Every setting that differs from its default, by its settings.jsonc key, under a count. */
-function changedSettingRows(settings: LoadedSettings["settings"], homeDir: string): ReportKvRow[] {
-  const changes = diffSettings(defaultSettings(), settings).filter(
-    (change) => !OWN_ROW_KEYS.has(change.key),
-  );
+/**
+ * Every setting that differs from its default, by its settings.jsonc key, under a count; the
+ * request timeout too when the file sets it, since unset it is each provider's own.
+ */
+function changedSettingRows(loaded: LoadedSettings, homeDir: string): ReportKvRow[] {
+  const changes = diffSettings(defaultSettings(), loaded.settings, {
+    before: [],
+    after: loaded.fromFile,
+  }).filter((change) => !OWN_ROW_KEYS.has(change.key));
   const rules: Readonly<Record<string, SettingRule>> = SETTINGS_SCHEMA;
   return [
     {
@@ -619,7 +626,7 @@ function settingsSection(
   const { providers } = params.settings.settings;
   rows.push(
     { key: "providers.off", value: providerIdsText(providers.off) },
-    ...changedSettingRows(params.settings.settings, homeDir),
+    ...changedSettingRows(params.settings, homeDir),
     { key: "current_model", value: currentModelText(params, priceList) },
     { key: "workspace_root", value: pathText(params.workspaceRoot, homeDir) },
   );

@@ -21,7 +21,7 @@ import {
   resetKeys,
   setIn,
 } from "../src/tui/display.js";
-import { createServerSettings } from "../src/tui/server-settings.js";
+import { createServerSettings, PROVIDERS_KEY } from "../src/tui/server-settings.js";
 import { limitsLines } from "../src/tui/window/limits.js";
 import { DEFAULT_WORDS } from "../src/view/format.js";
 import { pickRow, visibleGroups } from "../src/view/select.js";
@@ -256,21 +256,15 @@ async function file(text: string) {
 }
 async function connect() {
   const server = createServerSettings({
-    settings: async () => {
-      const loaded = await loadSettings();
-      return clientSettings(loaded.settings, loaded.fromFile);
-    },
+    settings: async () => clientSettings(await loadSettings()),
     saveSettings: async (input) =>
       saveSettings(input.patch, { customEnabled: input.customEnabled }),
   });
   await server.load();
   watches.push(
-    await watchSettings(
-      (loaded) => server.receive(clientSettings(loaded.settings, loaded.fromFile)),
-      {
-        debounceMs: 20,
-      },
-    ),
+    await watchSettings((loaded) => server.receive(clientSettings(loaded)), {
+      debounceMs: 20,
+    }),
   );
   return { server, display: createFileDisplay(server) };
 }
@@ -377,6 +371,46 @@ it("Reset page removes the page's keys from the file, so they follow their defau
   expect(loaded.fromFile.sort()).toEqual(["sidebar.runsOut", "version"]);
   expect(loaded.settings.collapsed).toEqual(defaultSettings().collapsed);
   expect(server.dirty()).toBe(false);
+});
+
+it("Reset page removes a record the file sets, and a later entry starts from the default", async () => {
+  await file('{ "version": 6, "collapsed": { "window": { "anthropic": "weekly" } } }');
+  const { server, display } = await connect();
+
+  for (const key of resetKeys("collapsed")) server.reset(key);
+  expect(display.shown().collapsed.window).toEqual({});
+  display.edit((settings) => setIn(settings, ["collapsed", "window", "openai"], "five_hour"));
+  await server.save();
+
+  const loaded = await loadSettings();
+  expect(loaded.settings.collapsed.window).toEqual({ openai: "five_hour" });
+  expect(server.dirty()).toBe(false);
+});
+
+it("Reset tab on Providers removes the switched-off providers and the request timeout", async () => {
+  await file(
+    '{ "version": 6, "providers": { "off": ["copilot"], "checking": { "requestTimeoutMs": 5000 } } }',
+  );
+  const { server } = await connect();
+
+  for (const key of resetKeys("providers")) server.reset(key);
+  server.reset(PROVIDERS_KEY);
+  await server.save();
+
+  expect((await loadSettings()).fromFile).toEqual(["version"]);
+  expect(server.dirty()).toBe(false);
+});
+
+it("Reset page removes a value the file sets wrong, with its problem", async () => {
+  await file('{ "version": 6, "collapsed": { "show": "yes" } }');
+  const { server } = await connect();
+  expect((await loadSettings()).issues.map((issue) => issue.key)).toEqual(["collapsed.show"]);
+
+  for (const key of resetKeys("collapsed")) server.reset(key);
+  await server.save();
+
+  const loaded = await loadSettings();
+  expect([loaded.issues, loaded.fromFile]).toEqual([[], ["version"]]);
 });
 
 it("Reset page changes nothing for keys the file does not set", async () => {

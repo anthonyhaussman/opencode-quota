@@ -10,6 +10,8 @@ opencode plugin update
 
 Then restart OpenCode and run `/quota_status` in a session (or `npx @slkiser/opencode-quota status` in a terminal). To update only this plugin, pass its entry exactly as written in your OpenCode config, for example `opencode plugin update @slkiser/opencode-quota`.
 
+A `settings.jsonc` written by 6.0.0-beta.1 sets every setting, so a later change to a default reaches a setting only after **Reset page** in `/quota_settings` or after you remove its key from the file.
+
 ## Moving from 5.x
 
 Update as above; you don't need to edit your settings. On the first start, OpenCode Quota converts your old global settings automatically:

@@ -188,6 +188,12 @@ const ROWS: Array<{
       statusLine: { show: true, withSidebar: true, home: false, detail: "one" },
     },
   },
+  {
+    // Without the compact line switched on, v5 used neither; the v6 defaults stay.
+    v5: { tuiCompactStatus: { sessionPrompt: true, homeBottom: true } },
+    sections: { statusLine: defaultSettings().statusLine },
+    dropped: ["tuiCompactStatus.sessionPrompt", "tuiCompactStatus.homeBottom"],
+  },
   { v5: { tuiCompactStatus: { maxWidth: 80 } }, dropped: ["tuiCompactStatus.maxWidth"] },
   {
     v5: { maintainerAnnouncements: { enabled: false, home: false, homeFrequency: "always" } },

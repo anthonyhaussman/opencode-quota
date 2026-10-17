@@ -74,7 +74,7 @@ export function createServerSettings(rpc: ServerSettingsRpc) {
   const [switches, setSwitches] = createSignal<Readonly<Record<string, boolean>>>({});
   /** Custom providers the server would not switch on: their definition changed since shown. */
   const [changedIds, setChangedIds] = createSignal<readonly string[]>([]);
-  const defaults = clientSettings(defaultSettings(), []).values;
+  const defaults = clientSettings({ settings: defaultSettings(), fromFile: [], issues: [] }).values;
   /** The definition shown when each custom switch was changed, kept across live updates. */
   const reviewedFingerprints = new Map<string, string>();
   let received = 0;
@@ -82,8 +82,18 @@ export function createServerSettings(rpc: ServerSettingsRpc) {
   let saving: Promise<void> | undefined;
   let savingEdits: Map<string, unknown> | undefined;
   let savingSwitches: Map<string, boolean> | undefined;
+  /** Keys reset since the last Save: a change back to the default keeps their removal. */
+  const resets = new Set<string>();
+  /** The keys reset since Save started. */
+  let savingResets: Set<string> | undefined;
   const savedValue = (key: string) => saved()?.values[key] ?? defaults[key];
-  const savedInFile = (key: string) => saved()?.fromFile.includes(key) ?? false;
+  /** Without `fromFile` (an older server), a value other than the default counts as set. */
+  const savedInFile = (key: string): boolean => {
+    const current = saved();
+    if (current === undefined) return false;
+    if (!Array.isArray(current.fromFile)) return !same(savedValue(key), defaults[key]);
+    return current.fromFile.includes(key);
+  };
   const savedCustom = (id: string) => saved()?.custom.find((entry) => entry.id === id);
   const value = (key: string): unknown => {
     const patch = changes()[key];
@@ -129,6 +139,8 @@ export function createServerSettings(rpc: ServerSettingsRpc) {
     );
     savingEdits = new Map();
     savingSwitches = new Map();
+    const resetDuringSave = new Set<string>();
+    savingResets = resetDuringSave;
     try {
       const result = await rpc.saveSettings({
         patch: settingsPatch(sentChanges),
@@ -152,7 +164,11 @@ export function createServerSettings(rpc: ServerSettingsRpc) {
       // Only edits made after Save started remain drafts, over the latest saved settings.
       const remaining: Record<string, unknown> = {};
       for (const [key, patch] of savingEdits) {
-        if (isRecordSetting(key) && isRecord(patch)) {
+        if (isRecordSetting(key) && isRecord(patch) && resetDuringSave.has(key)) {
+          // Reset, then edited: the whole record replaces the saved one.
+          const draft = draftValue(key, patch) as Record<string, unknown>;
+          if (Object.keys(draft).length > 0) remaining[key] = draft;
+        } else if (isRecordSetting(key) && isRecord(patch)) {
           const before = savedValue(key) as Record<string, unknown>;
           const entries = Object.entries(patch).filter(
             ([id, item]) => !same(item === null ? undefined : item, before[id]),
@@ -163,6 +179,8 @@ export function createServerSettings(rpc: ServerSettingsRpc) {
         }
       }
       setChanges(remaining);
+      resets.clear();
+      for (const key of resetDuringSave) resets.add(key);
       setSwitches(
         Object.fromEntries(
           [...savingSwitches].filter(([id, on]) => on !== (savedCustom(id)?.enabled ?? false)),
@@ -171,7 +189,23 @@ export function createServerSettings(rpc: ServerSettingsRpc) {
     } finally {
       savingEdits = undefined;
       savingSwitches = undefined;
+      savingResets = undefined;
     }
+  }
+  /**
+   * Puts one setting back to its default: Save removes it from settings.jsonc, so it follows the
+   * default from then on, also a later one. A key the file does not set needs no change.
+   */
+  function reset(key: string): void {
+    resets.add(key);
+    savingResets?.add(key);
+    savingEdits?.set(key, null);
+    setChanges((current) => {
+      const result = { ...current };
+      if (savedInFile(key)) result[key] = null;
+      else delete result[key];
+      return result;
+    });
   }
   return {
     /** Undefined until the first server answer. */
@@ -182,8 +216,14 @@ export function createServerSettings(rpc: ServerSettingsRpc) {
     },
     value,
     set(key: string, next: unknown): void {
+      if (resets.has(key) && same(next, defaults[key])) {
+        reset(key);
+        return;
+      }
       if (savingEdits) {
-        if (isRecordSetting(key) && isRecord(next)) {
+        if (isRecordSetting(key) && isRecord(next) && savingResets?.has(key)) {
+          savingEdits.set(key, next);
+        } else if (isRecordSetting(key) && isRecord(next)) {
           const before = value(key) as Record<string, unknown>;
           const edits = Object.fromEntries(
             [...new Set([...Object.keys(before), ...Object.keys(next)])]
@@ -206,19 +246,7 @@ export function createServerSettings(rpc: ServerSettingsRpc) {
         return result;
       });
     },
-    /**
-     * Puts one setting back to its default: Save removes it from settings.jsonc, so it follows
-     * the default from then on, also a later one. A key the file does not set needs no change.
-     */
-    reset(key: string): void {
-      savingEdits?.set(key, null);
-      setChanges((current) => {
-        const result = { ...current };
-        if (savedInFile(key)) result[key] = null;
-        else delete result[key];
-        return result;
-      });
-    },
+    reset,
     customOn,
     switchCustom(id: string, on: boolean): void {
       reviewedFingerprints.set(id, savedCustom(id)?.fingerprint ?? "");
@@ -258,6 +286,8 @@ export function createServerSettings(rpc: ServerSettingsRpc) {
     },
     discard(): void {
       reviewedFingerprints.clear();
+      resets.clear();
+      savingResets?.clear();
       savingEdits?.clear();
       savingSwitches?.clear();
       setChanges({});

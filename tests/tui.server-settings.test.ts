@@ -355,6 +355,79 @@ describe("the server settings this window edits", () => {
     ]).toEqual(["bare", 12, false]);
   });
 
+  /** A server whose file sets `values`, and a save that waits for the returned `release`. */
+  function heldSave(values: Record<string, unknown>) {
+    const held = { release: () => {} };
+    const saved = {
+      ...SAVED,
+      values: { ...SAVED.values, ...values },
+      fromFile: Object.keys(values),
+    };
+    const rpc = {
+      settings: vi.fn(async () => structuredClone(saved)),
+      saveSettings: vi.fn(async (_input: QuotaRpcSaveSettingsInput) => {
+        await new Promise<void>((resolve) => {
+          held.release = resolve;
+        });
+        return { ok: true, issues: [] };
+      }),
+    };
+    return { rpc, held };
+  }
+
+  it("keeps a record Reset made while Save waits when one of its entries changes after it", async () => {
+    const { rpc, held } = heldSave({ "collapsed.window": { anthropic: "weekly" } });
+    const server = createServerSettings(rpc);
+    await server.load();
+    server.set("words.percent", "used");
+
+    const saving = server.save();
+    server.reset("collapsed.window");
+    server.set("collapsed.window", { openai: "five_hour" });
+    held.release();
+    await saving;
+
+    expect(server.value("collapsed.window")).toEqual({ openai: "five_hour" });
+    const next = server.save();
+    held.release();
+    await next;
+    expect(rpc.saveSettings.mock.calls[1]?.[0].patch).toEqual({
+      collapsed: { window: { anthropic: null, openai: "five_hour" } },
+    });
+  });
+
+  it("keeps a Reset of a key the file sets to its default when the line goes away and back", async () => {
+    const { rpc, held } = heldSave({ "statusLine.show": true });
+    const server = createServerSettings(rpc);
+    await server.load();
+
+    server.reset("statusLine.show");
+    server.set("statusLine.show", false);
+    server.set("statusLine.show", true);
+    const saving = server.save();
+    held.release();
+    await saving;
+
+    expect(rpc.saveSettings.mock.calls[0]?.[0].patch).toEqual({ statusLine: { show: null } });
+  });
+
+  it("resets a changed value when an older server sends no file keys", async () => {
+    const rpc = fakeRpc();
+    rpc.settings.mockResolvedValue({
+      ...SAVED,
+      values: { ...SAVED.values, "words.percent": "used" },
+    });
+    const server = createServerSettings(rpc);
+    await server.load();
+
+    server.reset("words.percent");
+    server.reset("providers.off");
+
+    expect(server.value("words.percent")).toBe("left");
+    await server.save();
+    expect(rpc.saveSettings).toHaveBeenCalledWith({ patch: { words: { percent: null } } });
+  });
+
   it("rebases a row rename made during Save over another TUI's names", async () => {
     let release = () => {};
     const next: QuotaRpcSettingsOutput = {
