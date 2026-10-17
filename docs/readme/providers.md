@@ -401,11 +401,11 @@ Restart OpenCode, run `/connect`, choose **Cursor**, then sign in with **Cursor 
 
 Cursor's three settings sit under Cursor on the Providers tab (`/quota_settings`): **Plan** (Pro includes $20 of API use a month, Pro Plus $70, Ultra $400), **Included API budget** (your own amount instead of the plan's), and **Billing day** (the day your Cursor bill renews).
 
-Cursor estimates the current billing cycle from your local OpenCode history:
+Cursor estimates the current billing cycle from your local OpenCode history, pricing each model the way the Usage tab does: Auto and Composer at Cursor's own prices, every other model at its models.dev price.
 
 - With all models known and an allowance (`providers.cursor.plan` or `providers.cursor.includedApiUsd`), it shows an **API budget** percentage with used, limit, and remaining USD.
 - Without an allowance, it shows **API spend**.
-- If any Cursor model is unknown, it shows only **Known API spend** plus a partial-data issue, never a percentage or a total.
+- If any Cursor model has no price, it shows only **Known API spend** plus a partial-data issue, never a percentage or a total.
 - **Auto+Composer spend** is a supplementary row shown in detailed output when there is room.
 - Set `providers.cursor.billingCycleStartDay` to your billing day; otherwise the cycle is the local calendar month.
 

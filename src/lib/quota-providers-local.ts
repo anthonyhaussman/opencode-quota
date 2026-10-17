@@ -1,17 +1,15 @@
 import type { Amount } from "../core/types.js";
 import { accountingDecimalFromNumber } from "../providers/accounting-decimal.js";
 import type { ProviderRow } from "../providers/contract.js";
-import { lookupCost } from "./modelsdev-pricing.js";
 import type { OpenCodeMessage } from "./opencode-storage.js";
 import { iterCompletedAssistantMessages } from "./opencode-storage.js";
-import { resolvePricingKey } from "./pricing-key.js";
+import { priceMessage } from "./pricing-key.js";
 import {
   customRow,
   type LocalEstimateQuotaProviderDefinition,
   type LocalEstimateWindow,
 } from "./quota-providers.js";
 import { type TokenBuckets, tokenBucketsFromMessage } from "./token-buckets.js";
-import { calculateUsdFromTokenBuckets } from "./token-cost.js";
 
 const MINUTE_MS = 60 * 1000;
 const DAY_MS = 24 * 60 * MINUTE_MS;
@@ -118,25 +116,17 @@ export async function countRequestWindows(params: {
   });
 }
 
-/** Automatic models.dev matching wins; `pricingModelMap` is only a fallback. */
-function resolveMessageCost(
+/** A request's cost in USD, or null when it has no price; `pricingModelMap` is a fallback. */
+function requestCost(
   definition: LocalEstimateQuotaProviderDefinition,
-  message: CountedRequest,
+  request: CountedRequest,
 ): number | null {
-  const automatic = resolvePricingKey({
-    providerID: definition.providerId,
-    modelID: message.modelId,
-  });
-  if (automatic.ok) {
-    const rates = lookupCost(automatic.key.provider, automatic.key.model);
-    return rates ? calculateUsdFromTokenBuckets(rates, message.tokens) : null;
-  }
-
-  const manual = definition.pricingModelMap?.[message.modelId];
-  if (!manual) return null;
-  const slash = manual.indexOf("/");
-  const rates = lookupCost(manual.slice(0, slash), manual.slice(slash + 1));
-  return rates ? calculateUsdFromTokenBuckets(rates, message.tokens) : null;
+  const price = priceMessage(
+    { providerID: definition.providerId, modelID: request.modelId },
+    request.tokens,
+    { modelMap: definition.pricingModelMap },
+  );
+  return price.kind === "priced" ? price.usd : null;
 }
 
 function requestCount(count: number): Amount {
@@ -194,7 +184,7 @@ export async function collectLocalQuotaProviderEstimate(
     let costUsd = 0;
     let unpriced = 0;
     for (const request of requests) {
-      const cost = resolveMessageCost(definition, request);
+      const cost = requestCost(definition, request);
       if (cost === null) unpriced += 1;
       else costUsd += cost;
     }

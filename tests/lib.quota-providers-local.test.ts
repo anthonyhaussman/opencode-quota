@@ -160,6 +160,15 @@ describe("request window counter", () => {
     expect(budget?.percentRemaining).toBeTypeOf("number");
   });
 
+  it("prices Cursor's Auto from Cursor's own table, as the Usage tab does", async () => {
+    const def = definition({ id: "cursor-local", providerId: "cursor" });
+    const result = await estimate(def, [
+      { id: "auto", atMs: NOW - 1000, modelId: "auto", input: 1_000_000, output: 0 },
+    ]);
+    const budget = result.rows.find((row) => row.key === "daily_budget");
+    expect(budget).toMatchObject({ used: { decimal: "1.25" }, percentRemaining: 75 });
+  });
+
   it("keeps request counts but never emits a budget percentage for unpriced usage", async () => {
     const result = await estimate(definition(), [
       { id: "unpriced", atMs: NOW - 1000, modelId: "unknown-private-model", input: 10, output: 5 },

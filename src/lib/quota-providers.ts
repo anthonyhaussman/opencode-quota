@@ -7,8 +7,9 @@ import type { ProviderRow } from "../providers/contract.js";
 import { daysInMonth } from "./calendar-date.js";
 import { isRecord } from "./json-guards.js";
 import { lookupCost } from "./modelsdev-pricing.js";
-import { resolvePricingKey } from "./pricing-key.js";
+import { priceMessage } from "./pricing-key.js";
 import { getCanonicalQuotaProviderId } from "./provider-metadata.js";
+import { emptyTokenBuckets } from "./token-buckets.js";
 
 export const QUOTA_PROVIDER_REMOTE_FORMATS = ["quota-v1", "openrouter-key-v1", "json-v1"] as const;
 export const QUOTA_PROVIDER_MODES = ["remote-api", "local-estimate"] as const;
@@ -1365,8 +1366,11 @@ function validatePricingModelMap(
       continue;
     }
 
-    const automatic = resolvePricingKey({ providerID: providerId, modelID: sourceModelId });
-    if (automatic.ok) {
+    const automatic = priceMessage(
+      { providerID: providerId, modelID: sourceModelId },
+      emptyTokenBuckets(),
+    );
+    if (automatic.kind === "priced") {
       issues.push({
         key,
         message: `${entry}: automatic models.dev matching already resolves to ${automatic.key.provider}/${automatic.key.model}`,

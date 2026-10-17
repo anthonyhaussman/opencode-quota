@@ -22,7 +22,7 @@
  *   questions share one read: see `usageReport`.
  */
 import { parseCalendarDate } from "../lib/calendar-date.js";
-import { activePriceList, type CostBuckets } from "../lib/modelsdev-pricing.js";
+import { activePriceList } from "../lib/modelsdev-pricing.js";
 import { getOpenCodeDbPath } from "../lib/opencode-db-path.js";
 import {
   type OpenCodeSessionInfo,
@@ -30,13 +30,8 @@ import {
   readUsageMessagePages,
   resolveSessionTree,
 } from "../lib/opencode-storage.js";
-import { type ModelPricing, resolveModelPricing } from "../lib/pricing-key.js";
-import {
-  emptyTokenBuckets,
-  type TokenBuckets,
-  tokenBucketsFromMessage,
-} from "../lib/token-buckets.js";
-import { calculateUsdFromTokenBuckets } from "../lib/token-cost.js";
+import { type MessagePrice, priceMessage } from "../lib/pricing-key.js";
+import { type TokenBuckets, tokenBucketsFromMessage } from "../lib/token-buckets.js";
 import type { UsageRange } from "./usage-ranges.js";
 
 export {
@@ -230,7 +225,7 @@ function topSessionID(sessionID: string, index: Record<string, OpenCodeSessionIn
   return current;
 }
 
-function messageUse(buckets: TokenBuckets, rates: CostBuckets | null): MessageUse {
+function messageUse(buckets: TokenBuckets, price: MessagePrice): MessageUse {
   const tokens = {
     cachedInput: buckets.cache_read,
     uncachedInput: buckets.input + buckets.cache_write,
@@ -243,7 +238,7 @@ function messageUse(buckets: TokenBuckets, rates: CostBuckets | null): MessageUs
     cacheWrite: buckets.cache_write,
     output: buckets.output + buckets.reasoning,
   };
-  if (!rates) {
+  if (price.kind !== "priced") {
     return {
       priced: false,
       tokens: { processed, ...tokens },
@@ -253,24 +248,19 @@ function messageUse(buckets: TokenBuckets, rates: CostBuckets | null): MessageUs
       cacheSavingsUsd: 0,
     };
   }
-  // Each kind through the one cost formula, so its rate fallbacks apply (a missing cache rate
-  // costs as input, a missing reasoning rate as output).
-  const costOf = (bucket: keyof TokenBuckets, count: number) =>
-    calculateUsdFromTokenBuckets(rates, { ...emptyTokenBuckets(), [bucket]: count });
-  const costByType = {
-    input: costOf("input", buckets.input),
-    cacheRead: costOf("cache_read", buckets.cache_read),
-    cacheWrite: costOf("cache_write", buckets.cache_write),
-    output: costOf("output", buckets.output) + costOf("reasoning", buckets.reasoning),
-  };
+  const { byKind } = price;
   return {
     priced: true,
     tokens: { processed, ...tokens },
     tokensByType,
-    costByType,
-    costUsd: costByType.input + costByType.cacheRead + costByType.cacheWrite + costByType.output,
-    // Cache savings: the cache reads at the plain input price, minus what they cost as reads.
-    cacheSavingsUsd: costOf("input", buckets.cache_read) - costByType.cacheRead,
+    costByType: {
+      input: byKind.input,
+      cacheRead: byKind.cache_read,
+      cacheWrite: byKind.cache_write,
+      output: byKind.output + byKind.reasoning,
+    },
+    costUsd: price.usd,
+    cacheSavingsUsd: price.cacheSavingsUsd,
   };
 }
 
@@ -394,7 +384,6 @@ async function buildUsageReport(query: UsageQuery, nowMs: number): Promise<Usage
   let cacheSavingsUsd = 0;
   const sessions = new Set<string>();
   const topSessionIDs = new Map<string, string>();
-  const pricingByModel = new Map<string, ModelPricing>();
   const providers = new Map<string, { tally: Tally; sessions: Set<string> }>();
   const models = new Map<string, ModelTally>();
   const days = new Map<string, Tally>();
@@ -410,12 +399,10 @@ async function buildUsageReport(query: UsageQuery, nowMs: number): Promise<Usage
       const providerID = message.providerID ?? "unknown";
       const modelID = message.modelID ?? "unknown";
       const modelKey = `${providerID}\n${modelID}`;
-      const pricing = entryFor(pricingByModel, modelKey, () =>
-        resolveModelPricing({ providerID: message.providerID, modelID: message.modelID }),
-      );
+      const buckets = tokenBucketsFromMessage(message);
       const use = messageUse(
-        tokenBucketsFromMessage(message),
-        pricing.kind === "priced" ? pricing.rates : null,
+        buckets,
+        priceMessage({ providerID: message.providerID, modelID: message.modelID }, buckets),
       );
       const topSession = entryFor(topSessionIDs, message.sessionID, () =>
         topSessionID(message.sessionID, sessionsIndex),
