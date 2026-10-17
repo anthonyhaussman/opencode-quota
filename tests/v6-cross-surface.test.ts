@@ -37,7 +37,7 @@ import {
 import {
   createAlibabaAuthModuleMock,
   createProvidersRegistryModuleMock,
-  createSessionTokensModuleMock,
+  createSessionUsageModuleMock,
   seedDefaultPluginBootstrapMocks,
   writePluginTestSettings,
 } from "./helpers/plugin-test-harness.js";
@@ -56,7 +56,7 @@ const mocks = vi.hoisted(() => ({
   terminal: { width: 120, height: 40 },
   getProviders: vi.fn(),
   resolveAlibabaCodingPlanAuthCached: vi.fn(),
-  fetchSessionTokensForDisplay: vi.fn(),
+  sessionUsage: vi.fn(),
 }));
 
 vi.mock("@opentui/solid", () => ({
@@ -65,8 +65,8 @@ vi.mock("@opentui/solid", () => ({
 vi.mock("../src/providers/registry.js", () =>
   createProvidersRegistryModuleMock(mocks.getProviders),
 );
-vi.mock("../src/lib/session-tokens.js", () =>
-  createSessionTokensModuleMock(mocks.fetchSessionTokensForDisplay),
+vi.mock("../src/core/usage.js", async (importOriginal) =>
+  createSessionUsageModuleMock(await importOriginal(), mocks.sessionUsage),
 );
 vi.mock("../src/lib/alibaba-auth.js", () =>
   createAlibabaAuthModuleMock(mocks.resolveAlibabaCodingPlanAuthCached),
@@ -287,13 +287,11 @@ describe("v6 surfaces on the quota snapshot", () => {
         telemetry: true,
       },
     });
-    mocks.fetchSessionTokensForDisplay.mockResolvedValue({
-      sessionTokens: {
-        totalInput: 1200,
-        totalCachedInput: 300,
-        totalOutput: 45,
-        models: [{ modelID: "gpt-5", input: 1200, cacheRead: 300, cacheWrite: 0 }],
-      },
+    mocks.sessionUsage.mockResolvedValue({
+      input: 1200,
+      cachedInput: 300,
+      output: 45,
+      models: [{ modelID: "gpt-5", input: 1200, cacheRead: 300, cacheWrite: 0 }],
     });
     const { quotaProvidersProvider } = await import("../src/providers/quota-providers.js");
     mocks.getProviders.mockReturnValue([

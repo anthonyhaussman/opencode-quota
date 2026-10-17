@@ -141,7 +141,7 @@ Check the `copilot` section: `pat_state`, `pat_organization` and `pat_enterprise
 <details>
 <summary><strong>Alibaba Coding Plan</strong></summary>
 
-Check the `alibaba-coding-plan` section: the login, tier (`alibaba_coding_plan`), state-file path (`local_state_path`), and live check.
+Check the `alibaba-coding-plan` section: the login, tier (`alibaba_coding_plan`), and live check.
 
 | Symptom              | Fix |
 | -------------------- | --- |

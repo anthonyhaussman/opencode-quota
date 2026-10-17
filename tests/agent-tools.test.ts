@@ -605,10 +605,6 @@ describe("quota_provider_add", () => {
     expect(fetch).not.toHaveBeenCalled();
     expect(parse(settingsText()).providers.custom[0].enabled).toBe(false);
     expect((await savedProviders()).map((item) => item.enabled)).toEqual([false]);
-    // A local estimate that ran would have written its state file.
-    expect(existsSync(join(root, "state", "opencode", "opencode-quota", "quota-providers"))).toBe(
-      false,
-    );
   });
 
   it("answers the same whether or not OpenCode has a key saved for the provider", async () => {

@@ -20,19 +20,14 @@ import {
 import { resolveEnvTemplate } from "./lib/env-template.js";
 import { isRecord } from "./lib/json-guards.js";
 import { readCredentialRows } from "./lib/opencode-auth.js";
-import { collectLocalQuotaProviderEstimate } from "./lib/quota-providers-local.js";
-import {
-  fetchRemoteQuotaProvider,
-  resolveQuotaProviderApiKey,
-} from "./lib/quota-providers-remote.js";
 import {
   describeQuotaProviderRequest,
   QUOTA_PROVIDER_FIELDS,
   QUOTA_PROVIDERS_AGGREGATE_ID,
   type QuotaProviderDefinition,
 } from "./lib/quota-providers.js";
-import type { ProviderFetchResult, ProviderRow } from "./providers/contract.js";
-import { customAccount } from "./providers/quota-providers.js";
+import type { AccountResult, ProviderFetchResult } from "./providers/contract.js";
+import { checkDefinition } from "./providers/quota-providers.js";
 import {
   checkSetting,
   describeRule,
@@ -357,17 +352,8 @@ function notFound(ids: readonly string[]): ToolResult {
  * ids are made from the names and ids in them, so every string in them is redacted first, to a
  * placeholder a row id may hold.
  */
-function testedRows(
-  definition: QuotaProviderDefinition,
-  rows: readonly ProviderRow[],
-  rowErrors: readonly string[],
-  redact: Redact,
-): ToolResult {
-  const result: ProviderFetchResult = {
-    attempted: true,
-    accounts: [customAccount(definition, rows, rowErrors)],
-    debug: [],
-  };
+function testedRows(account: AccountResult, redact: Redact): ToolResult {
+  const result: ProviderFetchResult = { attempted: true, accounts: [account], debug: [] };
   const fetched = rowsFromProviderResult(
     QUOTA_PROVIDERS_AGGREGATE_ID,
     redactJson(result, (text) => redact(text).replaceAll(REDACTED, "redacted")) as typeof result,
@@ -391,16 +377,8 @@ async function testFetch(
   if (definition.enabled === false) {
     return { ok: false, error: `Not tested: it is switched off. ${switchOnStep()}; then test it.` };
   }
-  if (definition.mode === "local-estimate") {
-    return testedRows(
-      definition,
-      (await collectLocalQuotaProviderEstimate(definition)).rows,
-      [],
-      redact,
-    );
-  }
-  const { key } = await resolveQuotaProviderApiKey(definition);
-  if (!key) {
+  const checked = await checkDefinition(definition, requestTimeoutMs);
+  if (checked.missingKey) {
     return {
       ok: false,
       error:
@@ -408,9 +386,8 @@ async function testFetch(
         "The user saves it there and restarts OpenCode; then run quota_provider_test.",
     };
   }
-  const result = await fetchRemoteQuotaProvider(definition, key, requestTimeoutMs);
-  if (!result.success) return { ok: false, error: result.error };
-  return testedRows(definition, result.rows, result.rowErrors ?? [], redact);
+  if (checked.failure) return { ok: false, error: checked.failure };
+  return testedRows(checked.account, redact);
 }
 
 /** Why a saved definition would still not show, so the agent can fix it. */

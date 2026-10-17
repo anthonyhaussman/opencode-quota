@@ -18,7 +18,7 @@ import {
   createPluginRuntimePathsMockModule,
   createProvidersRegistryModuleMock,
   createServerContext,
-  createSessionTokensModuleMock,
+  createSessionUsageModuleMock,
   seedDefaultPluginBootstrapMocks,
   writePluginTestSettings,
 } from "./helpers/plugin-test-harness.js";
@@ -30,15 +30,15 @@ const TEST_RUNTIME_ROOT = mkdtempSync(join(tmpdir(), "opencode-quota-plugin-rpc-
 const mocks = vi.hoisted(() => ({
   getProviders: vi.fn(),
   resolveAlibabaCodingPlanAuthCached: vi.fn(),
-  fetchSessionTokensForDisplay: vi.fn(),
+  sessionUsage: vi.fn(),
   reconcileDetectedProvidersInGlobalConfig: vi.fn(),
 }));
 
 vi.mock("../src/providers/registry.js", () =>
   createProvidersRegistryModuleMock(mocks.getProviders),
 );
-vi.mock("../src/lib/session-tokens.js", () =>
-  createSessionTokensModuleMock(mocks.fetchSessionTokensForDisplay),
+vi.mock("../src/core/usage.js", async (importOriginal) =>
+  createSessionUsageModuleMock(await importOriginal(), mocks.sessionUsage),
 );
 vi.mock("../src/lib/alibaba-auth.js", () =>
   createAlibabaAuthModuleMock(mocks.resolveAlibabaCodingPlanAuthCached),
@@ -601,9 +601,7 @@ describe("server quota RPC", () => {
   it("adds the session's tokens to a session snapshot", async () => {
     useSettings({ words: { sessionTokens: "tree" } });
     const models = [{ modelID: "gpt-5", input: 900, cacheRead: 300, cacheWrite: 0 }];
-    mocks.fetchSessionTokensForDisplay.mockResolvedValue({
-      sessionTokens: { totalInput: 1200, totalCachedInput: 300, totalOutput: 80, models },
-    });
+    mocks.sessionUsage.mockResolvedValue({ input: 1200, cachedInput: 300, output: 80, models });
     const { call } = await setupServer();
 
     const session = (await call("snapshot", { sessionID: "session-1" })) as {
@@ -615,10 +613,7 @@ describe("server quota RPC", () => {
       output: 80,
       models,
     });
-    expect(mocks.fetchSessionTokensForDisplay).toHaveBeenCalledWith({
-      sessionID: "session-1",
-      scope: "tree",
-    });
+    expect(mocks.sessionUsage).toHaveBeenCalledWith("session-1", "tree");
     const global = (await call("snapshot", {})) as { snapshot: QuotaSnapshot };
     expect(global.snapshot).not.toHaveProperty("sessionTokens");
   });

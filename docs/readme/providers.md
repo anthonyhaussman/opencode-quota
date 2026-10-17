@@ -104,7 +104,7 @@ Add a custom OpenCode Quota provider for <provider> with the quota_provider_add 
 
 Then switch the provider on by setting `"enabled": true` in `opencode-quota/settings.jsonc` in the OpenCode config folder (`~/.config/opencode/` by default), or in the TUI's `/quota_settings` → **Providers**. An agent saves every provider it adds or replaces switched off: until you switch it on, it is never fetched and its key is never sent. No agent tool can switch it on. The Providers tab switches on only the definition it shows: if its address or key source changed since, Save saves nothing and shows the new ones to check.
 
-The `quota_settings_*` and `quota_provider_*` tools change only OpenCode Quota's own settings file (through a symlink, its target), never `opencode.json`; testing a local-estimate provider also updates its state file. A definition holding anything that looks like a key is refused. `quota_provider_test` and `quota_provider_remove` take a provider's `id`.
+The `quota_settings_*` and `quota_provider_*` tools change only OpenCode Quota's own settings file (through a symlink, its target), never `opencode.json`. A definition holding anything that looks like a key is refused. `quota_provider_test` and `quota_provider_remove` take a provider's `id`.
 
 To edit it yourself, put definitions in `providers.custom` in `settings.jsonc` ([where](configuration.md#where-settings-live)). Changes apply without a restart.
 
@@ -116,7 +116,7 @@ To edit it yourself, put definitions in `providers.custom` in `settings.jsonc` (
 - OpenRouter is built in. A custom OpenRouter definition only helps if you need a different endpoint or label.
 - Alibaba Personal Token Plan uses the reserved `alibaba-token-plan` ID and stays a separate official-CLI provider; it is not a local-estimate tuning target.
 
-See [Configuration](configuration.md#custom-providers) for a complete example and the other rules (pricing, state files, what is not allowed).
+See [Configuration](configuration.md#custom-providers) for a complete example and the other rules (pricing, what is not allowed).
 
 <details>
 <summary><strong>Recipes: Vercel AI Gateway, Moonshot, Poe</strong></summary>
@@ -225,10 +225,10 @@ A `json-v1` adapter is built from literal property segments, compatible metric s
 
 Adapter rules:
 
-- **Rows:** optional `rowsPath` and 1–16 `mappings`. Without `rowsPath`, an object is one row and an array holds the rows. Selected arrays hold 1–100 rows, responses allow at most 32 container levels, and at most 1,600 row/mapping candidates are checked.
+- **Rows:** optional `rowsPath` and 1–16 `mappings`. Without `rowsPath`, an object is one item and an array is a list of items; with it, the array it names is the list. Each mapping makes one row per item. When the list holds more than one item, the rows are numbered: `Daily 1`, `Daily 2`, `Daily 3`, where item 1 keeps the plain row id and items 2 and later add `.2`, `.3`. One item keeps the plain name `Daily`. Lists hold 1–100 items, responses allow at most 32 container levels, and at most 1,600 item/mapping candidates are checked.
 - **Mapping names:** each name keys its rows, so names must still differ when spaces count as `_` (`Daily limit` and `Daily_limit` clash; `Daily-limit` is fine).
 - **Paths:** 1–8 literal own-property segments of 1–64 Unicode code points. Dots and brackets mean nothing special; array indexes and the segments `__proto__`, `prototype`, and `constructor` are rejected.
-- **Size:** adapter input is limited to 8 container levels, 128 objects, 384 object properties, and 640 array elements. Names and labels are 1–80 code points, units 1–32, and status/display output (including a provider-prefixed entry name) at most 160.
+- **Size:** adapter input is limited to 8 container levels, 128 objects, 384 object properties, and 640 array elements. Names and labels are 1–76 code points (room for an item number), units 1–32, and status/display output at most 160.
 - **Metrics:** `percentage`, `used-limit`, `remaining-limit`, `spend-budget`, `remaining-budget`, `value`, and `status`. Calculations are fixed; no formulas or fallback parsing.
 - **Numbers:** exactly one `path` or `literal`, finite, with absolute magnitude at most `1e15`. A response may also write a number as text if it is a plain decimal like `"95.50"` or `"-3"` (spaces around it are ignored); other text such as `"95.50 USD"` or `"1e3"` is rejected. Zero is not the same as missing or `null`. Path sources may use `divideBy` with `100`, `1000`, or `1000000`.
 - **Timestamps:** `iso-8601`, `unix-seconds`, or `unix-milliseconds`. ISO needs a time zone, allows 1–3 fractional digits and offsets through `±14:00`, and must fall within years 1970–9999. Output is canonical UTC ISO.
@@ -401,11 +401,11 @@ Restart OpenCode, run `/connect`, choose **Cursor**, then sign in with **Cursor 
 
 Cursor's three settings sit under Cursor on the Providers tab (`/quota_settings`): **Plan** (Pro includes $20 of API use a month, Pro Plus $70, Ultra $400), **Included API budget** (your own amount instead of the plan's), and **Billing day** (the day your Cursor bill renews).
 
-Cursor estimates the current billing cycle from your local OpenCode history:
+Cursor estimates the current billing cycle from your local OpenCode history, pricing each model the way the Usage tab does: Auto and Composer at Cursor's own prices, every other model at its models.dev price.
 
 - With all models known and an allowance (`providers.cursor.plan` or `providers.cursor.includedApiUsd`), it shows an **API budget** percentage with used, limit, and remaining USD.
 - Without an allowance, it shows **API spend**.
-- If any Cursor model is unknown, it shows only **Known API spend** plus a partial-data issue, never a percentage or a total.
+- If any Cursor model has no price, it shows only **Known API spend** plus a partial-data issue, never a percentage or a total.
 - **Auto+Composer spend** is a supplementary row shown in detailed output when there is room.
 - Set `providers.cursor.billingCycleStartDay` to your billing day; otherwise the cycle is the local calendar month.
 

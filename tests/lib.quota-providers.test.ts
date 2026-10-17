@@ -47,9 +47,12 @@ function nested(levels: number): Record<string, unknown> {
   return value;
 }
 
-/** 80 code points, different for each index: two names may not give one row id. */
+/**
+ * The longest json-v1 name, 76 code points (80 less room for " 100"), different for each
+ * index: two names may not give one row id.
+ */
 function maxName(index: number): string {
-  return `${String(index).padStart(2, "0")}${"n".repeat(78)}`;
+  return `${String(index).padStart(2, "0")}${"n".repeat(74)}`;
 }
 
 describe("quotaProviders schema", () => {
@@ -141,13 +144,25 @@ describe("quotaProviders schema", () => {
     );
   });
 
-  it("requires providerId to be omitted when it equals id", () => {
-    expect(
-      validateQuotaProviders([quotaProvider({ providerId: "provider-one" })]).issues,
-    ).toContainEqual({
-      key: "quotaProviders[0].providerId",
-      message: "omit providerId when it is the same as id",
-    });
+  it("passes its own output again unchanged, providerId included", () => {
+    const inputs = [
+      ...VALID_QUOTA_PROVIDER_INPUTS,
+      quotaProvider({ id: "same-provider", format: "accounting-v1", label: "  Same  " }),
+      {
+        ...jsonV1(
+          usage({ resultType: "rate_limit", resetTime: { literal: 0, encoding: "unix-seconds" } }),
+        ),
+        id: "json-one",
+        providerId: "json-provider",
+      },
+      localQuotaProvider({ id: "local-one", providerId: "local-provider" }),
+    ];
+    const first = validateQuotaProviders(inputs);
+    expect(first.issues).toEqual([]);
+
+    const second = validateQuotaProviders(first.value);
+    expect(second.issues).toEqual([]);
+    expect(second.value).toEqual(first.value);
   });
 
   it.each([
@@ -497,8 +512,8 @@ describe("quotaProviders schema", () => {
       jsonV1(...Array.from({ length: 17 }, () => usage())),
       "quotaProviders[0].adapter.mappings",
     ],
-    ["81-code-point name", jsonV1(usage({ name: "n".repeat(81) })), `${M0}.name`],
-    ["81-code-point label", jsonV1(usage({ label: "l".repeat(81) })), `${M0}.label`],
+    ["77-code-point name", jsonV1(usage({ name: "n".repeat(77) })), `${M0}.name`],
+    ["77-code-point label", jsonV1(usage({ label: "l".repeat(77) })), `${M0}.label`],
     [
       "33-code-point unit",
       jsonV1(usage({ unit: "u".repeat(33), unitPosition: "suffix" })),
@@ -563,7 +578,7 @@ describe("quotaProviders schema", () => {
           mappings: Array.from({ length: 16 }, (_, index) => ({
             resultType: "quota",
             name: maxName(index),
-            label: "l".repeat(80),
+            label: "l".repeat(76),
             unit: "u".repeat(32),
             unitPosition: "suffix",
             resetTime: { path: longPath(), encoding: "iso-8601" },
@@ -630,15 +645,19 @@ describe("quotaProviders schema", () => {
     },
   );
 
-  it("rejects a provider-prefixed json-v1 entry name above 160 code points", () => {
+  it("keeps room in json-v1 names and labels for a list's item number", () => {
     const result = validateQuotaProviders([
-      { ...jsonV1(usage({ name: "n".repeat(80) })), label: "p".repeat(80) },
+      { ...jsonV1(usage({ name: "n".repeat(76), label: "😀".repeat(76) })), label: "p".repeat(80) },
     ]);
+    expect(result.issues).toEqual([]);
 
-    expect(result.issues).toContainEqual({
-      key: `${M0}.name`,
-      message: "provider-prefixed name must not exceed 160 code points",
-    });
+    const tooLong = validateQuotaProviders([
+      jsonV1(usage({ name: "n".repeat(77), label: "l".repeat(77) })),
+    ]);
+    expect(tooLong.issues).toEqual([
+      { key: `${M0}.name`, message: "expected 1-76 printable Unicode code points after trimming" },
+      { key: `${M0}.label`, message: "expected 1-76 printable Unicode code points after trimming" },
+    ]);
   });
 
   it.each([
