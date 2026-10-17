@@ -29,7 +29,6 @@ export const QUOTA_PROVIDER_MAX_BODY_BYTES = 256 * 1024;
 const MAX_REMOTE_ROWS = 100;
 const JSON_V1_MAX_RESPONSE_DEPTH = 32;
 const JSON_V1_MAX_CANDIDATES = 1_600;
-const JSON_V1_MAX_ENTRIES = 100;
 const JSON_V1_MAX_DETAILED_ERRORS = 16;
 
 const PERCENT_RESULT_TYPES = new Set<CustomResultType>(["quota", "rate_limit", "budget"]);
@@ -335,7 +334,8 @@ function formatJsonV1Value(value: number, mapping: JsonV1Mapping): string {
 /**
  * One mapping applied to one reply item: a row keyed by the mapping's name, or why not. In a
  * list of more than one item, item n's label ends in " n" and, from item 2 on, its key in ".n";
- * item 1 keeps the key a single item has.
+ * item 1 keeps the key a single item has. The label is clipped so the longest number in the list
+ * still fits the row gate.
  */
 function mapJsonV1Candidate(
   row: Record<string, unknown>,
@@ -373,11 +373,13 @@ function mapJsonV1Candidate(
       resetsAt: resetTimeIso,
     });
     if (itemCount === 1) return { row };
+    const labelRoom = LABEL_MAX_CODE_POINTS - ` ${itemCount}`.length;
+    const clippedLabel = Array.from(row.label).slice(0, labelRoom).join("").trimEnd();
     return {
       row: {
         ...row,
         key: itemNumber === 1 ? row.key : `${row.key}.${itemNumber}`,
-        label: `${row.label} ${itemNumber}`,
+        label: `${clippedLabel} ${itemNumber}`,
       },
     };
   };
@@ -514,9 +516,6 @@ function parseJsonV1(
         continue;
       }
       mappedRows.push(mapped.row);
-      if (mappedRows.length > JSON_V1_MAX_ENTRIES) {
-        return invalid(`more than ${JSON_V1_MAX_ENTRIES} entries were produced`);
-      }
     }
   }
 

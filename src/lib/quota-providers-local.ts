@@ -48,6 +48,7 @@ function countedRequest(
   message: OpenCodeMessage,
   providerIds: readonly string[],
   modelIds: readonly string[] | undefined,
+  requireModelId: boolean,
 ): CountedRequest | null {
   const completed = message.time?.completed;
   // Only finished requests count, timed by when they completed.
@@ -58,6 +59,7 @@ function countedRequest(
     message.role !== "assistant" ||
     !message.providerID ||
     !providerIds.includes(message.providerID) ||
+    (requireModelId && !modelId) ||
     (modelIds !== undefined && !modelIds.includes(modelId)) ||
     !message.id ||
     atMs <= 0
@@ -69,12 +71,13 @@ function countedRequest(
 
 /**
  * This machine's completed requests to `providerIds` (and `modelIds`, when given) in each
- * window, read from OpenCode's own messages since the longest window began. A message counts
- * once. A rolling window resets when its oldest request leaves it; a UTC day at midnight UTC.
+ * window, read from OpenCode's own messages since the longest window began. With
+ * `requireModelId`, a message that names no model is left out. A message counts once. A rolling window resets when its oldest request leaves it; a UTC day at midnight UTC.
  */
 export async function countRequestWindows(params: {
   providerIds: readonly string[];
   modelIds?: readonly string[];
+  requireModelId?: boolean;
   windows: readonly LocalEstimateWindow[];
   nowMs: number;
   readMessages?: ReadCompletedMessages;
@@ -84,7 +87,12 @@ export async function countRequestWindows(params: {
   const completedSinceMs = Math.min(...params.windows.map((window) => windowStart(window, nowMs)));
   const byId = new Map<string, CountedRequest>();
   for (const message of await readMessages({ completedSinceMs, completedUntilMs: nowMs })) {
-    const request = countedRequest(message, params.providerIds, params.modelIds);
+    const request = countedRequest(
+      message,
+      params.providerIds,
+      params.modelIds,
+      params.requireModelId ?? false,
+    );
     if (request && request.atMs >= completedSinceMs && request.atMs <= nowMs) {
       byId.set(request.id, request);
     }
@@ -156,6 +164,8 @@ export async function collectLocalQuotaProviderEstimate(
   const counts = await countRequestWindows({
     providerIds: [definition.providerId],
     modelIds: definition.modelIds,
+    // A custom estimate prices each request by its model, so a request without one is skipped.
+    requireModelId: true,
     windows: definition.windows,
     nowMs: dependencies.nowMs ?? Date.now(),
     readMessages: dependencies.readMessages,

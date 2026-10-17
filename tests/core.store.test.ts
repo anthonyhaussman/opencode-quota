@@ -408,6 +408,17 @@ describe("quota store", () => {
     expect((await store.refresh({ reason: "poll" })).resetNotices).toEqual([]);
   });
 
+  it("keeps a reset notice's full 80-character label and account in the file", async () => {
+    const long = "😀".repeat(80);
+    const copilot = fakeProvider();
+    const store = await storePastWeeklyReset(copilot, { label: long, account: long });
+    copilot.fetch.mockResolvedValue(refilled({ label: long, account: long }));
+    await store.refresh({ reason: "poll" });
+
+    const [notice] = (await makeStore([copilot.provider], 0).snapshot()).resetNotices;
+    expect(notice).toMatchObject({ label: long, account: long });
+  });
+
   it("gives no reset notice for windows that don't refill or rows that didn't reset", async () => {
     const later = new Date(START_MS + 5 * HOUR).toISOString();
     const copilot = fakeProvider();

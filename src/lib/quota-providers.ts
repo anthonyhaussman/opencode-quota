@@ -344,12 +344,6 @@ const JSON_V1_MAX_STATIC_UNIT_CODE_POINTS = 32;
 export const JSON_V1_MAX_DISPLAY_CODE_POINTS = 160;
 /** Most items a reply's list may hold; each becomes its own row. */
 export const JSON_V1_MAX_ITEMS = 100;
-/**
- * A json-v1 name or label: room is kept for the item number a list adds (" 100"), so a
- * numbered label still fits the row gate.
- */
-const JSON_V1_MAX_NAME_CODE_POINTS = LABEL_MAX_CODE_POINTS - ` ${JSON_V1_MAX_ITEMS}`.length;
-const JSON_V1_NAME_LENGTH_MESSAGE = `expected 1-${JSON_V1_MAX_NAME_CODE_POINTS} printable Unicode code points after trimming`;
 export const JSON_V1_MAX_NUMBER_MAGNITUDE = 1e15;
 
 const JSON_V1_FORBIDDEN_PATH_SEGMENTS = new Set(["__proto__", "prototype", "constructor"]);
@@ -1006,17 +1000,17 @@ function validateJsonV1Mapping(
     adapterIssue(issues, `${key}.resultType`, "expected a supported accounting result type");
   }
 
-  const name = normalizeJsonV1StaticText(value.name, JSON_V1_MAX_NAME_CODE_POINTS);
+  const name = normalizeJsonV1StaticText(value.name, LABEL_MAX_CODE_POINTS);
   if (hasOwnKey(value, "name") && !name) {
-    adapterIssue(issues, `${key}.name`, JSON_V1_NAME_LENGTH_MESSAGE);
+    adapterIssue(issues, `${key}.name`, LABEL_LENGTH_MESSAGE);
   }
 
   const label =
     value.label === undefined
       ? undefined
-      : normalizeJsonV1StaticText(value.label, JSON_V1_MAX_NAME_CODE_POINTS);
+      : normalizeJsonV1StaticText(value.label, LABEL_MAX_CODE_POINTS);
   if (value.label !== undefined && !label) {
-    adapterIssue(issues, `${key}.label`, JSON_V1_NAME_LENGTH_MESSAGE);
+    adapterIssue(issues, `${key}.label`, LABEL_LENGTH_MESSAGE);
   }
 
   const unit =
