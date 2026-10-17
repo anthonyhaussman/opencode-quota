@@ -1,4 +1,3 @@
-import { readFile } from "fs/promises";
 import type { DebugDetail } from "../core/types.js";
 import {
   type ApiKeySpec,
@@ -7,7 +6,6 @@ import {
   type VendorKeys,
 } from "../lib/api-key-resolver.js";
 import { sanitizeDisplayText } from "../lib/display-sanitize.js";
-import { asRecord } from "../lib/json-guards.js";
 import { getCredentialDatabasePaths } from "../lib/opencode-auth.js";
 
 export function statusDetailsFromRecord(
@@ -73,45 +71,4 @@ export function apiKeyStatusDetails(diagnostics: {
     api_key_credential_database_paths: diagnostics.credentialDatabasePaths.join(" | ") || "(none)",
     auth_error: diagnostics.error ? sanitizeDisplayText(diagnostics.error) : undefined,
   });
-}
-
-export async function inspectGeneratedCounterFile(
-  path: string,
-  expectedVersion: number,
-): Promise<{
-  exists: boolean;
-  health: "missing" | "healthy" | "malformed" | "version_mismatch";
-  version: number | null;
-  lastUpdatedAt: number | null;
-}> {
-  try {
-    const parsed = JSON.parse(await readFile(path, "utf8")) as unknown;
-    const record = asRecord(parsed);
-    const version = typeof record?.version === "number" ? record.version : null;
-    const updatedAt =
-      typeof record?.updatedAt === "number" && Number.isFinite(record.updatedAt)
-        ? record.updatedAt
-        : null;
-    return {
-      exists: true,
-      health:
-        !record || version === null || updatedAt === null
-          ? "malformed"
-          : version === expectedVersion
-            ? "healthy"
-            : "version_mismatch",
-      version,
-      lastUpdatedAt: updatedAt,
-    };
-  } catch (error) {
-    if (
-      error &&
-      typeof error === "object" &&
-      "code" in error &&
-      String((error as { code?: unknown }).code) === "ENOENT"
-    ) {
-      return { exists: false, health: "missing", version: null, lastUpdatedAt: null };
-    }
-    return { exists: true, health: "malformed", version: null, lastUpdatedAt: null };
-  }
 }

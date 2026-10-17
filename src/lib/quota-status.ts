@@ -132,7 +132,6 @@ export const KNOWN_FILE_NAMES: ReadonlySet<string> = new Set([
   ".credentials.json",
   "copilot-quota-token.json",
   "mimo.json",
-  "alibaba-coding-plan-local-quota.json",
   "modelsdev-pricing.runtime.min.json",
   "modelsdev-pricing.refresh-state.json",
   "snapshot-v6.json",
@@ -1013,7 +1012,6 @@ const GOOGLE_DETAILS: DebugRules = {
   companion_package_path: pathList,
   auth_error: present,
 };
-const STATE_HEALTH = ["missing", "healthy", "malformed", "version_mismatch"] as const;
 const CONSOLE_AUTH_STATES = ["none", "configured", "expired", "invalid"] as const;
 
 /**
@@ -1098,14 +1096,11 @@ const DEBUG_DETAILS = {
     unknown_cursor_models: count,
   },
   "alibaba-coding-plan": {
-    ...each(bool, "alibaba auth configured", "local_state_exists"),
+    "alibaba auth configured": bool,
     alibaba_api_key_source: keySource,
-    ...each(pathList, "alibaba_api_key_checked_paths", "local_state_path"),
+    alibaba_api_key_checked_paths: pathList,
     alibaba_api_key_credential_database_paths: pathList,
     alibaba_coding_plan: oneOf("lite", "pro", "invalid"),
-    local_state_health: oneOf(...STATE_HEALTH),
-    local_state_version: count,
-    local_state_last_update: time,
   },
   "alibaba-token-plan": {
     cli_available: bool,
@@ -1173,7 +1168,7 @@ const SETUP_DETAILS: DebugRules = {
 /** A numbered live error ("live_error_1"), shown as its kind like `live_fetch_error`. */
 const LIVE_ERROR_KEY = /^live_error_\d{1,2}$/u;
 
-/** A custom definition's check: outcome, login source, files read, local counter state. */
+/** A custom definition's check: outcome, login source, files read. */
 const CUSTOM_CHECK: DebugRule = fields({
   outcome: oneOf(
     "missing_credential",
@@ -1186,7 +1181,7 @@ const CUSTOM_CHECK: DebugRule = fields({
     "invalid_json",
     "invalid_response",
     "network_error",
-    "local_state_error",
+    "local_read_error",
   ),
   http_status: status,
   credential_source: oneOf(
@@ -1196,9 +1191,6 @@ const CUSTOM_CHECK: DebugRule = fields({
     "opencode_db",
   ),
   checked_paths: pathList,
-  state_health: oneOf(...STATE_HEALTH),
-  state_version: count,
-  state_last_update: time,
 });
 
 /** "custom 2 check" for the debug key of the second custom definition's check. */

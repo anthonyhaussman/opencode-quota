@@ -6,11 +6,7 @@ import type {
   QuotaProviderContext,
 } from "../lib/entries.js";
 import { mapWithConcurrency } from "../lib/map-with-concurrency.js";
-import {
-  collectLocalQuotaProviderEstimate,
-  inspectLocalQuotaProviderState,
-  type LocalQuotaProviderStateDiagnostics,
-} from "../lib/quota-providers-local.js";
+import { collectLocalQuotaProviderEstimate } from "../lib/quota-providers-local.js";
 import {
   fetchRemoteQuotaProvider,
   type QuotaProviderAuthResolution,
@@ -104,15 +100,6 @@ function credentialParts(auth: QuotaProviderAuthResolution | undefined): string[
   return [`credential_source=${source}`, `checked_paths=${[...paths].join(" | ") || "(none)"}`];
 }
 
-function stateParts(state: LocalQuotaProviderStateDiagnostics | undefined): string[] {
-  const lastUpdate = state?.lastUpdatedAt;
-  return [
-    `state_health=${state?.health ?? "missing"}`,
-    `state_version=${state?.version ?? "(none)"}`,
-    `state_last_update=${lastUpdate ? new Date(lastUpdate).toISOString() : "(none)"}`,
-  ];
-}
-
 function selectDefinitions(
   ctx: QuotaProviderContext,
   availableProviderIds: ReadonlySet<string>,
@@ -173,23 +160,20 @@ async function executeRemote(
 async function executeLocal(
   definition: LocalEstimateQuotaProviderDefinition,
 ): Promise<DefinitionResult> {
-  let rows: ProviderRow[] | null;
+  let rows: ProviderRow[];
   try {
     rows = (await collectLocalQuotaProviderEstimate(definition)).rows;
   } catch {
-    rows = null;
-  }
-  const state = await inspectLocalQuotaProviderState(definition);
-  if (!rows) {
+    const failure = "Failed to read OpenCode's messages";
     return {
-      account: customAccount(definition, [], ["Failed to update local accounting state"]),
-      check: checkDetail(definition, ["outcome=local_state_error", ...stateParts(state)]),
-      failure: "Failed to update local accounting state",
+      account: customAccount(definition, [], [failure]),
+      check: checkDetail(definition, ["outcome=local_read_error"]),
+      failure,
     };
   }
   return {
     account: customAccount(definition, rows, []),
-    check: checkDetail(definition, ["outcome=success", ...stateParts(state)]),
+    check: checkDetail(definition, ["outcome=success"]),
   };
 }
 
@@ -199,7 +183,7 @@ function failedDefinition(definition: QuotaProviderDefinition): DefinitionResult
     account: customAccount(definition, [], ["Provider execution failed"]),
     check: checkDetail(definition, [
       "outcome=network_error",
-      ...(definition.mode === "remote-api" ? credentialParts(undefined) : stateParts(undefined)),
+      ...(definition.mode === "remote-api" ? credentialParts(undefined) : []),
     ]),
     failure: "Provider execution failed",
   };

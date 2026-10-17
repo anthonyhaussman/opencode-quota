@@ -104,7 +104,7 @@ Add a custom OpenCode Quota provider for <provider> with the quota_provider_add 
 
 Then switch the provider on by setting `"enabled": true` in `opencode-quota/settings.jsonc` in the OpenCode config folder (`~/.config/opencode/` by default), or in the TUI's `/quota_settings` → **Providers**. An agent saves every provider it adds or replaces switched off: until you switch it on, it is never fetched and its key is never sent. No agent tool can switch it on. The Providers tab switches on only the definition it shows: if its address or key source changed since, Save saves nothing and shows the new ones to check.
 
-The `quota_settings_*` and `quota_provider_*` tools change only OpenCode Quota's own settings file (through a symlink, its target), never `opencode.json`; testing a local-estimate provider also updates its state file. A definition holding anything that looks like a key is refused. `quota_provider_test` and `quota_provider_remove` take a provider's `id`.
+The `quota_settings_*` and `quota_provider_*` tools change only OpenCode Quota's own settings file (through a symlink, its target), never `opencode.json`. A definition holding anything that looks like a key is refused. `quota_provider_test` and `quota_provider_remove` take a provider's `id`.
 
 To edit it yourself, put definitions in `providers.custom` in `settings.jsonc` ([where](configuration.md#where-settings-live)). Changes apply without a restart.
 
@@ -116,7 +116,7 @@ To edit it yourself, put definitions in `providers.custom` in `settings.jsonc` (
 - OpenRouter is built in. A custom OpenRouter definition only helps if you need a different endpoint or label.
 - Alibaba Personal Token Plan uses the reserved `alibaba-token-plan` ID and stays a separate official-CLI provider; it is not a local-estimate tuning target.
 
-See [Configuration](configuration.md#custom-providers) for a complete example and the other rules (pricing, state files, what is not allowed).
+See [Configuration](configuration.md#custom-providers) for a complete example and the other rules (pricing, what is not allowed).
 
 <details>
 <summary><strong>Recipes: Vercel AI Gateway, Moonshot, Poe</strong></summary>

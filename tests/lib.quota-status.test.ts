@@ -232,7 +232,7 @@ const REPORT_WORDS: readonly string[] = `
   error exists experimental expired failures false file files found from future generated_at
   github global history home_frequency host http http_error http_status id in integration
   internal invalid jsonc_used_over_json left limited line list list_error
-  local_state_path local_tool matchesCurrentModel max_age_ms memory
+  local_tool matchesCurrentModel max_age_ms memory
   missing models more network no none not not_read number oauth_configured of ok on
   opencode-integration-api opencode_db opencode_dirs opencode_provider other out outcome part
   partial pat_enterprise pat_organization pat_path paths per present price pricing_snapshot
@@ -244,7 +244,7 @@ const REPORT_WORDS: readonly string[] = `
   written yes yet ~
   environment origin os runtime bun node opencode-quota quota_status status TUI Plugin tab CLI
   channel version changed_from_defaults setting settings entry entries color separator null shipped
-  error_kind local_state_version unknown_cursor_models
+  error_kind unknown_cursor_models
   notices price_list_providers selection_note built-in is used prices ignored valid so one lists
   session has model dropped_row timeout login_expired not_configured bad_response no_data no_plan
   repeated object wrong value id label type method authority prominence account window
@@ -318,14 +318,14 @@ const NUMBER_LINES: readonly RegExp[] = [
   String.raw`- providers\.off: .+ \(\+${SMALL} unknown ids?\)`,
   String.raw`- providers\.custom: custom ${SMALL} (?:off .+|\([\w-]+, (?:${SMALL} models?|all models)(?:, tunes [\w-]+)?\))`,
   String.raw`- (?:active|future|expired): ${SMALL}`,
-  String.raw`- (?:checked_at|token_expires_at|cycle_reset_at|reset_at|billing_period_end|grace_until|local_state_last_update): ${TIME}(?: \(rows from ${TIME}\))?`,
+  String.raw`- (?:checked_at|token_expires_at|cycle_reset_at|reset_at|billing_period_end|grace_until): ${TIME}(?: \(rows from ${TIME}\))?`,
   String.raw`- (?:list_error|failures): .*`,
   String.raw`- state: (?:error|partial): [^()]*\((?:[\w ]+|[\w_]+, http \d{3})\)`,
   String.raw`- rows: ${SMALL}`,
   String.raw`  - ${ROW_ID}(?: \(account ${SMALL}\))?: ${ROW_FACT}(?:, ${ROW_FACT})*`,
   String.raw`  - … \(${SMALL} more\)`,
   String.raw`- ${SMALL} other details? not shown`,
-  String.raw`- (?:account_count|valid_account_count|unknown_cursor_models|local_state_version): ${RANGED}`,
+  String.raw`- (?:account_count|valid_account_count|unknown_cursor_models): ${RANGED}`,
   String.raw`- billing_cycle_start_day: (?:\d{1,2}|\(out of range\))`,
   String.raw`- cli_version: (?:${SMALL}\.${SMALL}\.${SMALL}|\(out of range\))`,
   String.raw`- billing_period: (?:20\d\d-\d\d|\(invalid date\))`,
@@ -1346,8 +1346,8 @@ describe("buildQuotaStatusReport", () => {
       "account_count",
       "unknown_cursor_models",
       "billing_cycle_start_day",
-      "local_state_version",
-      "local_state_path",
+      "valid_account_count",
+      "checked_at",
       "config_source",
       "auth_selected_path",
       "error",
@@ -1713,7 +1713,7 @@ describe("buildQuotaStatusReport", () => {
           snapshot("alibaba-coding-plan", {
             debug: [
               { key: "alibaba auth configured", value: "true" },
-              { key: "local_state_health", value: "healthy" },
+              { key: "alibaba_coding_plan", value: "pro" },
             ],
           }),
         ],
@@ -1727,7 +1727,7 @@ describe("buildQuotaStatusReport", () => {
         "- account_count: 2",
         "- selected_windows: rolling,weekly\n- console_error: (text not shown)",
         `- token_expires_at: ${RESET}`,
-        "- alibaba auth configured: true\n- local_state_health: healthy",
+        "- alibaba auth configured: true\n- alibaba_coding_plan: pro",
       ],
     },
     {
