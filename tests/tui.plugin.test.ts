@@ -5,6 +5,7 @@
  */
 import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
 import type { ProviderSnapshot, QuotaSnapshot, ResetNotice } from "../src/core/types.js";
+import { readAuthFile, readAuthFileCached, readCredentialRows } from "../src/lib/opencode-auth.js";
 import type { QuotaClient } from "../src/tui/client.js";
 import { type DisplaySettings, defaultDisplaySettings } from "../src/tui/display.js";
 import plugin from "../src/tui/index.tsx";
@@ -22,6 +23,16 @@ vi.mock("solid-js", async (importOriginal) => ({
     cleanups.push(cleanup);
   },
 }));
+/** The TUI never reads logins: the server plugin does. */
+vi.mock("../src/lib/opencode-auth.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../src/lib/opencode-auth.js")>();
+  return {
+    ...actual,
+    readAuthFile: vi.fn(actual.readAuthFile),
+    readAuthFileCached: vi.fn(actual.readAuthFileCached),
+    readCredentialRows: vi.fn(actual.readCredentialRows),
+  };
+});
 
 function provider(label: string, percentRemaining?: number): ProviderSnapshot {
   const providerId = label.toLowerCase();
@@ -441,6 +452,9 @@ describe("commands of the TUI plugin", () => {
       { reason: "turn", sessionID: "ses_1" },
     ]);
     expect(rpc.notices).toHaveBeenCalledOnce();
+    expect(readAuthFile).not.toHaveBeenCalled();
+    expect(readAuthFileCached).not.toHaveBeenCalled();
+    expect(readCredentialRows).not.toHaveBeenCalled();
   });
 
   it("catches a typed quota command with one Enter binding above OpenCode's prompt, only in the base mode", () => {

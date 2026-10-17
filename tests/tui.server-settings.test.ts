@@ -430,10 +430,15 @@ describe("the server settings this window edits", () => {
       stubJsx();
       const server = createServerSettings(fakeRpc());
       await server.load();
+      const display = createFileDisplay(server).shown;
+      // The snapshot carries the unsaved words too, so while editing both places agree; only
+      // after Save, before the changed event, do the snapshot's words fall back to the old ones.
+      const snapshot = (): QuotaSnapshot =>
+        server.dirty() ? { ...SNAPSHOT, words: display().words } : SNAPSHOT;
       const host = {
         theme: () => THEME,
-        display: createFileDisplay(server).shown,
-        quota: { watch: () => () => {}, snapshot: () => SNAPSHOT } as unknown as QuotaClient,
+        display,
+        quota: { watch: () => () => {}, snapshot } as unknown as QuotaClient,
         editing: {
           marked: () => undefined,
           panelOpen: () => undefined,
