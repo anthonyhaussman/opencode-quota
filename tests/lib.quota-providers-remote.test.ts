@@ -437,10 +437,10 @@ describe("openrouter-key-v1", () => {
 
 describe("json-v1", () => {
   it("shows every row of a definition that passed the checker with the longest label and names", async () => {
-    const longest = "😀".repeat(80);
+    const longest = "😀".repeat(76);
     const checked = validateQuotaProviders([
       {
-        ...source({ label: longest }),
+        ...source({ label: `${longest}😀😀😀😀` }),
         format: "json-v1",
         adapter: {
           mappings: [
@@ -456,8 +456,31 @@ describe("json-v1", () => {
     const screen = shown(definition, await fetchBody({ used: 3 }, definition));
     expect(screen.problems).toEqual([]);
     expect(screen.rows.map((row) => [row.account, row.label, row.text])).toEqual([
-      [longest, longest, "3"],
-      [longest, longest, "3"],
+      [`${longest}😀😀😀😀`, longest, "3"],
+      [`${longest}😀😀😀😀`, longest, "3"],
+    ]);
+  });
+
+  it("shows each item of a list as its own numbered row; one item keeps the plain name", async () => {
+    const adapter: JsonV1Source["adapter"] = {
+      rowsPath: ["plans"],
+      mappings: [{ resultType: "usage", name: "Daily", label: "Daily:", metric: usedValue() }],
+    };
+    const plans = [{ used: 1 }, { used: 2 }, { used: 3 }];
+    const list = shown(jsonSource(adapter), await fetchBody({ plans }, jsonSource(adapter)));
+    expect(list.problems).toEqual([]);
+    expect(list.rows.map((row) => [row.id, row.label, row.text])).toEqual([
+      ["quota-providers.custom.source-one.Daily", "Daily 1", "1"],
+      ["quota-providers.custom.source-one.Daily.2", "Daily 2", "2"],
+      ["quota-providers.custom.source-one.Daily.3", "Daily 3", "3"],
+    ]);
+
+    const one = shown(
+      jsonSource(adapter),
+      await fetchBody({ plans: [{ used: 1 }] }, jsonSource(adapter)),
+    );
+    expect(one.rows.map((row) => [row.id, row.label])).toEqual([
+      ["quota-providers.custom.source-one.Daily", "Daily"],
     ]);
   });
 
@@ -470,24 +493,24 @@ describe("json-v1", () => {
       expect.arrayContaining([
         remoteRow({
           key: "Tokens",
-          label: "Used",
+          label: "Used 1",
           type: "quota",
           percentRemaining: 100,
           resetsAt: "2026-07-31T22:00:00.000Z",
         }),
-        expect.objectContaining({ key: "Used_percent", type: "budget", percentRemaining: -25 }),
-        expect.objectContaining({ key: "Spend_budget", percentRemaining: -20 }),
+        expect.objectContaining({ key: "Used_percent.2", type: "budget", percentRemaining: -25 }),
+        expect.objectContaining({ key: "Spend_budget.2", percentRemaining: -20 }),
         expect.objectContaining({ key: "Balance", type: "balance", text: "$-3.5" }),
         expect.objectContaining({ key: "Spend", type: "usage" }),
         expect.objectContaining({ key: "Requests", type: "quota" }),
         expect.objectContaining({ key: "Status", type: "status", text: "Ready" }),
+        expect.objectContaining({ key: "Status.3", label: "Status 3", text: "Partial" }),
       ]),
     );
-    // Every plan gives each mapping the same row id, so only the first plan's rows are shown.
+    // Each plan's rows are numbered, so every one is shown.
     const screen = shown(jsonSource(), result);
-    expect(screen.rows).toHaveLength(9);
-    expect(screen.problems).toHaveLength(12);
-    expect(screen.problems).toContain("quota-providers.custom.source-one.Tokens: repeated row");
+    expect(screen.rows).toHaveLength(21);
+    expect(screen.problems).toEqual([]);
     expect(result.rowErrors).toHaveLength(15);
     expect(result.rowErrors).toEqual(
       expect.arrayContaining([

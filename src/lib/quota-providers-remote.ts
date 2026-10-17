@@ -20,6 +20,7 @@ import {
   customRow,
   customRowKey,
   JSON_V1_MAX_DISPLAY_CODE_POINTS,
+  JSON_V1_MAX_ITEMS,
   JSON_V1_MAX_NUMBER_MAGNITUDE,
   normalizeJsonV1Timestamp,
 } from "./quota-providers.js";
@@ -331,10 +332,15 @@ function formatJsonV1Value(value: number, mapping: JsonV1Mapping): string {
   return mapping.unitPosition === "prefix" ? `${mapping.unit}${value}` : `${value} ${mapping.unit}`;
 }
 
-/** One mapping applied to one reply row: a row keyed by the mapping's name, or why not. */
+/**
+ * One mapping applied to one reply item: a row keyed by the mapping's name, or why not. In a
+ * list of more than one item, item n's label ends in " n" and, from item 2 on, its key in ".n";
+ * item 1 keeps the key a single item has.
+ */
 function mapJsonV1Candidate(
   row: Record<string, unknown>,
   rowIndex: number,
+  itemCount: number,
   mapping: JsonV1Mapping,
   mappingIndex: number,
 ): JsonV1Candidate {
@@ -355,8 +361,9 @@ function mapJsonV1Candidate(
     if (!resolved.ok) return fail("observedTime", resolved.issue);
   }
 
-  const mapped = (value: { percentRemaining: number } | { text: string }): JsonV1Candidate => ({
-    row: customRow({
+  const itemNumber = rowIndex + 1;
+  const mapped = (value: { percentRemaining: number } | { text: string }): JsonV1Candidate => {
+    const row = customRow({
       key: customRowKey(mapping.name),
       name: mapping.name,
       label: mapping.label,
@@ -364,8 +371,16 @@ function mapJsonV1Candidate(
       method: "remote_api",
       value,
       resetsAt: resetTimeIso,
-    }),
-  });
+    });
+    if (itemCount === 1) return { row };
+    return {
+      row: {
+        ...row,
+        key: itemNumber === 1 ? row.key : `${row.key}.${itemNumber}`,
+        label: `${row.label} ${itemNumber}`,
+      },
+    };
+  };
 
   // Shared by used-limit, remaining-limit, spend-budget and remaining-budget:
   // an amount (used, spent, or remaining) out of a positive total.
@@ -469,8 +484,8 @@ function parseJsonV1(
     return invalid("expected an object or array root");
   }
 
-  if (rows.length < 1 || rows.length > MAX_REMOTE_ROWS) {
-    return invalid(`selected rows must contain 1-${MAX_REMOTE_ROWS} elements`);
+  if (rows.length < 1 || rows.length > JSON_V1_MAX_ITEMS) {
+    return invalid(`selected rows must contain 1-${JSON_V1_MAX_ITEMS} elements`);
   }
   const { mappings } = source.adapter;
   if (rows.length * mappings.length > JSON_V1_MAX_CANDIDATES) {
@@ -493,7 +508,7 @@ function parseJsonV1(
         );
         continue;
       }
-      const mapped = mapJsonV1Candidate(row, rowIndex, mapping, mappingIndex);
+      const mapped = mapJsonV1Candidate(row, rowIndex, rows.length, mapping, mappingIndex);
       if ("error" in mapped) {
         recordError(mapped.error);
         continue;
