@@ -2,7 +2,8 @@
  * Tools for AI agents: read the server settings, change the provider, checking and pricing
  * settings, and add, test and remove custom providers. Words, export and telemetry
  * are the user's, edited in the quota window or the settings file. Every write
- * holds the settings lock and goes into OpenCode Quota's own settings file, never opencode.json.
+ * holds the settings lock and goes into OpenCode Quota's own settings file, never opencode.json,
+ * through the settings the server holds, so the server uses it once the tool answers.
  *
  * Keys: a provider added by an agent is saved switched off (`"enabled": false`), so it is never
  * fetched and its key is never sent until the user switches it on. No tool switches a provider
@@ -35,9 +36,7 @@ import { customAccount } from "./providers/quota-providers.js";
 import {
   checkSetting,
   describeRule,
-  editSettings,
-  editSettingsFile,
-  loadSettings,
+  type LiveSettings,
   SETTINGS_SCHEMA,
   type Settings,
   type SettingsIssue,
@@ -48,6 +47,8 @@ import {
 type QuotaAgentToolsHost = {
   /** The providers OpenCode serves now; a custom provider shows only when its providerId is one. */
   openCodeProviderIds(): Promise<readonly string[]>;
+  /** The settings the server holds; an edit through them is in use when it resolves. */
+  settings: Pick<LiveSettings, "current" | "edit" | "editFile">;
 };
 
 /** A tool as `ctx.tool.transform(editor => editor.add(tool))` takes it. */
@@ -158,8 +159,9 @@ function definitionSecretIssues(definition: Record<string, unknown>): SettingsIs
  */
 async function credentialValues(host: QuotaAgentToolsHost): Promise<string[]> {
   // Each provider's key variable and OpenCode provider.
-  const sources = (await loadSettings()).settings.providers.custom
-    .filter((definition) => definition.enabled !== false)
+  const sources = host.settings
+    .current()
+    .settings.providers.custom.filter((definition) => definition.enabled !== false)
     .map((definition) => ({
       variable: definition.mode === "remote-api" ? definition.apiKeyEnv : undefined,
       providerId: definition.providerId,
@@ -225,8 +227,8 @@ function apiKeySources(definitions: readonly QuotaProviderDefinition[]): ToolRes
   });
 }
 
-async function getSettings(): Promise<ToolResult> {
-  const loaded = await loadSettings();
+async function getSettings(host: QuotaAgentToolsHost): Promise<ToolResult> {
+  const loaded = host.settings.current();
   const fromFile = new Set(loaded.fromFile);
   const settings = Object.fromEntries(
     Object.entries(SETTINGS_SCHEMA).map(([key, rule]) => [
@@ -315,14 +317,14 @@ function patchIssues(patch: Record<string, unknown>): SettingsIssue[] {
   return issues;
 }
 
-async function setSettings(input: unknown): Promise<ToolResult> {
+async function setSettings(input: unknown, host: QuotaAgentToolsHost): Promise<ToolResult> {
   const patch = isRecord(input) ? input.patch : undefined;
   const issues = isRecord(patch)
     ? patchIssues(patch)
     : [{ key: "patch", message: "expected an object of settings" }];
   if (issues.length > 0) return { ok: false, issues, message: "Nothing was saved." };
   // Agents may also write settings /quota_settings does not show, such as the Claude CLI path.
-  const saved = await editSettings(() => patch as SettingsPatch, { allowFileOnly: true });
+  const saved = await host.settings.edit(() => patch as SettingsPatch, { allowFileOnly: true });
   if (!saved.ok) return { ok: false, issues: saved.issues, message: "Nothing was saved." };
   return {
     ok: true,
@@ -470,7 +472,7 @@ async function addProvider(input: unknown, host: QuotaAgentToolsHost): Promise<T
   const added = (alone.value as QuotaProviderDefinition[])[0];
   let problems: SettingsIssue[] = [];
   let replaced = false;
-  const saved = await editSettingsFile((current, issues) => {
+  const saved = await host.settings.editFile((current, issues) => {
     problems = customProviderIssues(issues);
     if (problems.length > 0) return undefined;
     const at = current.providers.custom.findIndex((item) => item.id === added.id);
@@ -484,7 +486,7 @@ async function addProvider(input: unknown, host: QuotaAgentToolsHost): Promise<T
   // What the user checks before switching it on: where the key would go, and from where.
   const request = describeQuotaProviderRequest(added);
   const check = request ? `, after checking that ${request.url} may get ${request.key}` : "";
-  const notes = await visibilityNotes(added, (await loadSettings()).settings, host);
+  const notes = await visibilityNotes(added, host.settings.current().settings, host);
   return {
     ok: true,
     [replaced ? "replaced" : "added"]: added.id,
@@ -504,7 +506,7 @@ async function testProvider(
   redact: Redact,
 ): Promise<ToolResult> {
   const id = isRecord(input) ? input.id : undefined;
-  const loaded = await loadSettings();
+  const loaded = host.settings.current();
   const definitions = loaded.settings.providers.custom;
   const definition = definitions.find((item) => item.id === id);
   if (!definition) {
@@ -523,12 +525,12 @@ async function testProvider(
   return { id: definition.id, ...test, ...(notes.length > 0 ? { notes } : {}) };
 }
 
-async function removeProvider(input: unknown): Promise<ToolResult> {
+async function removeProvider(input: unknown, host: QuotaAgentToolsHost): Promise<ToolResult> {
   const id = isRecord(input) ? input.id : undefined;
   let problems: SettingsIssue[] = [];
   let ids: string[] = [];
   let found = false;
-  const saved = await editSettingsFile((current, issues) => {
+  const saved = await host.settings.editFile((current, issues) => {
     problems = customProviderIssues(issues);
     if (problems.length > 0) return undefined;
     ids = current.providers.custom.map((item) => item.id);
@@ -608,7 +610,7 @@ export function quotaAgentTools(host: QuotaAgentToolsHost): QuotaAgentTool[] {
         "default) and allowed values, the file path, and the variable each custom provider " +
         "reads its key from.",
       {},
-      () => getSettings(),
+      () => getSettings(host),
     ),
     tool(
       host,
@@ -623,7 +625,7 @@ export function quotaAgentTools(host: QuotaAgentToolsHost): QuotaAgentTool[] {
             'Nested settings to change, e.g. { "providers": { "checking": { "minIntervalMs": 600000 } } }.',
         },
       },
-      setSettings,
+      (input) => setSettings(input, host),
     ),
     tool(
       host,
@@ -655,7 +657,7 @@ export function quotaAgentTools(host: QuotaAgentToolsHost): QuotaAgentTool[] {
       "quota_provider_remove",
       "Remove one custom OpenCode Quota provider by id. Returns the ids that remain.",
       { id: ID_INPUT },
-      removeProvider,
+      (input) => removeProvider(input, host),
     ),
   ];
 }

@@ -17,15 +17,14 @@ import {
   QUOTA_PROVIDER_CATALOG,
   QUOTA_PROVIDER_RUNTIME_IDS,
 } from "../src/lib/provider-metadata.js";
-import { buildStatusReportData } from "../src/lib/quota-dialog-commands.js";
+import { statusReport } from "../src/lib/quota-dialog-commands.js";
 import type { QuotaProviderDefinition } from "../src/lib/quota-providers.js";
 import {
-  buildQuotaStatusReport,
-  buildQuotaStatusReportDocument,
   KNOWN_ABSOLUTE_PATHS,
   KNOWN_FILE_NAMES,
   KNOWN_PATH_PARTS,
   type QuotaStatusReportParams,
+  renderQuotaStatusReport,
 } from "../src/lib/quota-status.js";
 import { getPackageVersion } from "../src/lib/version.js";
 import type { ProviderFetchResult } from "../src/providers/contract.js";
@@ -86,18 +85,23 @@ afterEach(() => {
 
 type ParamsOverrides = Partial<Omit<QuotaStatusReportParams, "settings">> & {
   settings?: Partial<QuotaStatusReportParams["settings"]>;
+  /** The settings' `providers.off`, `providers.custom` and `providers.pricing.source`. */
+  off?: string[];
+  custom?: QuotaProviderDefinition[];
+  pricingSource?: "auto" | "bundled" | "runtime";
 };
 
 /** Each snapshot given is an enabled and available provider, unless the test lists them. */
 function params(overrides: ParamsOverrides = {}): QuotaStatusReportParams {
-  const { settings, ...rest } = overrides;
+  const { settings, off, custom, pricingSource, ...rest } = overrides;
+  const values = settings?.settings ?? defaultSettings();
+  values.providers.off = off ?? values.providers.off;
+  values.providers.custom = custom ?? values.providers.custom;
+  values.providers.pricing.source = pricingSource ?? values.providers.pricing.source;
   const providers = overrides.providers ?? [];
   return {
     origin: "slash_command",
     workspaceRoot: "/ws",
-    enabledProviders: "auto",
-    offProviders: [],
-    pricingSnapshotSource: "auto",
     providerAvailability: providers.map(({ providerId }) => ({
       id: providerId,
       enabled: true,
@@ -113,8 +117,8 @@ function params(overrides: ParamsOverrides = {}): QuotaStatusReportParams {
       exists: true,
       issues: [],
       notRead: [],
-      settings: defaultSettings(),
       ...settings,
+      settings: values,
     },
   };
 }
@@ -145,8 +149,8 @@ function changedSettings(
   return settings;
 }
 
-function report(overrides: ParamsOverrides = {}): Promise<string> {
-  return buildQuotaStatusReport(params(overrides));
+async function report(overrides: ParamsOverrides = {}): Promise<string> {
+  return (await renderQuotaStatusReport(params(overrides))).text;
 }
 
 /** A section's text: its title line to the blank line after it. */
@@ -522,7 +526,7 @@ function garbageSource(seed: number) {
   return { random, pick, word, garbage, hex };
 }
 
-describe("buildQuotaStatusReport", () => {
+describe("renderQuotaStatusReport", () => {
   it("starts with its version, then when, where and on what it was made", async () => {
     const version = await getPackageVersion();
     const text = await report({ opencode: { version: "2.0.27", channel: "latest" } });
@@ -548,7 +552,7 @@ describe("buildQuotaStatusReport", () => {
 
   it("has settings, every provider, files and logins, one section per known provider, then prices", async () => {
     const text = await report({
-      enabledProviders: ["anthropic", "copilot", "openai"],
+      off: ["xai"],
       providerAvailability: [
         { id: "anthropic", enabled: true, available: true, matchesCurrentModel: true },
         { id: "copilot", enabled: true, available: true, matchesCurrentModel: false },
@@ -629,8 +633,7 @@ describe("buildQuotaStatusReport", () => {
       ],
     });
 
-    const text = await buildQuotaStatusReport(params_);
-    const document = await buildQuotaStatusReportDocument(params_);
+    const { text, json } = await renderQuotaStatusReport(params_);
 
     expect(text).toContain(
       "- settings_file: ~/.config/opencode/opencode-quota/settings.jsonc (exists)",
@@ -646,7 +649,7 @@ describe("buildQuotaStatusReport", () => {
     );
     expect(text).toContain("- binary_path: ~/.local/bin/claude");
     expect(text).not.toContain(root);
-    expect(JSON.stringify(document)).not.toContain(root);
+    expect(JSON.stringify(json)).not.toContain(root);
   });
 
   it("shows the folders an env variable chose as (custom path)", async () => {
@@ -863,7 +866,7 @@ describe("buildQuotaStatusReport", () => {
       const free = (key: string) => ({ key, value: text });
       const output = await report({
         homeDir: home,
-        currentModel: text,
+        sessionModel: { id: text },
         providers: [
           snapshot("anthropic", {
             checkedAtMs: NOW,
@@ -962,7 +965,7 @@ describe("buildQuotaStatusReport", () => {
       name: "a short secret as the session's provider",
       canary: "lowercasecanary",
       shows: `- current_model: (other provider)/${KNOWN_MODEL}`,
-      overrides: { currentModel: KNOWN_MODEL, currentProviderID: "lowercasecanary" },
+      overrides: { sessionModel: { id: KNOWN_MODEL, providerID: "lowercasecanary" } },
     },
     {
       name: "a short secret as the OpenCode release channel",
@@ -974,13 +977,13 @@ describe("buildQuotaStatusReport", () => {
       name: "a short secret as the session's model",
       canary: "lowercasecanary",
       shows: "- current_model: openai/(model not in the shipped price list)",
-      overrides: { currentModel: "lowercasecanary", currentProviderID: "openai" },
+      overrides: { sessionModel: { id: "lowercasecanary", providerID: "openai" } },
     },
     {
       name: "an inherited object name as the session's provider",
       canary: "tostring",
       shows: `- current_model: (other provider)/${KNOWN_MODEL}`,
-      overrides: { currentModel: KNOWN_MODEL, currentProviderID: "toString" },
+      overrides: { sessionModel: { id: KNOWN_MODEL, providerID: "toString" } },
     },
     {
       name: "a failed login's own words, and an error kind that is no error code",
@@ -1067,7 +1070,7 @@ describe("buildQuotaStatusReport", () => {
       canary: "secretcanary",
       shows: "- providers.custom: custom 1 (remote-api, 1 model)",
       overrides: {
-        quotaProviders: [
+        custom: [
           remoteDefinition(SK_CANARY, { apiKeyEnv: "SK_SECRETCANARY", modelIds: [SK_CANARY] }),
         ],
         providers: [
@@ -1195,8 +1198,7 @@ describe("buildQuotaStatusReport", () => {
       canary: "lowercasecanary",
       shows: "- (other provider): enabled available",
       overrides: {
-        enabledProviders: ["openai", "lowercasecanary"],
-        offProviders: ["copilot", "lowercasecanary"],
+        off: ["copilot", "lowercasecanary"],
         providerAvailability: [{ id: "lowercasecanary", enabled: true, available: true }],
         providers: [
           snapshot("lowercasecanary", {
@@ -1222,7 +1224,7 @@ describe("buildQuotaStatusReport", () => {
     canary: string;
     shows?: string;
     env?: Record<string, string>;
-    overrides: Partial<QuotaStatusReportParams>;
+    overrides: ParamsOverrides;
   }>)("shows only members of its own sets: $name", async ({ canary, shows, env, overrides }) => {
     for (const [name, value] of Object.entries(env ?? {})) {
       vi.stubEnv(name, value.replace(/^~/u, root));
@@ -1273,8 +1275,7 @@ describe("buildQuotaStatusReport", () => {
     );
 
     const output = await report({
-      currentModel: "lowercasecanary-model",
-      currentProviderID: "lowercasecanary",
+      sessionModel: { id: "lowercasecanary-model", providerID: "lowercasecanary" },
       usage: {
         totals: { tokens: { processed: 1_000 }, unpricedShare: 1 },
         models: [
@@ -1437,7 +1438,10 @@ describe("buildQuotaStatusReport", () => {
           version: pick([garbage(), "2.0.20", `${DIGITS}.1.2`, "1000.0.0"]),
           channel: pick([garbage(), word(), "latest"]),
         },
-        currentProviderID: pick([garbage(), "openai"]),
+        sessionModel: {
+          id: pick([garbage(), KNOWN_MODEL]),
+          providerID: pick([garbage(), "openai"]),
+        },
         conversion: conversion({
           sources: [garbage(), `${garbage()} (experimental.quotaToast)`],
           converted: [{ key: garbage(), to: garbage(), where: "server", note: garbage() }],
@@ -1453,10 +1457,8 @@ describe("buildQuotaStatusReport", () => {
           notWrittenReason: garbage(),
         }),
         workspaceRoot: garbage(),
-        enabledProviders: ["openai", garbage()],
-        offProviders: ["copilot", garbage()],
-        quotaProviders: definitions,
-        currentModel: pick([garbage(), KNOWN_MODEL]),
+        off: ["copilot", garbage()],
+        custom: definitions,
         providerAvailability: providers.map((provider) => ({
           id: provider.providerId,
           enabled: true,
@@ -1502,7 +1504,7 @@ describe("buildQuotaStatusReport", () => {
     async ({ seed }) => {
       const { params: fuzzed, hex } = fuzzedParams(seed);
 
-      const output = await buildQuotaStatusReport(fuzzed);
+      const { text: output } = await renderQuotaStatusReport(fuzzed);
 
       const [heading, ...lines] = output.split("\n");
       expect(heading).toBe(await headingLine());
@@ -1546,8 +1548,7 @@ describe("buildQuotaStatusReport", () => {
     {
       name: "model ids the shipped price list has",
       overrides: {
-        currentModel: KNOWN_MODEL,
-        currentProviderID: "github-copilot",
+        sessionModel: { id: KNOWN_MODEL, providerID: "github-copilot" },
         usage: {
           totals: { tokens: { processed: 2_000 }, unpricedShare: 0.5 },
           models: [
@@ -1663,7 +1664,7 @@ describe("buildQuotaStatusReport", () => {
       name: "a custom definition's check under its number",
       overrides: {
         homeDir: "/Users/alice",
-        quotaProviders: [remoteDefinition("team"), remoteDefinition("production-gateway-us")],
+        custom: [remoteDefinition("team"), remoteDefinition("production-gateway-us")],
         providers: [
           snapshot("quota-providers", {
             rows: [
@@ -1795,7 +1796,7 @@ describe("buildQuotaStatusReport", () => {
     },
   ] as Array<{
     name: string;
-    overrides: Partial<QuotaStatusReportParams>;
+    overrides: ParamsOverrides;
     title: string;
     lines: string[];
     absent?: string[];
@@ -1815,11 +1816,9 @@ describe("buildQuotaStatusReport", () => {
     {
       name: "the settings file, the providers and the session model",
       overrides: {
-        enabledProviders: ["copilot", "openai"],
-        offProviders: ["anthropic", "custom"],
+        off: ["anthropic", "custom"],
         settings: { settings: changedSettings({ "words.onlyCurrentModel": true }) },
-        currentModel: KNOWN_MODEL,
-        currentProviderID: "openai",
+        sessionModel: { id: KNOWN_MODEL, providerID: "openai" },
       },
       lines: [
         "- settings_file: (custom path)/settings.jsonc (exists)",
@@ -1839,8 +1838,6 @@ describe("buildQuotaStatusReport", () => {
           issues: [],
           notRead: [],
         },
-        enabledProviders: [],
-        sessionModelLookup: "no_session",
       },
       lines: [
         "- settings_file: (custom path)/settings.jsonc (missing; using the defaults)",
@@ -1852,7 +1849,7 @@ describe("buildQuotaStatusReport", () => {
     {
       name: "auto providers, a session without a model, and settings issues in our words",
       overrides: {
-        sessionModelLookup: "not_found",
+        sessionModel: {},
         settings: {
           path: "/cfg/opencode-quota/settings.jsonc",
           exists: true,
@@ -1883,7 +1880,7 @@ describe("buildQuotaStatusReport", () => {
     {
       name: "custom provider definitions as their number, mode and model count",
       overrides: {
-        quotaProviders: [
+        custom: [
           remoteDefinition("team", {
             providerId: "gateway",
             label: "Team",
@@ -1935,7 +1932,7 @@ describe("buildQuotaStatusReport", () => {
     {
       name: "a switched-off custom provider as off, with where to switch it on",
       overrides: {
-        quotaProviders: [
+        custom: [
           {
             id: "my-gateway-quota",
             providerId: "my-gateway",
@@ -2014,7 +2011,7 @@ describe("buildQuotaStatusReport", () => {
     },
   ] as Array<{
     name: string;
-    overrides: Partial<QuotaStatusReportParams>;
+    overrides: ParamsOverrides;
     lines: string[];
     absent?: string[];
   }>)("shows where settings come from: $name", async ({ overrides, lines, absent = [] }) => {
@@ -2146,7 +2143,7 @@ describe("buildQuotaStatusReport", () => {
       note: "runtime: no valid downloaded price list, so the built-in one is used",
     },
   ] as const)("explains the $configured price list choice", async ({ configured, note }) => {
-    const text = section(await report({ pricingSnapshotSource: configured }), "pricing_snapshot");
+    const text = section(await report({ pricingSource: configured }), "pricing_snapshot");
 
     expect(text).toMatch(/- pricing: source=bundled generated_at=\S+Z units=USD per 1M tokens\n/u);
     expect(text).toContain(`- providers.pricing.source: configured=${configured} active=bundled`);
@@ -2221,7 +2218,7 @@ describe("buildQuotaStatusReport", () => {
   );
 });
 
-describe("buildStatusReportData", () => {
+describe("statusReport", () => {
   const client = { config: { providers: async () => ({ data: { providers: [] } }) } };
 
   function fakeProvider(
@@ -2257,18 +2254,13 @@ describe("buildStatusReportData", () => {
     writeFileSync(join(dir, "quota-toast.json"), JSON.stringify(settings));
   }
 
-  async function statusData(options: { providerFilterId?: string } = {}) {
+  async function statusData(options: { onlyProviderId?: string } = {}) {
     const workspace = join(root, "workspace");
     mkdirSync(workspace, { recursive: true });
     const loaded = await loadSettings();
-    const onDetectedProviderIds = vi.fn(async () => {});
-    const data = await buildStatusReportData({
-      host: { client, workspaceRoot: workspace, settings: () => loaded },
-      generatedAtMs: NOW,
-      onDetectedProviderIds,
-      ...options,
-    });
-    return { data, text: data.output, onDetectedProviderIds };
+    const host = { client, workspaceRoot: workspace, settings: () => loaded };
+    const data = await statusReport(host, { origin: "slash_command", nowMs: NOW, ...options });
+    return { data, text: data.text };
   }
 
   /** The forms of the JSON fields that hold a number: the format version and two times. */
@@ -2331,7 +2323,7 @@ describe("buildStatusReportData", () => {
 
       const { data, text } = await statusData();
 
-      const json = JSON.stringify(data.payload);
+      const json = JSON.stringify(data.json);
       const leaves = jsonLines(JSON.parse(json));
       const [, ...lines] = text.split("\n");
       const vocabulary = reportVocabulary();
@@ -2352,8 +2344,8 @@ describe("buildStatusReportData", () => {
         expect(output).not.toContain(root);
         for (const token of hex) expect(output).not.toContain(token);
       }
-      expect(data.payload.config.settingsPath).toBe("(custom path)/settings.jsonc");
-      expect(data.payload.config.enabledProviders).toContain("zai");
+      expect(data.json.config.settingsPath).toBe("(custom path)/settings.jsonc");
+      expect(data.json.config.enabledProviders).toContain("zai");
     },
   );
 
@@ -2362,7 +2354,7 @@ describe("buildStatusReportData", () => {
     const openai = fakeProvider("openai", false);
     registry.providers = [zaiProvider, openai];
 
-    const { data, text, onDetectedProviderIds } = await statusData();
+    const { data, text } = await statusData();
 
     const zaiSection = section(text, "zai");
     expect(zaiSection).toContain("- state: partial: Provider error 503 (provider_error, http 503)");
@@ -2382,16 +2374,13 @@ describe("buildStatusReportData", () => {
     expect(section(text, "pricing_snapshot")).toContain("- unpriced_30d: (no usage)");
     expect(zaiProvider.fetch).toHaveBeenCalledOnce();
     expect(openai.fetch).not.toHaveBeenCalled();
-    expect(onDetectedProviderIds).toHaveBeenCalledWith(["zai"]);
-    expect(data.payload?.liveProbes).toEqual([{ id: "zai", ok: false }]);
-    expect(data.payload?.providers.map((provider) => provider.id)).toEqual(["zai", "openai"]);
-    expect(data.payload?.config.settingsPath).toBe(
-      "~/.config/opencode/opencode-quota/settings.jsonc",
-    );
-    expect(data.payload?.pricing.snapshot.source).toBe("bundled");
+    expect(data.json.liveProbes).toEqual([{ id: "zai", ok: false }]);
+    expect(data.json.providers.map((provider) => provider.id)).toEqual(["zai", "openai"]);
+    expect(data.json.config.settingsPath).toBe("~/.config/opencode/opencode-quota/settings.jsonc");
+    expect(data.json.pricing.snapshot.source).toBe("bundled");
     expect(data.hasComparableProviderData).toBe(true);
-    expect(JSON.stringify(data.payload)).not.toContain(SECRET);
-    expect(JSON.stringify(data.payload)).not.toContain(root);
+    expect(JSON.stringify(data.json)).not.toContain(SECRET);
+    expect(JSON.stringify(data.json)).not.toContain(root);
   });
 
   it("shows the real API-key setup details of providers without a key", async () => {
@@ -2483,7 +2472,7 @@ describe("buildStatusReportData", () => {
     expect(custom.fetch).toHaveBeenCalledOnce();
     expect(section(text, "deepseek")).toBe("deepseek:\n- state: disabled");
     expect(deepseek.fetch).not.toHaveBeenCalled();
-    expect(data.payload?.liveProbes).toEqual([{ id: "quota-providers", ok: false }]);
+    expect(data.json.liveProbes).toEqual([{ id: "quota-providers", ok: false }]);
   });
 
   it("checks and shows only the provider asked for", async () => {
@@ -2491,13 +2480,13 @@ describe("buildStatusReportData", () => {
     const deepseek = fakeProvider("deepseek", true);
     registry.providers = [zaiProvider, deepseek];
 
-    const { data, text } = await statusData({ providerFilterId: "deepseek" });
+    const { data, text } = await statusData({ onlyProviderId: "deepseek" });
 
     expect(text).toContain("\ndeepseek:\n- state: error: Nothing reported (no_data)");
     expect(text).not.toContain("\nzai:\n");
     expect(zaiProvider.fetch).not.toHaveBeenCalled();
-    expect(data.payload?.providers.map((provider) => provider.id)).toEqual(["deepseek"]);
-    expect(data.payload?.liveProbes).toEqual([{ id: "deepseek", ok: false }]);
+    expect(data.json.providers.map((provider) => provider.id)).toEqual(["deepseek"]);
+    expect(data.json.liveProbes).toEqual([{ id: "deepseek", ok: false }]);
     expect(data.hasComparableProviderData).toBe(false);
   });
 

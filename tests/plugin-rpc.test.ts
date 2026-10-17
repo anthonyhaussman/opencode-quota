@@ -654,16 +654,12 @@ describe("server quota RPC", () => {
 
   it("serves the /quota_status report as text, and never writes the global config", async () => {
     useSettings({ providers: { off: [] } });
-    const dialogModule = await import("../src/lib/quota-dialog-commands.js");
-    vi.spyOn(dialogModule, "buildQuotaDialogCommandOutput").mockImplementation(async (params) => {
-      await params.onDetectedProviderIds?.(["copilot"]);
-      return { output: "status \u001b[31mreport" };
-    });
     const { call, runCommand } = await setupServer();
 
-    await expect(call("status", { sessionID: "session-1" })).resolves.toEqual({
-      text: "status report",
-    });
+    const { text } = (await call("status", { sessionID: "session-1" })) as { text: string };
+    expect(text).toMatch(/^# Quota Status /u);
+    expect(text).toContain("\n- origin: TUI Plugin tab\n");
+    expect(text).toContain("\ncopilot:\n- state: ok\n");
     expect(mocks.reconcileDetectedProvidersInGlobalConfig).not.toHaveBeenCalled();
 
     // The slash command of Web and Desktop adds the detected providers.
@@ -852,21 +848,19 @@ describe("server quota RPC", () => {
       "adds the detected providers of the quota_status tool to the project with $name",
       async ({ repair, warns }) => {
         mocks.reconcileDetectedProvidersInGlobalConfig.mockImplementationOnce(repair);
-        const dialogModule = await import("../src/lib/quota-dialog-commands.js");
-        vi.spyOn(dialogModule, "buildQuotaDialogCommandOutput").mockImplementation(
-          async (params) => {
-            await params.onDetectedProviderIds?.(["openai"]);
-            return { output: "OpenAI quota" };
-          },
-        );
+        const openaiAnswer = answer({ name: "OpenAI", rows: [percentRow("five_hour", "5h", 69)] });
+        mocks.getProviders.mockReturnValue([
+          provider("openai", vi.fn().mockResolvedValue(openaiAnswer)),
+        ]);
         const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
         const projectDirectory = `${TEST_RUNTIME_ROOT}/project`;
         const { tools } = await setupServer({ directory: projectDirectory });
         const tool = tools.find((item) => item.name === "quota_status");
 
-        expect(await tool?.execute({}, { sessionID: "session-auto-provider" })).toEqual({
-          content: "OpenAI quota",
-        });
+        const output = await tool?.execute({}, { sessionID: "session-auto-provider" });
+        const content = (output as { content: string }).content;
+        expect(content).toMatch(/^# Quota Status /u);
+        expect(content).toContain("\n- origin: quota_status tool\n");
         expect(mocks.reconcileDetectedProvidersInGlobalConfig).toHaveBeenCalledWith({
           configRootDir: projectDirectory,
           detectedProviderIds: ["openai"],

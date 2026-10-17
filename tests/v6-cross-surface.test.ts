@@ -1837,7 +1837,7 @@ describe("an agent tool replacing an active custom provider", () => {
     await rm(mocks.root, { recursive: true, force: true, maxRetries: 3 });
   });
 
-  it("sends no further request with the old definition or key once the settings reload", async () => {
+  it("sends no further request with the old definition or key once the agent tool answers", async () => {
     server = await startServer();
     await server.refresh();
     expect(requests).toEqual([{ url: ACTIVE_SOURCE.url, authorization: `Bearer ${OLD_TEAM_KEY}` }]);
@@ -1853,20 +1853,11 @@ describe("an agent tool replacing an active custom provider", () => {
     expect(content).not.toContain(OLD_TEAM_KEY);
     expect(content).not.toContain(NEW_TEAM_KEY);
     const sentBefore = requests.length;
-    const changedBefore = server.changed.length;
 
-    // The same server, no restart: the settings watch reads the saved file, and the next
-    // snapshot has no custom provider left to check.
-    await vi.waitFor(
-      () =>
-        expect(
-          server?.changed
-            .slice(changedBefore)
-            .some(({ snapshot }) => snapshot.providers.length === 0),
-        ).toBe(true),
-      { timeout: 10_000 },
-    );
-    await server.refresh();
+    // The same server, no restart: it holds the saved settings once the tool answers, so the
+    // next snapshot has no custom provider left to check.
+    const { snapshot } = (await server.refresh()) as { snapshot: { providers: unknown[] } };
+    expect(snapshot.providers).toEqual([]);
     await server.refresh();
 
     // The replacement is switched off: neither the old address and key nor the new ones.

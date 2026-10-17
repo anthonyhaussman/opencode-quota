@@ -12,7 +12,7 @@ const mocks = vi.hoisted(() => ({
 }));
 vi.mock("../src/lib/quota-dialog-commands.js", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../src/lib/quota-dialog-commands.js")>()),
-  buildQuotaDialogCommandOutput: mocks.build,
+  statusReport: mocks.build,
 }));
 vi.mock("../src/lib/opencode-auth.js", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../src/lib/opencode-auth.js")>()),
