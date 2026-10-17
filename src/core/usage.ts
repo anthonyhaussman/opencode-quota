@@ -12,7 +12,8 @@
  *   model without a price adds tokens but no cost; its tokens are the unpriced share. A failed
  *   compaction names no model, so its tokens are unpriced too (provider and model "unknown").
  * - Sessions count conversations: a subagent session counts as part of its top parent.
- * - "session" reads the session and its subagent sessions.
+ * - "session" reads the session and its subagent sessions. The sidebar's session line
+ *   (`sessionUsage`) counts with these same rules.
  * - Ranges and days are local calendar days: "7d" is today and the 6 days before it, and
  *   "between" includes both dates. "24h" is the rolling last 24 hours. "all" has no window.
  * - Token kinds: cached input = cache reads; uncached input = input + cache writes;
@@ -32,6 +33,7 @@ import {
 } from "../lib/opencode-storage.js";
 import { type MessagePrice, priceMessage } from "../lib/pricing-key.js";
 import { type TokenBuckets, tokenBucketsFromMessage } from "../lib/token-buckets.js";
+import type { SessionModelInput, SessionTokens, Words } from "./types.js";
 import type { UsageRange } from "./usage-ranges.js";
 
 export {
@@ -225,23 +227,28 @@ function topSessionID(sessionID: string, index: Record<string, OpenCodeSessionIn
   return current;
 }
 
+/** A message's tokens by the kinds the report counts (see the rules above). */
+function tokenUse(buckets: TokenBuckets): Pick<MessageUse, "tokens" | "tokensByType"> {
+  const cachedInput = buckets.cache_read;
+  const uncachedInput = buckets.input + buckets.cache_write;
+  const output = buckets.output + buckets.reasoning;
+  return {
+    tokens: { processed: cachedInput + uncachedInput + output, cachedInput, uncachedInput, output },
+    tokensByType: {
+      input: buckets.input,
+      cacheRead: buckets.cache_read,
+      cacheWrite: buckets.cache_write,
+      output,
+    },
+  };
+}
+
 function messageUse(buckets: TokenBuckets, price: MessagePrice): MessageUse {
-  const tokens = {
-    cachedInput: buckets.cache_read,
-    uncachedInput: buckets.input + buckets.cache_write,
-    output: buckets.output + buckets.reasoning,
-  };
-  const processed = tokens.cachedInput + tokens.uncachedInput + tokens.output;
-  const tokensByType = {
-    input: buckets.input,
-    cacheRead: buckets.cache_read,
-    cacheWrite: buckets.cache_write,
-    output: buckets.output + buckets.reasoning,
-  };
+  const { tokens, tokensByType } = tokenUse(buckets);
   if (price.kind !== "priced") {
     return {
       priced: false,
-      tokens: { processed, ...tokens },
+      tokens,
       tokensByType,
       costByType: emptyByType(),
       costUsd: 0,
@@ -251,7 +258,7 @@ function messageUse(buckets: TokenBuckets, price: MessagePrice): MessageUse {
   const { byKind } = price;
   return {
     priced: true,
-    tokens: { processed, ...tokens },
+    tokens,
     tokensByType,
     costByType: {
       input: byKind.input,
@@ -496,4 +503,51 @@ async function buildUsageReport(query: UsageQuery, nowMs: number): Promise<Usage
       ),
     days: dayList.map((date) => ({ date, ...toRow(days.get(date) ?? emptyTally(), rowTotal) })),
   };
+}
+
+/**
+ * The tokens a session used so far, counted as the Usage tab counts them: "in" is uncached
+ * input (cache writes included), "out" is output with reasoning, compactions that recorded
+ * usage count, and a fork's copies of its parent's messages don't. `scope: "tree"` adds its
+ * subagent sessions. `models` holds each model's input by kind for the low cache line.
+ * Undefined when no message used a token, or the session or OpenCode's database can't be read.
+ */
+export async function sessionUsage(
+  sessionID: string,
+  scope: Words["sessionTokens"],
+): Promise<SessionTokens | undefined> {
+  try {
+    const sessionIDs = scope === "tree" ? await resolveSessionTree(sessionID) : [sessionID];
+    const total = { input: 0, cachedInput: 0, output: 0, processed: 0 };
+    const models = new Map<string, SessionModelInput>();
+    for await (const page of readUsageMessagePages({ sessionIDs, pageSize: PAGE_ROWS })) {
+      for (const message of page) {
+        const { tokens, tokensByType } = tokenUse(tokenBucketsFromMessage(message));
+        total.input += tokens.uncachedInput;
+        total.cachedInput += tokens.cachedInput;
+        total.output += tokens.output;
+        total.processed += tokens.processed;
+        if (tokensByType.input + tokensByType.cacheRead + tokensByType.cacheWrite === 0) continue;
+        const modelID = message.modelID ?? "unknown";
+        const model = entryFor(models, `${message.providerID ?? "unknown"}\n${modelID}`, () => ({
+          modelID,
+          input: 0,
+          cacheRead: 0,
+          cacheWrite: 0,
+        }));
+        model.input += tokensByType.input;
+        model.cacheRead += tokensByType.cacheRead;
+        model.cacheWrite += tokensByType.cacheWrite;
+      }
+    }
+    if (total.processed === 0) return undefined;
+    return {
+      input: total.input,
+      cachedInput: total.cachedInput,
+      output: total.output,
+      ...(models.size > 0 ? { models: [...models.values()] } : {}),
+    };
+  } catch {
+    return undefined;
+  }
 }

@@ -200,7 +200,7 @@ Roles are `good`, `warning`, `low`, `empty`, `title`, `provider`, `account`, `la
 | `words.rowNames` | `"short"` | `short` shows a row's window (`5h`, `7d`, `30d`) unless it has none or shares it with another row of the provider; `full` shows its name (`Weekly`). |
 | `words.detail` | `"summary"` | `detailed` includes supplementary rows. |
 | `words.onlyCurrentModel` | `false` | Show providers serving the current model. |
-| `words.sessionTokens` | `"current"` | `tree` includes subagent sessions, each counted once. |
+| `words.sessionTokens` | `"current"` | `current` counts this chat; `tree` adds its subagent sessions, each counted once, as the Usage tab's `session` range does. The line counts like the Usage tab: "in" is new input plus cache writes, "out" is output plus reasoning, compactions that recorded tokens count, and a fork's copies of its parent's messages do not. |
 
 In the TUI, they are on **Layout → All places**, since every place follows them.
 

@@ -21,6 +21,7 @@ import type { QuotaSnapshot, SessionModel } from "./core/types.js";
 import { OLD_USAGE_COMMANDS } from "./core/usage-ranges.js";
 import {
   parseUsageArguments,
+  sessionUsage,
   type UsageQuery,
   type UsageReport,
   usageReport,
@@ -47,7 +48,6 @@ import {
 } from "./lib/quota-report-message.js";
 import { resolveQuotaResetRetryDelayMs } from "./lib/quota-retry-wait.js";
 import type { StatusOrigin } from "./lib/quota-status.js";
-import { fetchSessionTokensForDisplay } from "./lib/session-tokens.js";
 import { QuotaRpc } from "./rpc.js";
 import { clientSettings, createLiveSettings, loadSettings } from "./settings/index.js";
 import { DEFAULT_QUICK_LOOK_RANGE } from "./view/quick-look.js";
@@ -170,20 +170,11 @@ export const QuotaToastPlugin = Plugin.define({
       sessionID: string | undefined,
     ): Promise<QuotaSnapshot> => {
       if (!sessionID) return snapshot;
-      const { sessionTokens } = await fetchSessionTokensForDisplay({
+      const sessionTokens = await sessionUsage(
         sessionID,
-        scope: liveSettings.current().settings.words.sessionTokens,
-      });
-      if (!sessionTokens) return snapshot;
-      return {
-        ...snapshot,
-        sessionTokens: {
-          input: sessionTokens.totalInput,
-          cachedInput: sessionTokens.totalCachedInput,
-          output: sessionTokens.totalOutput,
-          ...(sessionTokens.models.length > 0 ? { models: sessionTokens.models } : {}),
-        },
-      };
+        liveSettings.current().settings.words.sessionTokens,
+      );
+      return sessionTokens ? { ...snapshot, sessionTokens } : snapshot;
     };
     // Every snapshot a client gets carries the server's words, the OpenCode provider of each
     // custom definition, and the settings, and none of the export parts the
