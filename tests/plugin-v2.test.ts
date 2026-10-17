@@ -95,6 +95,8 @@ describe("V2 server plugin", () => {
     });
     expect(options).not.toHaveProperty("agent");
     expect(options).not.toHaveProperty("default_agent");
+    expect(ctx.tool.transform).toHaveBeenCalledOnce();
+    expect(ctx.command.transform).toHaveBeenCalledOnce();
     expect((plugin as Record<string, unknown>)["command.execute.before"]).toBeUndefined();
     expect((plugin as Record<string, unknown>).config).toBeUndefined();
   });
