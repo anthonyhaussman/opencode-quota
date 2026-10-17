@@ -1,11 +1,10 @@
 /**
  * Anthropic Claude quota probing.
  *
- * Uses the local Claude CLI/runtime to detect install/auth state first. When
- * Claude auth is confirmed but local quota windows are missing, it falls back
- * to Anthropic's OAuth usage endpoint using the first usable OAuth access
- * token: OpenCode's own Anthropic login, then Claude OAuth credentials (macOS
- * Keychain first, then the local credentials file).
+ * Each Claude login stored in OpenCode is asked once at Anthropic's OAuth usage endpoint.
+ * Without one, the local Claude CLI/runtime is probed for install/auth state; when Claude auth
+ * is confirmed but local quota windows are missing, the usage endpoint is asked with Claude's
+ * own OAuth credentials (macOS Keychain first, then the local credentials file).
  */
 
 import { execFile } from "child_process";
@@ -15,15 +14,16 @@ import { readFile } from "fs/promises";
 import { homedir } from "os";
 import { join } from "path";
 
-import { type AnthropicLogin, readAnthropicLogins } from "./anthropic-auth.js";
 import { sanitizeDisplaySnippet, sanitizeDisplayText } from "./display-sanitize.js";
 import { fetchWithTimeout } from "./http.js";
 import { asRecord, finiteNumber, nonEmptyString } from "./json-guards.js";
+import { type CredentialRow, credentialRowAuthData, readCredentialRows } from "./opencode-auth.js";
 import {
   deriveResolvedAuthIdentity,
   loginListIdentity,
   type ResolvedAuthIdentity,
 } from "./resolved-auth-identity.js";
+import type { AuthData } from "./types.js";
 
 const DEFAULT_CLAUDE_BINARY = "claude";
 /** How `binaryPath` reads when the default `claude` ran from PATH. */
@@ -88,26 +88,22 @@ export interface AnthropicQuotaResult {
 interface AnthropicQuotaError {
   success: false;
   error: string;
+  /** Anthropic rejected the token (HTTP 401 or 403). */
+  rejected?: true;
 }
 
-type AnthropicResult = AnthropicQuotaResult | AnthropicQuotaError | null;
 type AnthropicAuthStatus = "authenticated" | "unauthenticated" | "unknown";
-type AnthropicQuotaSource =
-  | "claude-auth-status-json"
-  | "claude-credentials-oauth-api"
-  | "opencode-auth-oauth-api"
-  | "none";
-/** Which credential store provided the OAuth access token used for the usage probe. */
-type AnthropicCredentialSource = "opencode-auth" | "claude-credentials";
+type AnthropicQuotaSource = "claude-auth-status-json" | "claude-credentials-oauth-api" | "none";
 
-interface AnthropicDiagnostics {
+/** What the Claude CLI and Claude's own credentials gave, without OpenCode's logins. */
+export interface AnthropicDiagnostics {
   installed: boolean;
   version: string | null;
   authStatus: AnthropicAuthStatus;
   quotaSupported: boolean;
   quotaSource: AnthropicQuotaSource;
-  /** Credential store that supplied the OAuth token for the usage probe. */
-  oauthCredentialSource?: AnthropicCredentialSource;
+  /** Set when Claude's own OAuth token was read for the usage probe. */
+  oauthCredentialSource?: "claude-credentials";
   /**
    * The Claude CLI the probe ran: the configured path, `claude (PATH)`, or an
    * install-folder path. Null when no Claude CLI was found.
@@ -153,8 +149,8 @@ type AnthropicLocalDiagnostics = {
 type ProbeCacheEntry<T> = { value: T; timestamp: number } | { inFlight: Promise<T> };
 
 type AnthropicCredentialsAccess =
-  | { state: "configured"; accessToken: string; source: AnthropicCredentialSource }
-  | { state: "unavailable"; detail?: string };
+  | { state: "configured"; accessToken: string }
+  | { state: "unavailable"; detail: string };
 
 type ClaudeCredentialSourceResult =
   | { state: "configured"; accessToken: string }
@@ -163,7 +159,7 @@ type ClaudeCredentialSourceResult =
 
 type AnthropicFallbackQuota =
   | { state: "success"; quota: AnthropicQuotaResult }
-  | { state: "unavailable"; detail: string; failureKind?: "authentication" };
+  | { state: "unavailable"; detail: string; rejected?: true };
 
 type ParsedAuthProbe = {
   authStatus: AnthropicAuthStatus;
@@ -177,6 +173,50 @@ const diagnosticsCache = new Map<string, ProbeCacheEntry<AnthropicDiagnostics>>(
 const localDiagnosticsCache = new Map<string, ProbeCacheEntry<AnthropicLocalDiagnostics>>();
 const anthropicOAuthCooldowns = new Map<string, { failureCount: number; blockedUntilMs: number }>();
 const anthropicOAuthInFlight = new Map<string, Promise<AnthropicFallbackQuota>>();
+
+type ResolvedAnthropicOAuth =
+  | { state: "none" }
+  | { state: "failed"; error: string }
+  | { state: "expired"; expiresAt: number }
+  | { state: "configured"; accessToken: string; expiresAt?: number };
+
+export function resolveAnthropicOAuth(
+  auth: AuthData | null | undefined,
+  options: { nowMs?: number } = {},
+): ResolvedAnthropicOAuth {
+  const entry = auth?.anthropic;
+  if (!entry || entry.type !== "oauth") return { state: "none" };
+  if (entry.resolveError !== undefined) return { state: "failed", error: entry.resolveError };
+
+  const accessToken = typeof entry.access === "string" ? entry.access.trim() : "";
+  if (!accessToken) return { state: "none" };
+
+  const expiresAt = typeof entry.expires === "number" ? entry.expires : undefined;
+  if (expiresAt !== undefined && expiresAt <= (options.nowMs ?? Date.now())) {
+    return { state: "expired", expiresAt };
+  }
+
+  return expiresAt === undefined
+    ? { state: "configured", accessToken }
+    : { state: "configured", accessToken, expiresAt };
+}
+
+export type AnthropicLogin = {
+  row: CredentialRow;
+  auth: Exclude<ResolvedAnthropicOAuth, { state: "none" }>;
+};
+
+/**
+ * Every OpenCode Claude sign-in with a token, in OpenCode's order (the one it uses first). A
+ * sign-in OpenCode could not return, or whose token expired, stays, so it shows as its own error.
+ */
+export async function readAnthropicLogins(): Promise<AnthropicLogin[]> {
+  return (await readCredentialRows(["anthropic"], { methods: ["oauth"] })).flatMap((row) => {
+    if (row.integrationId !== "anthropic") return [];
+    const auth = resolveAnthropicOAuth(credentialRowAuthData(row));
+    return auth.state === "none" ? [] : [{ row, auth }];
+  });
+}
 
 function errorText(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
@@ -460,9 +500,7 @@ async function readClaudeOAuthAccessToken(): Promise<AnthropicCredentialsAccess>
     readClaudeCredentialsFromFile,
   ]) {
     const result = await readSource();
-    if (result?.state === "configured") {
-      return { state: "configured", accessToken: result.accessToken, source: "claude-credentials" };
-    }
+    if (result?.state === "configured") return result;
     if (result?.state === "unavailable") unavailableDetails.push(result.detail);
     if (result?.state === "not-found") notFoundLocations.push(result.location);
   }
@@ -473,23 +511,6 @@ async function readClaudeOAuthAccessToken(): Promise<AnthropicCredentialsAccess>
       unavailableDetails[0] ??
       `Claude OAuth credentials not found in ${notFoundLocations.join(" or ")}.`,
   };
-}
-
-async function readAnthropicOAuthAccessToken(options: {
-  includeClaudeCredentials: boolean;
-}): Promise<AnthropicCredentialsAccess> {
-  const [opencodeCredentials] = await readAnthropicLogins();
-  if (opencodeCredentials?.auth.state === "configured") {
-    return {
-      state: "configured",
-      accessToken: opencodeCredentials.auth.accessToken,
-      source: "opencode-auth",
-    };
-  }
-
-  return options.includeClaudeCredentials
-    ? await readClaudeOAuthAccessToken()
-    : { state: "unavailable" };
 }
 
 function parseRetryAfterMs(value: string | null, nowMs: number): number | undefined {
@@ -580,7 +601,7 @@ async function performAnthropicOAuthUsageRequest(
           try {
             detail = redactAccessToken(await response.text(), accessToken).slice(0, 120);
           } catch (error) {
-            // A rejected token needs no body (it triggers the credential fallback);
+            // A rejected token needs no body (it triggers the Claude credentials fallback);
             // any other timed-out body read fails the whole request.
             if (timeoutSignal.aborted && !authenticationFailure) throw error;
           }
@@ -594,7 +615,7 @@ async function performAnthropicOAuthUsageRequest(
               cooldownMs === undefined
                 ? errorDetail
                 : `${errorDetail} ${getAnthropicOAuthCooldownMessage(cooldownMs)}`,
-            ...(authenticationFailure ? { failureKind: "authentication" as const } : {}),
+            ...(authenticationFailure ? { rejected: true as const } : {}),
           };
         }
 
@@ -655,9 +676,10 @@ async function queryAnthropicQuotaFromOAuthAccessToken(
 export async function queryAnthropicQuotaWithOAuth(
   accessToken: string,
   requestTimeoutMs?: number,
-): Promise<AnthropicResult> {
+): Promise<AnthropicQuotaResult | AnthropicQuotaError> {
   const result = await queryAnthropicQuotaFromOAuthAccessToken(accessToken, requestTimeoutMs);
-  return result.state === "success" ? result.quota : { success: false, error: result.detail };
+  if (result.state === "success") return result.quota;
+  return { success: false, error: result.detail, ...(result.rejected ? { rejected: true } : {}) };
 }
 
 function extractAuthBoolean(data: unknown): boolean | undefined {
@@ -854,7 +876,7 @@ function buildDiagnostics(
   local: AnthropicLocalDiagnostics,
   outcome: {
     quotaSource: AnthropicQuotaSource;
-    oauthCredentialSource?: AnthropicCredentialSource;
+    oauthCredentialSource?: "claude-credentials";
     message?: string;
     quota?: AnthropicQuotaResult;
   },
@@ -886,54 +908,32 @@ async function probeAnthropicDiagnostics(
       quota: local.localQuota,
     });
   }
+  if (local.authStatus !== "authenticated") {
+    return buildDiagnostics(local, { quotaSource: "none", message: local.message });
+  }
 
-  const claudeAuthenticated = local.authStatus === "authenticated";
-  let credentials = await readAnthropicOAuthAccessToken({
-    includeClaudeCredentials: claudeAuthenticated,
-  });
+  const credentials = await readClaudeOAuthAccessToken();
   if (credentials.state !== "configured") {
     return buildDiagnostics(local, {
       quotaSource: "none",
-      message: claudeAuthenticated
-        ? buildAnthropicNoQuotaDiagnosticsMessage(credentials.detail)
-        : local.message,
+      message: buildAnthropicNoQuotaDiagnosticsMessage(credentials.detail),
     });
   }
 
-  let fallbackQuota = await queryAnthropicQuotaFromOAuthAccessToken(
+  const fallbackQuota = await queryAnthropicQuotaFromOAuthAccessToken(
     credentials.accessToken,
     requestTimeoutMs,
   );
-  // A rejected OpenCode login falls back to Claude's own credentials when the Claude CLI is signed in.
-  if (
-    fallbackQuota.state === "unavailable" &&
-    fallbackQuota.failureKind === "authentication" &&
-    credentials.source === "opencode-auth" &&
-    claudeAuthenticated
-  ) {
-    const claudeCredentials = await readClaudeOAuthAccessToken();
-    if (claudeCredentials.state === "configured") {
-      credentials = claudeCredentials;
-      fallbackQuota = await queryAnthropicQuotaFromOAuthAccessToken(
-        claudeCredentials.accessToken,
-        requestTimeoutMs,
-      );
-    }
-  }
-
   if (fallbackQuota.state !== "success") {
     return buildDiagnostics(local, {
       quotaSource: "none",
-      oauthCredentialSource: credentials.source,
+      oauthCredentialSource: "claude-credentials",
       message: buildAnthropicNoQuotaDiagnosticsMessage(fallbackQuota.detail),
     });
   }
   return buildDiagnostics(local, {
-    quotaSource:
-      credentials.source === "opencode-auth"
-        ? "opencode-auth-oauth-api"
-        : "claude-credentials-oauth-api",
-    oauthCredentialSource: credentials.source,
+    quotaSource: "claude-credentials-oauth-api",
+    oauthCredentialSource: "claude-credentials",
     quota: fallbackQuota.quota,
   });
 }
@@ -1008,29 +1008,6 @@ export async function anthropicLoginsIdentity(
         principal: { kind: "credential", value: claudeCredentials.accessToken },
       })
     : null;
-}
-
-export async function queryAnthropicQuota(
-  options: AnthropicProbeOptions = {},
-): Promise<AnthropicResult> {
-  try {
-    const diagnostics = await getAnthropicDiagnostics(options);
-    if (diagnostics.quotaSupported) return diagnostics.quota ?? null;
-
-    if (
-      (diagnostics.authStatus === "authenticated" ||
-        diagnostics.oauthCredentialSource !== undefined) &&
-      diagnostics.message
-    ) {
-      return { success: false, error: diagnostics.message };
-    }
-    return null;
-  } catch (err) {
-    return {
-      success: false,
-      error: `Claude CLI probe failed: ${sanitizeDisplayText(errorText(err))}`,
-    };
-  }
 }
 
 export { parseOAuthUsageResponse, parseUsageResponse };
