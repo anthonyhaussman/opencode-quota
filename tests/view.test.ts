@@ -1,4 +1,7 @@
-import { describe, expect, it } from "vite-plus/test";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { describe, expect, it, vi } from "vite-plus/test";
 import type {
   ProviderSnapshot,
   QuotaRow,
@@ -7,7 +10,8 @@ import type {
   Words,
 } from "../src/core/types.js";
 import { ALL_PROVIDERS } from "../src/core/windows.js";
-import { defaultDisplaySettings } from "../src/tui/display.js";
+import { loadSettings, saveSettings } from "../src/settings/index.js";
+import { defaultDisplaySettings, displaySettings } from "../src/tui/display.js";
 import { columnsOf } from "../src/view/columns.js";
 import {
   amountText,
@@ -332,7 +336,9 @@ describe("view select", () => {
 });
 
 describe("view text", () => {
-  const display = defaultDisplaySettings();
+  // Pinned, so these drawings show bars without the even-use mark; its own tests turn it on.
+  const defaults = defaultDisplaySettings();
+  const display = { ...defaults, layout: { ...defaults.layout, evenUse: false } };
   const groups = (
     surface: "sidebar" | "collapsed" | "statusLine" | "toast",
     providers = [CLAUDE, ZEN, ROUTER],
@@ -559,9 +565,55 @@ describe("view text", () => {
         lineText,
       );
 
-    it("is off by default", () => {
-      expect(display.layout.evenUse).toBe(false);
-      expect(sidebar(display.layout).join("\n")).not.toContain("┃");
+    /** Every place's bars from the settings.jsonc that saving `patch` creates. */
+    async function placesFromNewFile(patch: unknown) {
+      const root = await mkdtemp(join(tmpdir(), "quota-even-use-"));
+      vi.stubEnv("OPENCODE_CONFIG_DIR", join(root, "config"));
+      vi.stubEnv("XDG_STATE_HOME", join(root, "state"));
+      try {
+        expect((await saveSettings(patch)).ok).toBe(true);
+        const { settings, fromFile } = await loadSettings();
+        expect(fromFile).toContain("layout.evenUse");
+        const { layout } = displaySettings(settings);
+        const status: StatusInput = {
+          ...statusInput([PACED]),
+          layout,
+          window: { openai: "five_hour" },
+        };
+        return {
+          sidebar: sidebar(layout)[1],
+          collapsed: collapsedLines({
+            groups: groups("collapsed", [PACED]),
+            ...drawn,
+            layout,
+            width: 40,
+            window: { openai: "five_hour" },
+          }).map(lineText)[0],
+          status: lineText(statusLayout(status, 200, 0, "full").shown[0]!),
+          toast: toast("grouped", 40, [PACED], { layout, runsOut: false })[1],
+        };
+      } finally {
+        vi.unstubAllEnvs();
+        await rm(root, { recursive: true, force: true });
+      }
+    }
+
+    it("is in every place's bars with a new settings file", async () => {
+      expect(await placesFromNewFile({ words: { percent: "left" } })).toEqual({
+        sidebar: " 5h ██████████┃███░░░░░░  70% 2h 30m",
+        collapsed: "OpenAI    5h   █████┃█░░░  70%  2h 30m",
+        status: "OpenAI ███┃░ 70% 2h 30m",
+        toast: "  5h █████████┃██░░░░░  70% left  2h 30m",
+      });
+    });
+
+    it("stays out of every place's bars when the file sets it false", async () => {
+      expect(await placesFromNewFile({ layout: { evenUse: false } })).toEqual({
+        sidebar: " 5h ██████████████░░░░░░  70% 2h 30m",
+        collapsed: "OpenAI    5h   ███████░░░  70%  2h 30m",
+        status: "OpenAI ████░ 70% 2h 30m",
+        toast: "  5h ████████████░░░░░  70% left  2h 30m",
+      });
     });
 
     it("takes the place of the cell where even use would be in the sidebar's bars", () => {
