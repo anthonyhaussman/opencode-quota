@@ -47,12 +47,9 @@ function nested(levels: number): Record<string, unknown> {
   return value;
 }
 
-/**
- * The longest json-v1 name, 76 code points (80 less room for " 100"), different for each
- * index: two names may not give one row id.
- */
+/** The longest json-v1 name, 80 code points, different for each index: two names may not give one row id. */
 function maxName(index: number): string {
-  return `${String(index).padStart(2, "0")}${"n".repeat(74)}`;
+  return `${String(index).padStart(2, "0")}${"n".repeat(78)}`;
 }
 
 describe("quotaProviders schema", () => {
@@ -512,8 +509,8 @@ describe("quotaProviders schema", () => {
       jsonV1(...Array.from({ length: 17 }, () => usage())),
       "quotaProviders[0].adapter.mappings",
     ],
-    ["77-code-point name", jsonV1(usage({ name: "n".repeat(77) })), `${M0}.name`],
-    ["77-code-point label", jsonV1(usage({ label: "l".repeat(77) })), `${M0}.label`],
+    ["81-code-point name", jsonV1(usage({ name: "n".repeat(81) })), `${M0}.name`],
+    ["81-code-point label", jsonV1(usage({ label: "l".repeat(81) })), `${M0}.label`],
     [
       "33-code-point unit",
       jsonV1(usage({ unit: "u".repeat(33), unitPosition: "suffix" })),
@@ -578,7 +575,7 @@ describe("quotaProviders schema", () => {
           mappings: Array.from({ length: 16 }, (_, index) => ({
             resultType: "quota",
             name: maxName(index),
-            label: "l".repeat(76),
+            label: "l".repeat(80),
             unit: "u".repeat(32),
             unitPosition: "suffix",
             resetTime: { path: longPath(), encoding: "iso-8601" },
@@ -645,18 +642,18 @@ describe("quotaProviders schema", () => {
     },
   );
 
-  it("keeps room in json-v1 names and labels for a list's item number", () => {
+  it("allows json-v1 names and labels of up to 80 code points", () => {
     const result = validateQuotaProviders([
-      { ...jsonV1(usage({ name: "n".repeat(76), label: "😀".repeat(76) })), label: "p".repeat(80) },
+      { ...jsonV1(usage({ name: "n".repeat(78), label: "😀".repeat(80) })), label: "p".repeat(80) },
     ]);
     expect(result.issues).toEqual([]);
 
     const tooLong = validateQuotaProviders([
-      jsonV1(usage({ name: "n".repeat(77), label: "l".repeat(77) })),
+      jsonV1(usage({ name: "n".repeat(81), label: "l".repeat(81) })),
     ]);
     expect(tooLong.issues).toEqual([
-      { key: `${M0}.name`, message: "expected 1-76 printable Unicode code points after trimming" },
-      { key: `${M0}.label`, message: "expected 1-76 printable Unicode code points after trimming" },
+      { key: `${M0}.name`, message: "expected 1-80 printable Unicode code points after trimming" },
+      { key: `${M0}.label`, message: "expected 1-80 printable Unicode code points after trimming" },
     ]);
   });
 

@@ -147,8 +147,8 @@ Check the `alibaba-coding-plan` section: the login, tier (`alibaba_coding_plan`)
 | -------------------- | --- |
 | API key not detected | See [API keys](providers.md#api-keys). Repo-local provider secrets are ignored. |
 | Limits need tuning   | Add a local-estimate [custom provider](providers.md#custom-providers) with the `alibaba-coding-plan` id and its five-hour, weekly, and monthly rolling windows. |
-| Counters do not move | Make sure the current model is `alibaba/*` or `alibaba-cn/*`. |
-| Quota seems stale    | Check the state-file path shown in `/quota_status`. |
+| Counters do not move | Make sure the requests use OpenCode's `alibaba-coding-plan` or `alibaba` provider. |
+| Quota seems stale    | Counters only count this machine's OpenCode requests; other machines and tools are not seen. |
 
 </details>
 

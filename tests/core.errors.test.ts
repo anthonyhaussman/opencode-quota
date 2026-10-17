@@ -99,7 +99,7 @@ const REAL_MESSAGES: Record<QuotaErrorCode, readonly string[]> = {
     "Failed to read quota data",
     "Invalid normalized provider result",
     "Provider execution failed",
-    "Failed to update local accounting state",
+    "Failed to read OpenCode's messages",
     "Unable to resolve Copilot billing scope.",
   ],
 };

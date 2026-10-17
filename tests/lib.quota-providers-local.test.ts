@@ -134,6 +134,25 @@ describe("request window counter", () => {
     expect(rollingRow).not.toHaveProperty("windowStartedAt");
   });
 
+  it("counts a request that names no model for Alibaba but not for a custom estimate", async () => {
+    const noModel = message("no-model", NOW - 20, { modelID: undefined });
+    expect(await counted([noModel])).toEqual([
+      ["daily", ["no-model"]],
+      ["rolling", ["no-model"]],
+    ]);
+
+    const result = await collectLocalQuotaProviderEstimate(definition(), {
+      nowMs: NOW,
+      readMessages: async () => [noModel],
+    });
+    expect(result.rows.find((row) => row.key === "daily")).toMatchObject({
+      used: { decimal: "0" },
+    });
+    expect(result.rows.find((row) => row.key === "daily_budget")).toMatchObject({
+      percentRemaining: 100,
+    });
+  });
+
   it("gives an empty rolling window no reset", async () => {
     const counts = await countRequestWindows({
       providerIds: ["private-gateway"],

@@ -437,10 +437,10 @@ describe("openrouter-key-v1", () => {
 
 describe("json-v1", () => {
   it("shows every row of a definition that passed the checker with the longest label and names", async () => {
-    const longest = "😀".repeat(76);
+    const longest = "😀".repeat(80);
     const checked = validateQuotaProviders([
       {
-        ...source({ label: `${longest}😀😀😀😀` }),
+        ...source({ label: longest }),
         format: "json-v1",
         adapter: {
           mappings: [
@@ -456,9 +456,17 @@ describe("json-v1", () => {
     const screen = shown(definition, await fetchBody({ used: 3 }, definition));
     expect(screen.problems).toEqual([]);
     expect(screen.rows.map((row) => [row.account, row.label, row.text])).toEqual([
-      [`${longest}😀😀😀😀`, longest, "3"],
-      [`${longest}😀😀😀😀`, longest, "3"],
+      [longest, longest, "3"],
+      [longest, longest, "3"],
     ]);
+
+    // In a list, the label is cut so the longest item number still fits.
+    const items = Array.from({ length: 100 }, () => ({ used: 3 }));
+    const list = shown(definition, await fetchBody(items, definition));
+    expect(list.problems).toEqual([]);
+    expect(list.rows).toHaveLength(200);
+    const cut = "😀".repeat(76);
+    expect([list.rows[0]?.label, list.rows.at(-1)?.label]).toEqual([`${cut} 1`, `${cut} 100`]);
   });
 
   it("shows each item of a list as its own numbered row; one item keeps the plain name", async () => {
@@ -647,10 +655,16 @@ describe("json-v1", () => {
 
   it.each([
     [
-      "exactly 100 successful entries",
+      "a list of exactly 100 items",
       mappings(usedValue()),
       Array.from({ length: 100 }, (_, used) => ({ used })),
       100,
+    ],
+    [
+      "a row for every item and mapping, past 100 rows",
+      mappings(usedValue(), { type: "value", valueType: "limit", value: { path: ["limit"] } }),
+      Array.from({ length: 51 }, () => ({ used: 0, limit: 10 })),
+      102,
     ],
     [
       "exactly 32 container levels",
@@ -679,12 +693,6 @@ describe("json-v1", () => {
       rowsAt("data", "rows"),
       { data: { rows: Array.from({ length: 101 }, () => ({ used: 0 })) } },
       "selected rows must contain 1-100 elements",
-    ],
-    [
-      "a 101st successful entry instead of truncating",
-      mappings(usedValue(), { type: "value", valueType: "limit", value: { path: ["limit"] } }),
-      Array.from({ length: 51 }, () => ({ used: 0, limit: 10 })),
-      "more than 100 entries were produced",
     ],
     [
       "non-finite percentages derived from finite operands",

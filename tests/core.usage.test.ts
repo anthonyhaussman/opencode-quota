@@ -7,6 +7,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test"
 
 import { sessionUsage, type UsageQuery, type UsageRow, usageReport } from "../src/core/usage.js";
 import { usePricingSettings } from "../src/lib/modelsdev-pricing.js";
+import { resolveSessionTree } from "../src/lib/opencode-storage.js";
 import {
   type SessionDatabaseMessage,
   type SessionDatabaseSession,
@@ -354,6 +355,26 @@ describe("usage report sessions", () => {
     expect(report.totals.sessions).toBe(item.sessions);
     expect(report.providers.map((provider) => provider.sessions)).toEqual([item.sessions]);
     expect(report.sessionID).toBe(item.query.sessionID);
+  });
+
+  it("lists a session's tree depth first, children oldest first", async () => {
+    writeHistory(
+      [],
+      [
+        { id: "ses_root", created: 1 },
+        { id: "ses_child_b", parentID: "ses_root", created: 30 },
+        { id: "ses_grandchild", parentID: "ses_child_a", created: 20 },
+        { id: "ses_child_a", parentID: "ses_root", created: 10 },
+        { id: "ses_other", created: 5 },
+      ],
+    );
+
+    await expect(resolveSessionTree("ses_root")).resolves.toEqual([
+      "ses_root",
+      "ses_child_a",
+      "ses_grandchild",
+      "ses_child_b",
+    ]);
   });
 
   describe("forks", () => {
