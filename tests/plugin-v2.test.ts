@@ -100,6 +100,7 @@ describe("V2 server plugin", () => {
       expect.not.objectContaining({ agent: expect.anything(), default_agent: expect.anything() }),
     );
     expect((plugin as Record<string, unknown>)["command.execute.before"]).toBeUndefined();
+    expect((plugin as Record<string, unknown>).config).toBeUndefined();
   });
 
   it("registers /quota, /quota_status, /quota_usage and the /tokens_* names for Web and Desktop", async () => {

@@ -22,6 +22,7 @@ import { OLD_USAGE_COMMANDS, parseUsageArguments, type UsageRange } from "../cor
 import { QuotaRpc } from "../rpc.js";
 import { type ClientHost, createQuotaClient, quotaCallOptions, reportFailure } from "./client.js";
 import { createFileDisplay } from "./display.js";
+import { KEY_LAYERS } from "./key-layers.js";
 import { createServerSettings } from "./server-settings.js";
 import { SidebarPanel, type SurfaceHost } from "./sidebar.js";
 import { HomeFooter, StatusLine } from "./status-line.js";
@@ -225,7 +226,7 @@ const plugin = Plugin.define({
         // The typed quota commands. Above OpenCode's textarea layer, which submits the prompt on
         // Enter; without a mode, so it is off while the "/" list or a dialog is open.
         api.keymap.layer(() => ({
-          priority: 1,
+          priority: KEY_LAYERS.typedCommand,
           commands: [
             {
               bind: "return",

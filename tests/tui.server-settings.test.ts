@@ -20,6 +20,7 @@ import {
 } from "../src/tui/server-settings.js";
 import { SidebarPanel } from "../src/tui/sidebar.tsx";
 import { DEFAULT_WORDS } from "../src/view/format.js";
+import { stubJsx } from "./helpers/fake-tui-host.js";
 import { textLines, THEME } from "./helpers/jsx-tree.js";
 
 const field = (path: string) => FIELDS.find((item) => item.path === path) as Field;
@@ -426,12 +427,7 @@ describe("the server settings this window edits", () => {
     it("keeps showing the saved words between Save and the server's changed event", async () => {
       // The sidebar's minute clock never runs here.
       vi.useFakeTimers({ toFake: ["setInterval", "clearInterval"] });
-      vi.stubGlobal("React", {
-        createElement: (type: unknown, props: object | null, ...children: unknown[]) => {
-          const all = { ...props, children: children.length > 1 ? children : children[0] };
-          return typeof type === "function" ? type(all) : { type, props: all };
-        },
-      });
+      stubJsx();
       const server = createServerSettings(fakeRpc());
       await server.load();
       const host = {
