@@ -313,6 +313,7 @@ export const QuotaToastPlugin = Plugin.define({
       // Agent tools: read and change the settings file, add, test and remove custom providers.
       const host = {
         openCodeProviderIds: async () => (await ctx.provider.list()).data.map(({ id }) => id),
+        settings: liveSettings,
       };
       for (const tool of quotaAgentTools(host)) editor.add(tool);
       editor.add({
