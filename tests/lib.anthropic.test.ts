@@ -1,18 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
-/** The stored OpenCode logins as an auth map: at most one `anthropic` entry. */
-const authMocks = vi.hoisted(() => ({ storedAuth: vi.fn() }));
-
+/** Whether a Claude install folder holds `claude`; every other path is the real file system. */
 const fsMocks = vi.hoisted(() => ({ existsSync: vi.fn((_path: string) => false) }));
 
-const identityMocks = vi.hoisted(() => ({
-  deriveResolvedAuthIdentity: vi.fn(
-    async (params: { providerId: string }) => `identity:${params.providerId}`,
-  ),
-}));
+/** Reads of Claude's credentials file; every other file is read for real. */
+const readCredentialsFile = vi.hoisted(() => vi.fn());
 
 import { execFile } from "child_process";
-import { readFile } from "fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import {
@@ -26,34 +20,39 @@ import {
   readAnthropicLogins,
   resolveAnthropicOAuth,
 } from "../src/lib/anthropic.js";
+import {
+  bindCredentialSource,
+  createIntegrationCredentialSource,
+} from "../src/lib/opencode-auth.js";
+import { __resetResolvedAuthIdentityForTests } from "../src/lib/resolved-auth-identity.js";
 import fableWeeklyUsage from "./fixtures/anthropic/fable-weekly.sanitized.json";
+import { createFakeIntegration } from "./helpers/fake-integration.js";
+import { useProviderWorld } from "./helpers/provider-fetch.js";
 
 vi.mock("child_process", () => ({ execFile: vi.fn() }));
 
-vi.mock("fs/promises", () => ({ readFile: vi.fn() }));
+vi.mock("fs/promises", async (importOriginal) => {
+  const fs = await importOriginal<typeof import("fs/promises")>();
+  return {
+    ...fs,
+    readFile: (path: string, ...rest: unknown[]) =>
+      String(path).endsWith(".credentials.json")
+        ? readCredentialsFile(path, ...rest)
+        : fs.readFile(path, ...(rest as [BufferEncoding])),
+  };
+});
 
-vi.mock("fs", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("fs")>()),
-  existsSync: fsMocks.existsSync,
-}));
+vi.mock("fs", async (importOriginal) => {
+  const fs = await importOriginal<typeof import("fs")>();
+  return {
+    ...fs,
+    existsSync: (path: string) =>
+      String(path).endsWith("claude") ? fsMocks.existsSync(path) : fs.existsSync(path),
+  };
+});
 
-vi.mock("../src/lib/opencode-auth.js", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("../src/lib/opencode-auth.js")>()),
-  readCredentialRows: async (_ids: string[], options: { methods?: string[] } = {}) => {
-    const entry = (await authMocks.storedAuth())?.anthropic;
-    const method = entry?.type === "api" ? "key" : entry?.type;
-    if (!entry || (options.methods && !options.methods.includes(method))) return [];
-    const { resolveError, ...value } = entry;
-    return [
-      { id: "login-1", integrationId: "anthropic", label: "", active: true, value, resolveError },
-    ];
-  },
-}));
-
-vi.mock("../src/lib/resolved-auth-identity.js", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("../src/lib/resolved-auth-identity.js")>()),
-  ...identityMocks,
-}));
+const world = useProviderWorld();
+const POSIX_IDENTITY_STORAGE = process.platform !== "win32" && typeof process.getuid === "function";
 
 type ExecSequenceStep = {
   stdout?: string;
@@ -80,8 +79,7 @@ const USAGE_10_20 = { five_hour: { utilization: 10 }, seven_day: { utilization: 
 const ENOENT_ERROR = Object.assign(new Error("missing credentials"), { code: "ENOENT" });
 
 const execFileMock = vi.mocked(execFile);
-const readFileMock = vi.mocked(readFile);
-const storedAuthMock = authMocks.storedAuth;
+const readFileMock = readCredentialsFile;
 /** The reply of each usage request, in order. */
 const fetchResponseMock = vi.fn<() => Promise<Response>>();
 const fetchMock = vi.fn(async (_url: RequestInfo | URL, _init?: RequestInit) =>
@@ -162,10 +160,17 @@ function authenticatedWithoutQuotaSteps(count: number): ExecSequenceStep[] {
   return Array.from({ length: count }, () => [CLI_VERSION, CLI_AUTHENTICATED]).flat();
 }
 
+/** One OpenCode Claude login in the temp `opencode.db`. */
 function mockOpenCodeLogin(access: string, expires?: number): void {
-  storedAuthMock.mockResolvedValue({
-    anthropic: { type: "oauth", access, ...(expires === undefined ? {} : { expires }) },
-  });
+  world.storeLogins([
+    {
+      id: "login-1",
+      integrationId: "anthropic",
+      active: 1,
+      updated: 1,
+      value: { type: "oauth", access, ...(expires === undefined ? {} : { expires }) },
+    },
+  ]);
 }
 
 /** Linux, a signed-in Claude CLI without quota windows, and a credentials-file token. */
@@ -187,7 +192,6 @@ function bearerTokensSent(): string[] {
 }
 
 beforeEach(() => {
-  storedAuthMock.mockResolvedValue(null);
   vi.stubGlobal("fetch", fetchMock);
 });
 
@@ -197,7 +201,7 @@ afterEach(() => {
   fsMocks.existsSync.mockReset();
   fsMocks.existsSync.mockReturnValue(false);
   readFileMock.mockReset();
-  storedAuthMock.mockReset();
+  __resetResolvedAuthIdentityForTests();
   fetchMock.mockClear();
   fetchResponseMock.mockReset();
   vi.unstubAllGlobals();
@@ -434,7 +438,6 @@ describe("Claude CLI probe", () => {
     await expect(hasAnthropicCredentialsConfigured()).resolves.toBe(true);
     // Claude CLI quota does not expose an account, so it must stay uncached.
     await expect(anthropicLoginsIdentity([])).resolves.toBeNull();
-    expect(identityMocks.deriveResolvedAuthIdentity).not.toHaveBeenCalled();
   });
 
   it("probes configured Windows Claude .exe paths without cmd wrapping", async () => {
@@ -998,39 +1001,53 @@ describe("anthropicLoginsIdentity", () => {
     return anthropicLoginsIdentity(await readAnthropicLogins());
   }
 
-  it("derives identity from the OpenCode logins, without asking the Claude CLI", async () => {
-    mockOpenCodeLogin("opencode-access-secret");
+  it.runIf(POSIX_IDENTITY_STORAGE)(
+    "derives identity from the OpenCode logins, without asking the Claude CLI",
+    async () => {
+      mockOpenCodeLogin("opencode-access-secret");
+      const first = await identity();
+      mockOpenCodeLogin("another-access-secret");
+      const second = await identity();
 
-    const resolved = await identity();
-
-    expect(identityMocks.deriveResolvedAuthIdentity).toHaveBeenCalledWith({
-      providerId: "anthropic:opencode-auth",
-      principal: { kind: "credential", value: "opencode-access-secret" },
-    });
-    expect(JSON.stringify(resolved)).not.toContain("opencode-access-secret");
-    expect(execFileMock).not.toHaveBeenCalled();
-  });
+      expect(first).not.toBeNull();
+      expect(second).not.toEqual(first);
+      expect(JSON.stringify([first, second])).not.toMatch(/access-secret/u);
+      expect(execFileMock).not.toHaveBeenCalled();
+    },
+  );
 
   it("counts an OpenCode login it could not read as present but derives no identity from it", async () => {
     mockExecSequence([CLI_MISSING]);
-    storedAuthMock.mockResolvedValue({
-      anthropic: { type: "oauth", resolveError: "refresh_failed: HTTP 500" },
-    });
+    const integration = createFakeIntegration([
+      {
+        integrationId: "anthropic",
+        id: "login-1",
+        label: "default",
+        registered: true,
+        method: "oauth",
+        value: { type: "oauth", access: "old" },
+        resolveError: "HTTP 500",
+      },
+    ]);
+    const unbind = bindCredentialSource(createIntegrationCredentialSource(integration as never));
 
-    await expect(hasAnthropicCredentialsConfigured()).resolves.toBe(true);
-    await expect(identity()).resolves.toBeNull();
-    expect(identityMocks.deriveResolvedAuthIdentity).not.toHaveBeenCalled();
+    try {
+      await expect(hasAnthropicCredentialsConfigured()).resolves.toBe(true);
+      await expect(identity()).resolves.toBeNull();
+    } finally {
+      unbind();
+    }
   });
 
-  it("derives identity from Claude's credentials without OpenCode logins", async () => {
-    setUpCredentialsFileFallback(1, "claude-access-secret");
+  it.runIf(POSIX_IDENTITY_STORAGE)(
+    "derives identity from Claude's credentials without OpenCode logins",
+    async () => {
+      setUpCredentialsFileFallback(1, "claude-access-secret");
 
-    const resolved = await identity();
+      const resolved = await identity();
 
-    expect(identityMocks.deriveResolvedAuthIdentity).toHaveBeenCalledWith({
-      providerId: "anthropic:claude-credentials",
-      principal: { kind: "credential", value: "claude-access-secret" },
-    });
-    expect(resolved).not.toContain("claude-access-secret");
-  });
+      expect(resolved).not.toBeNull();
+      expect(JSON.stringify(resolved)).not.toContain("claude-access-secret");
+    },
+  );
 });
