@@ -141,13 +141,25 @@ describe("quotaProviders schema", () => {
     );
   });
 
-  it("requires providerId to be omitted when it equals id", () => {
-    expect(
-      validateQuotaProviders([quotaProvider({ providerId: "provider-one" })]).issues,
-    ).toContainEqual({
-      key: "quotaProviders[0].providerId",
-      message: "omit providerId when it is the same as id",
-    });
+  it("passes its own output again unchanged, providerId included", () => {
+    const inputs = [
+      ...VALID_QUOTA_PROVIDER_INPUTS,
+      quotaProvider({ id: "same-provider", format: "accounting-v1", label: "  Same  " }),
+      {
+        ...jsonV1(
+          usage({ resultType: "rate_limit", resetTime: { literal: 0, encoding: "unix-seconds" } }),
+        ),
+        id: "json-one",
+        providerId: "json-provider",
+      },
+      localQuotaProvider({ id: "local-one", providerId: "local-provider" }),
+    ];
+    const first = validateQuotaProviders(inputs);
+    expect(first.issues).toEqual([]);
+
+    const second = validateQuotaProviders(first.value);
+    expect(second.issues).toEqual([]);
+    expect(second.value).toEqual(first.value);
   });
 
   it.each([
@@ -630,15 +642,12 @@ describe("quotaProviders schema", () => {
     },
   );
 
-  it("rejects a provider-prefixed json-v1 entry name above 160 code points", () => {
+  it("accepts an 80 code point json-v1 name and label under an 80 code point provider label", () => {
     const result = validateQuotaProviders([
-      { ...jsonV1(usage({ name: "n".repeat(80) })), label: "p".repeat(80) },
+      { ...jsonV1(usage({ name: "n".repeat(80), label: "😀".repeat(80) })), label: "p".repeat(80) },
     ]);
 
-    expect(result.issues).toContainEqual({
-      key: `${M0}.name`,
-      message: "provider-prefixed name must not exceed 160 code points",
-    });
+    expect(result.issues).toEqual([]);
   });
 
   it.each([

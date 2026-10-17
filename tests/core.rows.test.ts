@@ -82,6 +82,22 @@ async function remoteRows(
 }
 
 describe("rowsFromProviderResult", () => {
+  it("counts labels and accounts in code points, up to 80", () => {
+    const longest = "😀".repeat(80);
+    const result = contractRows(
+      "openai",
+      answer({
+        name: longest,
+        rows: [percentRow("kept", longest, 50), percentRow("long", "x".repeat(81), 50)],
+      }),
+    );
+    expect(summary(result.rows)).toEqual([["openai.kept", longest, longest, null]]);
+    expect(result.debug).toContainEqual({
+      key: "dropped_row",
+      value: "openai.long: invalid label",
+    });
+  });
+
   it("gives each row its id, provider and its account's account text", () => {
     const result = contractRows(
       "openai",

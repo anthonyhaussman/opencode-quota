@@ -1,4 +1,5 @@
-import type { DebugDetail } from "../core/types.js";
+import { rowsFromProviderResult } from "../core/rows.js";
+import type { DebugDetail, QuotaRow } from "../core/types.js";
 import type {
   QuotaProvider,
   QuotaProviderCachePolicy,
@@ -48,8 +49,16 @@ const CREDENTIAL_SOURCES: Record<QuotaProviderAuthSource, string> = {
   "opencode.db": "opencode_db",
 };
 
-/** One definition's account, and its check for /quota_status. */
-type DefinitionResult = { account: AccountResult; check: DebugDetail };
+/**
+ * One definition's account and its check for /quota_status. `failure` is why the whole check
+ * failed (no rows); `missingKey` is set when that is a missing API key.
+ */
+export type DefinitionResult = {
+  account: AccountResult;
+  check: DebugDetail;
+  failure?: string;
+  missingKey?: true;
+};
 
 /**
  * A definition's rows and errors as its own account: the definition id is the login, and each
@@ -66,6 +75,22 @@ export function customAccount(
     rows: rows.map((row) => ({ ...row, key: `custom.${definition.id}.${row.key}` })),
     errors: errors.map((message) => ({ message })),
   };
+}
+
+/**
+ * A definition's rows as the screen shows them: through the row gate, with a note for each row
+ * the gate dropped.
+ */
+export function customRows(
+  definition: QuotaProviderDefinition,
+  rows: readonly ProviderRow[],
+): { rows: QuotaRow[]; problems: string[] } {
+  const shown = rowsFromProviderResult(QUOTA_PROVIDERS_AGGREGATE_ID, {
+    attempted: true,
+    accounts: [customAccount(definition, rows, [])],
+    debug: [],
+  });
+  return { rows: shown.rows, problems: shown.debug.map((detail) => detail.value) };
 }
 
 /** One definition's check, never its URL or key: the outcome, the login source, files read. */
@@ -123,6 +148,8 @@ async function executeRemote(
     return {
       account: customAccount(definition, [], ["API key not configured"]),
       check: checkDetail(definition, ["outcome=missing_credential", ...credentialParts(auth)]),
+      failure: "API key not configured",
+      missingKey: true,
     };
   }
 
@@ -134,6 +161,7 @@ async function executeRemote(
         ...failedRequestParts(result.error),
         ...credentialParts(auth),
       ]),
+      failure: result.error,
     };
   }
   return {
@@ -156,6 +184,7 @@ async function executeLocal(
     return {
       account: customAccount(definition, [], ["Failed to update local accounting state"]),
       check: checkDetail(definition, ["outcome=local_state_error", ...stateParts(state)]),
+      failure: "Failed to update local accounting state",
     };
   }
   return {
@@ -172,7 +201,25 @@ function failedDefinition(definition: QuotaProviderDefinition): DefinitionResult
       "outcome=network_error",
       ...(definition.mode === "remote-api" ? credentialParts(undefined) : stateParts(undefined)),
     ]),
+    failure: "Provider execution failed",
   };
+}
+
+/**
+ * One check of one definition now: its rows or errors as its own account, and its check for
+ * /quota_status. The provider and the agent's `quota_provider_test` both use it.
+ */
+export async function checkDefinition(
+  definition: QuotaProviderDefinition,
+  requestTimeoutMs?: number,
+): Promise<DefinitionResult> {
+  try {
+    return definition.mode === "remote-api"
+      ? await executeRemote(definition, requestTimeoutMs)
+      : await executeLocal(definition);
+  } catch {
+    return failedDefinition(definition);
+  }
 }
 
 async function resolveQuotaProviderDefinitionAuthIdentity(
@@ -260,18 +307,8 @@ export const quotaProvidersProvider: QuotaProvider = {
       return { attempted: false, accounts: [], debug: [] };
     }
 
-    const results = await mapWithConcurrency(
-      selected,
-      DEFINITION_CONCURRENCY,
-      async (definition): Promise<DefinitionResult> => {
-        try {
-          return definition.mode === "remote-api"
-            ? await executeRemote(definition, ctx.config.requestTimeoutMs)
-            : await executeLocal(definition);
-        } catch {
-          return failedDefinition(definition);
-        }
-      },
+    const results = await mapWithConcurrency(selected, DEFINITION_CONCURRENCY, (definition) =>
+      checkDefinition(definition, ctx.config.requestTimeoutMs),
     );
 
     return {

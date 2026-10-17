@@ -1,4 +1,4 @@
-import { isIsoTime } from "../core/validate.js";
+import { codePointLength, isIsoTime, LABEL_MAX_CODE_POINTS } from "../core/validate.js";
 import type { ProviderRow } from "../providers/contract.js";
 import { type ApiKeySpec, getApiKeyCheckedPaths, resolveApiKey } from "./api-key-resolver.js";
 import { sanitizeSingleLineDisplayText } from "./display-sanitize.js";
@@ -63,7 +63,7 @@ export type RemoteQuotaProviderResult =
 function boundedDisplayText(value: unknown, maxCodePoints: number): string | null {
   if (typeof value !== "string") return null;
   const normalized = sanitizeSingleLineDisplayText(value);
-  const length = Array.from(normalized).length;
+  const length = codePointLength(normalized);
   return length >= 1 && length <= maxCodePoints ? normalized : null;
 }
 
@@ -147,14 +147,15 @@ async function readBoundedJson(
 function parseQuotaV1Row(raw: unknown): ProviderRow | null {
   if (!isRecord(raw) || !hasOnlyKeys(raw, QUOTA_V1_ROW_KEYS)) return null;
 
-  const name = boundedDisplayText(raw.name, 80);
+  const name = boundedDisplayText(raw.name, LABEL_MAX_CODE_POINTS);
   const resultType =
     typeof raw.resultType === "string" &&
     CUSTOM_RESULT_TYPES.has(raw.resultType as CustomResultType)
       ? (raw.resultType as CustomResultType)
       : null;
   // Optional fields are undefined when absent and null when present but invalid.
-  const label = raw.label === undefined ? undefined : boundedDisplayText(raw.label, 80);
+  const label =
+    raw.label === undefined ? undefined : boundedDisplayText(raw.label, LABEL_MAX_CODE_POINTS);
   const right = raw.right === undefined ? undefined : boundedDisplayText(raw.right, 160);
   const resetTimeIso =
     raw.resetTimeIso === undefined

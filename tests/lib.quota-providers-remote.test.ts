@@ -13,10 +13,13 @@ import {
   QUOTA_PROVIDER_MAX_BODY_BYTES,
   resolveQuotaProviderApiKey,
 } from "../src/lib/quota-providers-remote.js";
-import type {
-  JsonV1Mapping,
-  RemoteApiQuotaProviderDefinition,
+import {
+  type JsonV1Mapping,
+  type RemoteApiQuotaProviderDefinition,
+  validateQuotaProviders,
 } from "../src/lib/quota-providers.js";
+import type { ProviderRow } from "../src/providers/contract.js";
+import { customRows } from "../src/providers/quota-providers.js";
 import {
   NEURALWATT_LIKE_ADAPTER,
   NEURALWATT_LIKE_RESPONSE,
@@ -80,6 +83,15 @@ function jsonResponse(body: unknown, init: ResponseInit = {}): Response {
 function fetchBody(body: unknown, definition = source()) {
   vi.stubGlobal("fetch", vi.fn().mockResolvedValue(jsonResponse(body)));
   return fetchRemoteQuotaProvider(definition, "secret");
+}
+
+/** The rows of a successful reply that reach the screen, and why any were dropped. */
+function shown(
+  definition: RemoteApiQuotaProviderDefinition,
+  result: { success: true; rows: ProviderRow[] } | { success: false; error: string },
+) {
+  if (!result.success) throw new Error(result.error);
+  return customRows(definition, result.rows);
 }
 
 /** A json-v1 body nested `levels` objects deep around `{ used: 1 }`. */
@@ -275,9 +287,11 @@ describe("quota-v1", () => {
       Array.from({ length: 100 }, (_, i) => ({ ...valueRow, name: `Usage ${i}` })),
     ],
     ["exact display bounds", [exactBoundsRow]],
-  ])("accepts %s", async (_name, entries) => {
+  ])("shows %s", async (_name, entries) => {
     const result = await fetchBody({ version: "quota-v1", entries });
-    expect(result.success && result.rows).toHaveLength(entries.length);
+    const screen = shown(source(), result);
+    expect(screen.rows).toHaveLength(entries.length);
+    expect(screen.problems).toEqual([]);
   });
 
   const quotaV1 = (...entries: unknown[]) => ({ version: "quota-v1", entries });
@@ -422,6 +436,31 @@ describe("openrouter-key-v1", () => {
 });
 
 describe("json-v1", () => {
+  it("shows every row of a definition that passed the checker with the longest label and names", async () => {
+    const longest = "😀".repeat(80);
+    const checked = validateQuotaProviders([
+      {
+        ...source({ label: longest }),
+        format: "json-v1",
+        adapter: {
+          mappings: [
+            { resultType: "usage", name: longest, metric: usedValue() },
+            { resultType: "usage", name: "Other", label: longest, metric: usedValue() },
+          ],
+        },
+      },
+    ]);
+    const definition = checked.value?.[0];
+    if (definition?.mode !== "remote-api") throw new Error(JSON.stringify(checked.issues));
+
+    const screen = shown(definition, await fetchBody({ used: 3 }, definition));
+    expect(screen.problems).toEqual([]);
+    expect(screen.rows.map((row) => [row.account, row.label, row.text])).toEqual([
+      [longest, longest, "3"],
+      [longest, longest, "3"],
+    ]);
+  });
+
   it("maps the sanitized Neuralwatt-like fixture with zero, units, timestamps, and partial errors", async () => {
     const result = await fetchBody(NEURALWATT_LIKE_RESPONSE, jsonSource());
     if (!result.success) throw new Error(result.error);
@@ -444,6 +483,11 @@ describe("json-v1", () => {
         expect.objectContaining({ key: "Status", type: "status", text: "Ready" }),
       ]),
     );
+    // Every plan gives each mapping the same row id, so only the first plan's rows are shown.
+    const screen = shown(jsonSource(), result);
+    expect(screen.rows).toHaveLength(9);
+    expect(screen.problems).toHaveLength(12);
+    expect(screen.problems).toContain("quota-providers.custom.source-one.Tokens: repeated row");
     expect(result.rowErrors).toHaveLength(15);
     expect(result.rowErrors).toEqual(
       expect.arrayContaining([

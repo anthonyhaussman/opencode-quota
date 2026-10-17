@@ -1,6 +1,7 @@
 import { isIP } from "node:net";
 
 import type { RowType } from "../core/types.js";
+import { codePointLength, LABEL_MAX_CODE_POINTS } from "../core/validate.js";
 import { classifyWindow } from "../core/windows.js";
 import type { ProviderRow } from "../providers/contract.js";
 import { daysInMonth } from "./calendar-date.js";
@@ -326,7 +327,6 @@ const URL_WHITESPACE_OR_CONTROL_PATTERN = /[\s\p{Cc}]/u;
 const MODEL_FORBIDDEN_PATTERN = /[\s\p{Cc}#?]/u;
 const MAX_ID_LENGTH = 64;
 const MAX_PROVIDER_ID_LENGTH = 64;
-const MAX_LABEL_CODE_POINTS = 80;
 const MAX_ENV_NAME_LENGTH = 128;
 const MAX_WINDOWS = 16;
 const MAX_ROLLING_MINUTES = 366 * 24 * 60;
@@ -339,7 +339,6 @@ const JSON_V1_MAX_ADAPTER_PROPERTIES = 384;
 const JSON_V1_MAX_ADAPTER_ARRAY_ELEMENTS = 640;
 const JSON_V1_MAX_PATH_SEGMENTS = 8;
 const JSON_V1_MAX_PATH_SEGMENT_CODE_POINTS = 64;
-const JSON_V1_MAX_STATIC_NAME_CODE_POINTS = 80;
 const JSON_V1_MAX_STATIC_UNIT_CODE_POINTS = 32;
 export const JSON_V1_MAX_DISPLAY_CODE_POINTS = 160;
 export const JSON_V1_MAX_NUMBER_MAGNITUDE = 1e15;
@@ -393,14 +392,17 @@ function isPositiveFinite(value: unknown, max: number): value is number {
   return typeof value === "number" && Number.isFinite(value) && value > 0 && value <= max;
 }
 
+/** The message for a label or name that is empty, too long or holds control characters. */
+const LABEL_LENGTH_MESSAGE = `expected 1-${LABEL_MAX_CODE_POINTS} printable Unicode code points after trimming`;
+
 function normalizeLabel(value: unknown, fallback: string | undefined): string | null {
   if (value === undefined) return fallback ?? null;
   if (typeof value !== "string") return null;
   const normalized = value.trim();
-  const length = Array.from(normalized).length;
+  const length = codePointLength(normalized);
   if (
     length < 1 ||
-    length > MAX_LABEL_CODE_POINTS ||
+    length > LABEL_MAX_CODE_POINTS ||
     ASCII_OR_UNICODE_CONTROL_PATTERN.test(value)
   ) {
     return null;
@@ -550,7 +552,7 @@ function normalizeJsonV1StaticText(value: unknown, maxCodePoints: number): strin
   if (typeof value !== "string" || JSON_V1_STATIC_DISPLAY_FORBIDDEN_PATTERN.test(value))
     return null;
   const normalized = value.trim();
-  const length = Array.from(normalized).length;
+  const length = codePointLength(normalized);
   return length >= 1 && length <= maxCodePoints ? normalized : null;
 }
 
@@ -573,8 +575,8 @@ function validateJsonV1Path(
     const segment = value[index];
     if (
       typeof segment !== "string" ||
-      Array.from(segment).length < 1 ||
-      Array.from(segment).length > JSON_V1_MAX_PATH_SEGMENT_CODE_POINTS ||
+      codePointLength(segment) < 1 ||
+      codePointLength(segment) > JSON_V1_MAX_PATH_SEGMENT_CODE_POINTS ||
       ASCII_OR_UNICODE_CONTROL_PATTERN.test(segment) ||
       JSON_V1_FORBIDDEN_PATH_SEGMENTS.has(segment)
     ) {
@@ -969,7 +971,6 @@ function validateJsonV1Metric(
 function validateJsonV1Mapping(
   value: unknown,
   key: string,
-  providerLabel: string,
   issues: QuotaProviderValidationIssue[],
 ): JsonV1Mapping | undefined {
   if (!isRecord(value)) {
@@ -996,34 +997,17 @@ function validateJsonV1Mapping(
     adapterIssue(issues, `${key}.resultType`, "expected a supported accounting result type");
   }
 
-  const name = normalizeJsonV1StaticText(value.name, JSON_V1_MAX_STATIC_NAME_CODE_POINTS);
+  const name = normalizeJsonV1StaticText(value.name, LABEL_MAX_CODE_POINTS);
   if (hasOwnKey(value, "name") && !name) {
-    adapterIssue(
-      issues,
-      `${key}.name`,
-      `expected 1-${JSON_V1_MAX_STATIC_NAME_CODE_POINTS} printable Unicode code points after trimming`,
-    );
-  } else if (
-    name &&
-    Array.from(`${providerLabel} ${name}`).length > JSON_V1_MAX_DISPLAY_CODE_POINTS
-  ) {
-    adapterIssue(
-      issues,
-      `${key}.name`,
-      `provider-prefixed name must not exceed ${JSON_V1_MAX_DISPLAY_CODE_POINTS} code points`,
-    );
+    adapterIssue(issues, `${key}.name`, LABEL_LENGTH_MESSAGE);
   }
 
   const label =
     value.label === undefined
       ? undefined
-      : normalizeJsonV1StaticText(value.label, JSON_V1_MAX_STATIC_NAME_CODE_POINTS);
+      : normalizeJsonV1StaticText(value.label, LABEL_MAX_CODE_POINTS);
   if (value.label !== undefined && !label) {
-    adapterIssue(
-      issues,
-      `${key}.label`,
-      `expected 1-${JSON_V1_MAX_STATIC_NAME_CODE_POINTS} printable Unicode code points after trimming`,
-    );
+    adapterIssue(issues, `${key}.label`, LABEL_LENGTH_MESSAGE);
   }
 
   const unit =
@@ -1080,7 +1064,6 @@ function validateJsonV1Mapping(
 function validateJsonV1Adapter(
   value: unknown,
   key: string,
-  providerLabel: string,
   issues: QuotaProviderValidationIssue[],
 ): JsonV1Adapter | undefined {
   if (!isRecord(value)) {
@@ -1118,7 +1101,6 @@ function validateJsonV1Adapter(
     const mapping = validateJsonV1Mapping(
       value.mappings[index],
       `${key}.mappings[${index}]`,
-      providerLabel,
       issues,
     );
     if (!mapping) continue;
@@ -1245,7 +1227,7 @@ function validateWindows(
     if (hasOwnKey(item, "label") && label === null) {
       issues.push({
         key: `${windowKey}.label`,
-        message: "expected 1-80 printable Unicode code points after trimming",
+        message: LABEL_LENGTH_MESSAGE,
       });
     }
 
@@ -1492,11 +1474,6 @@ export function validateQuotaProviders(value: unknown): QuotaProvidersValidation
         key: `${providerKey}.providerId`,
         message: "expected 1-64 lowercase provider-id characters",
       });
-    } else if (raw.providerId === id) {
-      issues.push({
-        key: `${providerKey}.providerId`,
-        message: "omit providerId when it is the same as id",
-      });
     } else {
       providerId = raw.providerId;
     }
@@ -1505,7 +1482,7 @@ export function validateQuotaProviders(value: unknown): QuotaProvidersValidation
     if (hasOwnKey(raw, "label") && label === null) {
       issues.push({
         key: `${providerKey}.label`,
-        message: "expected 1-80 printable Unicode code points after trimming",
+        message: LABEL_LENGTH_MESSAGE,
       });
     }
 
@@ -1565,8 +1542,8 @@ export function validateQuotaProviders(value: unknown): QuotaProvidersValidation
       if (format === "json-v1") {
         if (!hasOwnKey(raw, "adapter")) {
           issues.push({ key: `${providerKey}.adapter`, message: "field is required" });
-        } else if (label) {
-          adapter = validateJsonV1Adapter(raw.adapter, `${providerKey}.adapter`, label, issues);
+        } else {
+          adapter = validateJsonV1Adapter(raw.adapter, `${providerKey}.adapter`, issues);
         }
       } else if (hasOwnKey(raw, "adapter")) {
         issues.push({
