@@ -368,7 +368,9 @@ beforeEach(() => {
   for (const mock of [rpc.notices, rpc.events.on]) mock.mockClear();
   rpc.snapshot.mockReset().mockResolvedValue({ snapshot: snapshot([]) });
   rpc.refresh.mockReset().mockResolvedValue({ snapshot: OK });
-  rpc.settings.mockReset().mockResolvedValue({ values: {}, providers: [], custom: [] });
+  rpc.settings
+    .mockReset()
+    .mockResolvedValue({ values: {}, fromFile: [], providers: [], custom: [] });
   rpc.saveSettings.mockReset().mockResolvedValue({ ok: true, issues: [] });
   rpc.noticeList.mockReset().mockResolvedValue({ notices: [] });
   rpc.status.mockReset().mockResolvedValue({ text: "status" });
@@ -427,7 +429,12 @@ describe("commands of the TUI plugin", () => {
 
   it("reads quota only over the RPC: one snapshot call serves a session's sidebar and status line", async () => {
     stubJsx();
-    const settings = { values: { "toast.afterReply": "always" }, providers: [], custom: [] };
+    const settings = {
+      values: { "toast.afterReply": "always" },
+      fromFile: [],
+      providers: [],
+      custom: [],
+    };
     rpc.snapshot.mockResolvedValue({ snapshot: { ...OK, settings } });
     rpc.refresh.mockResolvedValue({ snapshot: { ...OK, settings } });
     rpc.notices.mockResolvedValue({ homeLine: "" });
@@ -565,7 +572,12 @@ describe("turn events of the TUI plugin", () => {
   });
 
   it("loads file settings from live snapshot updates without a settings store", async () => {
-    const settings = { values: { "toast.afterReply": "always" }, providers: [], custom: [] };
+    const settings = {
+      values: { "toast.afterReply": "always" },
+      fromFile: [],
+      providers: [],
+      custom: [],
+    };
     rpc.refresh.mockResolvedValue({ snapshot: { ...OK, settings, revision: OK.revision + 1 } });
     tui.emit("session.step.ended", { sessionID: "ses_1" });
     await vi.waitFor(() => expect(rpc.refresh).toHaveBeenCalledOnce());
@@ -612,7 +624,12 @@ describe("turn events of the TUI plugin", () => {
       data: {
         snapshot: {
           ...snapshot([provider("Claude", 100)], [notice]),
-          settings: { values: { "toast.resetNotice": "all" }, providers: [], custom: [] },
+          settings: {
+            values: { "toast.resetNotice": "all" },
+            fromFile: [],
+            providers: [],
+            custom: [],
+          },
         },
       },
     });

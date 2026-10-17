@@ -14,7 +14,13 @@ import {
   watchSettings,
 } from "../src/settings/index.js";
 import { checkSetting } from "../src/settings/schema.js";
-import { createFileDisplay, displaySettings, renameRow, setIn } from "../src/tui/display.js";
+import {
+  createFileDisplay,
+  displaySettings,
+  renameRow,
+  resetKeys,
+  setIn,
+} from "../src/tui/display.js";
 import { createServerSettings } from "../src/tui/server-settings.js";
 import { limitsLines } from "../src/tui/window/limits.js";
 import { DEFAULT_WORDS } from "../src/view/format.js";
@@ -250,15 +256,21 @@ async function file(text: string) {
 }
 async function connect() {
   const server = createServerSettings({
-    settings: async () => clientSettings((await loadSettings()).settings),
+    settings: async () => {
+      const loaded = await loadSettings();
+      return clientSettings(loaded.settings, loaded.fromFile);
+    },
     saveSettings: async (input) =>
       saveSettings(input.patch, { customEnabled: input.customEnabled }),
   });
   await server.load();
   watches.push(
-    await watchSettings((loaded) => server.receive(clientSettings(loaded.settings)), {
-      debounceMs: 20,
-    }),
+    await watchSettings(
+      (loaded) => server.receive(clientSettings(loaded.settings, loaded.fromFile)),
+      {
+        debounceMs: 20,
+      },
+    ),
   );
   return { server, display: createFileDisplay(server) };
 }
@@ -345,6 +357,36 @@ it("Save writes the window for all providers next to a provider's own", async ()
   display.edit((settings) => setIn(settings, ["collapsed", "window", "*"], undefined));
   await server.save();
   expect((await loadSettings()).settings.collapsed.window).toEqual({ openai: "week" });
+});
+
+it("Reset page removes the page's keys from the file, so they follow their defaults again", async () => {
+  await file(
+    '{ "version": 6, "collapsed": { "show": true, "runsOut": true }, "sidebar": { "runsOut": false } }',
+  );
+  const { server, display } = await connect();
+  display.edit((settings) => setIn(settings, ["collapsed", "providerOrder"], ["openai"]));
+
+  for (const key of resetKeys("collapsed")) server.reset(key);
+
+  expect(display.shown().collapsed.runsOut).toBe(false);
+  expect(display.shown().collapsed.providerOrder).toEqual([]);
+  // collapsed.show already holds its default, but the file still sets it.
+  expect(server.dirty()).toBe(true);
+  await server.save();
+  const loaded = await loadSettings();
+  expect(loaded.fromFile.sort()).toEqual(["sidebar.runsOut", "version"]);
+  expect(loaded.settings.collapsed).toEqual(defaultSettings().collapsed);
+  expect(server.dirty()).toBe(false);
+});
+
+it("Reset page changes nothing for keys the file does not set", async () => {
+  await file('{ "version": 6, "sidebar": { "runsOut": false } }');
+  const { server, display } = await connect();
+  display.edit((settings) => setIn(settings, ["collapsed", "runsOut"], true));
+
+  for (const key of resetKeys("collapsed")) server.reset(key);
+
+  expect(server.dirty()).toBe(false);
 });
 
 it("resets names and colors without writing undefined or losing literal dotted ids", async () => {

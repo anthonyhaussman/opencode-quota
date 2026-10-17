@@ -626,13 +626,15 @@ export function customProviderFingerprint(definition: QuotaProviderDefinition): 
 export type ClientSettings = {
   /** Every setting but `version` and the file-only ones, by dotted key ("words.percent"). */
   values: Record<string, unknown>;
+  /** The keys of `values` that settings.jsonc sets; the others follow their defaults. */
+  fromFile: string[];
   /** The ids `providers.off` takes, with their names. */
   providers: Array<{ id: string; label: string }>;
   /** The custom providers in settings.jsonc, without the maintained tunings. */
   custom: CustomProviderSwitch[];
 };
 
-export function clientSettings(settings: Settings): ClientSettings {
+export function clientSettings(settings: Settings, fileKeys: readonly string[]): ClientSettings {
   const values = Object.fromEntries(
     Object.keys(RULES)
       .filter(
@@ -656,5 +658,6 @@ export function clientSettings(settings: Settings): ClientSettings {
       request: describeQuotaProviderRequest(definition),
       fingerprint: customProviderFingerprint(definition),
     }));
-  return { values, providers, custom };
+  const fromFile = fileKeys.filter((key) => Object.hasOwn(values, key));
+  return { values, fromFile, providers, custom };
 }

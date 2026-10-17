@@ -429,25 +429,25 @@ function mapV5Values(values: ReadonlyMap<string, unknown>): {
     "tuiPromptBar.enabled",
   ].filter(has);
   if (statusKeys.length > 0) {
-    // What v5 showed, with v5's defaults for the keys the user did not set.
+    // What v5 showed, with v5's defaults for the keys the user did not set. Each v6 key is
+    // written only when the user set a v5 key it comes from; the others keep the v6 default.
     const compact = chosen("tuiCompactStatus.enabled", false);
     const promptBar = chosen("tuiPromptBar.enabled", false);
     const sessionPrompt = chosen("tuiCompactStatus.sessionPrompt", true);
-    server["statusLine.show"] = promptBar || (compact && sessionPrompt);
+    const show = promptBar || (compact && sessionPrompt);
+    const home = compact && chosen("tuiCompactStatus.homeBottom", true);
+    const showFrom = statusKeys.filter((key) => key !== "tuiCompactStatus.homeBottom");
+    const homeFrom = statusKeys.filter(
+      (key) => key === "tuiCompactStatus.enabled" || key === "tuiCompactStatus.homeBottom",
+    );
+    const toStatusLine = (to: string, value: unknown, from: readonly string[]) => {
+      for (const key of from) toServer(key, to, value);
+    };
+    toStatusLine("statusLine.show", show, showFrom);
     // v5 showed its status line next to the sidebar panel.
-    if (server["statusLine.show"]) server["statusLine.withSidebar"] = true;
-    server["statusLine.home"] = compact && chosen("tuiCompactStatus.homeBottom", true);
-    if (promptBar) server["statusLine.detail"] = "one";
-    for (const key of statusKeys) {
-      for (const to of [
-        "statusLine.show",
-        ...(server["statusLine.show"] ? ["statusLine.withSidebar"] : []),
-        "statusLine.home",
-        ...(promptBar ? ["statusLine.detail"] : []),
-      ]) {
-        toServer(key, to, server[to]);
-      }
-    }
+    if (show) toStatusLine("statusLine.withSidebar", true, showFrom);
+    toStatusLine("statusLine.home", home, homeFrom);
+    if (promptBar) toStatusLine("statusLine.detail", "one", ["tuiPromptBar.enabled"]);
   }
 
   if (has("opencodeGoWindows")) {

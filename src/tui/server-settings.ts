@@ -74,7 +74,7 @@ export function createServerSettings(rpc: ServerSettingsRpc) {
   const [switches, setSwitches] = createSignal<Readonly<Record<string, boolean>>>({});
   /** Custom providers the server would not switch on: their definition changed since shown. */
   const [changedIds, setChangedIds] = createSignal<readonly string[]>([]);
-  const defaults = clientSettings(defaultSettings()).values;
+  const defaults = clientSettings(defaultSettings(), []).values;
   /** The definition shown when each custom switch was changed, kept across live updates. */
   const reviewedFingerprints = new Map<string, string>();
   let received = 0;
@@ -83,6 +83,7 @@ export function createServerSettings(rpc: ServerSettingsRpc) {
   let savingEdits: Map<string, unknown> | undefined;
   let savingSwitches: Map<string, boolean> | undefined;
   const savedValue = (key: string) => saved()?.values[key] ?? defaults[key];
+  const savedInFile = (key: string) => saved()?.fromFile.includes(key) ?? false;
   const savedCustom = (id: string) => saved()?.custom.find((entry) => entry.id === id);
   const value = (key: string): unknown => {
     const patch = changes()[key];
@@ -157,7 +158,7 @@ export function createServerSettings(rpc: ServerSettingsRpc) {
             ([id, item]) => !same(item === null ? undefined : item, before[id]),
           );
           if (entries.length > 0) remaining[key] = Object.fromEntries(entries);
-        } else if (!same(patch === null ? defaults[key] : patch, savedValue(key))) {
+        } else if (patch === null ? savedInFile(key) : !same(patch, savedValue(key))) {
           remaining[key] = patch;
         }
       }
@@ -202,6 +203,19 @@ export function createServerSettings(rpc: ServerSettingsRpc) {
         const result = { ...current };
         if (unchanged) delete result[key];
         else result[key] = patch;
+        return result;
+      });
+    },
+    /**
+     * Puts one setting back to its default: Save removes it from settings.jsonc, so it follows
+     * the default from then on, also a later one. A key the file does not set needs no change.
+     */
+    reset(key: string): void {
+      savingEdits?.set(key, null);
+      setChanges((current) => {
+        const result = { ...current };
+        if (savedInFile(key)) result[key] = null;
+        else delete result[key];
         return result;
       });
     },

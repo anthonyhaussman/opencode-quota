@@ -35,7 +35,7 @@ import {
   type PresetName,
   presetChoice,
   presetValues,
-  resetTab,
+  resetKeys,
   type SettingsTab,
   setIn,
   stepIn,
@@ -389,8 +389,8 @@ export function createSettingsEditor(
     for (const [path, value] of Object.entries(values)) server.set(path, value);
   }
   function resetTabLines(settingsTab: SettingsTab): void {
-    display.edit((settings) => resetTab(settings, settingsTab));
-    if (settingsTab === "providers") server.set(PROVIDERS_KEY, []);
+    for (const key of resetKeys(settingsTab)) server.reset(key);
+    if (settingsTab === "providers") server.reset(PROVIDERS_KEY);
   }
 
   /** `run` as a click handler that skips the click OpenCode sends right after a drag. */

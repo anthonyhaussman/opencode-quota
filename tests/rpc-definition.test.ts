@@ -209,16 +209,22 @@ describe("quota RPC definition", () => {
   it("validates settings and saveSettings", async () => {
     await expectAccepted(methods.settings.input, {});
     await expectRejected(methods.settings.input, null, "input must be an object");
-    await expectAccepted(methods.settings.output, { values: {}, providers: [], custom: [] });
+    await expectAccepted(methods.settings.output, {
+      values: {},
+      fromFile: [],
+      providers: [],
+      custom: [],
+    });
     for (const value of [
       {},
-      { values: {}, providers: [] },
-      { values: [], providers: [], custom: [] },
+      { values: {}, fromFile: [], providers: [] },
+      { values: [], fromFile: [], providers: [], custom: [] },
+      { values: {}, providers: [], custom: [] },
     ]) {
       await expectRejected(
         methods.settings.output,
         value,
-        "output must carry values, providers and custom",
+        "output must carry values, fromFile, providers and custom",
       );
     }
     await expectAccepted(methods.saveSettings.input, { patch: { words: { percent: "used" } } });

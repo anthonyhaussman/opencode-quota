@@ -219,10 +219,11 @@ export const QuotaRpc = {
       output: schema<QuotaRpcSettingsOutput>((value) =>
         isRecord(value) &&
         isRecord(value.values) &&
+        Array.isArray(value.fromFile) &&
         Array.isArray(value.providers) &&
         Array.isArray(value.custom)
           ? null
-          : "output must carry values, providers and custom",
+          : "output must carry values, fromFile, providers and custom",
       ),
     },
     saveSettings: {

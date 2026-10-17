@@ -144,7 +144,12 @@ function fakeHost(snapshot?: QuotaSnapshot, answers: Record<string, unknown> = {
   const api = tui.context;
   const display = createFileDisplay(
     createServerSettings({
-      settings: async () => ({ values: { ...server.values }, providers: [], custom: [] }),
+      settings: async () => ({
+        values: { ...server.values },
+        fromFile: [],
+        providers: [],
+        custom: [],
+      }),
       saveSettings: async (input) => {
         saveCalls.push(input);
         const system = (input.patch.system ?? {}) as Record<string, unknown>;

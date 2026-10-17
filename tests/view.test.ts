@@ -572,8 +572,7 @@ describe("view text", () => {
       vi.stubEnv("XDG_STATE_HOME", join(root, "state"));
       try {
         expect((await saveSettings(patch)).ok).toBe(true);
-        const { settings, fromFile } = await loadSettings();
-        expect(fromFile).toContain("layout.evenUse");
+        const { settings } = await loadSettings();
         const { layout } = displaySettings(settings);
         const status: StatusInput = {
           ...statusInput([PACED]),
@@ -598,7 +597,7 @@ describe("view text", () => {
       }
     }
 
-    it("is in every place's bars with a new settings file", async () => {
+    it("is in every place's bars with a new settings file that does not set it", async () => {
       expect(await placesFromNewFile({ words: { percent: "left" } })).toEqual({
         sidebar: " 5h ██████████┃███░░░░░░  70% 2h 30m",
         collapsed: "OpenAI    5h   █████┃█░░░  70%  2h 30m",

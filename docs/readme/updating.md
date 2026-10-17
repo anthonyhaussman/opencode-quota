@@ -16,10 +16,10 @@ Update as above; you don't need to edit your settings. On the first start, OpenC
 
 - It reads `opencode-quota/quota-toast.jsonc` or `.json` in the global OpenCode folder, or `experimental.quotaToast` in the global `opencode.json` or `opencode.jsonc` when there is no such file.
 - When the global OpenCode folder has neither, it reads them in the first older folder 4.x also read that has them: `~/.config/opencode`, on macOS `~/Library/Application Support/opencode`, on Windows `%APPDATA%\opencode` and `%LOCALAPPDATA%\opencode`. With `OPENCODE_CONFIG_DIR` set, it reads only that folder.
-- It writes the result to `opencode-quota/settings.jsonc` (see [Configuration](configuration.md)) and leaves the old file in place. From then on, only `settings.jsonc` is read.
+- It writes the settings you set there, converted, to `opencode-quota/settings.jsonc` (see [Configuration](configuration.md)) and leaves the old file in place. A setting you set to what is now the default is written too. From then on, only `settings.jsonc` is read.
 - Display choices, words, provider checks and system switches share that file, each in its own section.
 - The TUI shows a conversion toast once. `/quota_status` lists what was converted, what was dropped, and why in the server session that performs the conversion.
-- Settings you never set use the 6.x defaults: the status line shows only when the sidebar is not on screen, a toast follows a reply only once a limit is getting low, no toast follows a question, toasts use the grouped layout (`toast.layout: "detailed"` is the 5.x look), and the sidebar and toasts show "runs out in" when a limit, used at your pace, runs out before it resets.
+- Settings you never set are not written, so they use the 6.x defaults, now and after later changes: the status line shows only when the sidebar is not on screen, a toast follows a reply only once a limit is getting low, no toast follows a question, toasts use the grouped layout (`toast.layout: "detailed"` is the 5.x look), and the sidebar and toasts show "runs out in" when a limit, used at your pace, runs out before it resets.
 
 Your `/tokens_*` commands keep working; they are on for everyone. Turn them off or on with **Old command names** on the Plugin tab (`/quota_status`), or with `"system": { "oldCommands": false }` in `settings.jsonc`. The "/" list in an open TUI shows the change after OpenCode restarts.
 
