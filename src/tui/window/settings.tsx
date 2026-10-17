@@ -20,7 +20,7 @@ import { ALL_PROVIDERS, WINDOWS } from "../../core/windows.js";
 import type { CustomProviderSwitch } from "../../settings/index.js";
 import { CHANGED_SINCE_REVIEW } from "../../settings/schema.js";
 import { columnsOf } from "../../view/columns.js";
-import { DEFAULT_WORDS, fit } from "../../view/format.js";
+import { fit } from "../../view/format.js";
 import type { Surface, WindowChoice } from "../../view/select.js";
 import type { ColorRole } from "../../view/text.js";
 import { rpcErrorMessage } from "../client.js";
@@ -1233,12 +1233,6 @@ export function createSettingsEditor(
     saveSwitch: (key: string, on: boolean): Promise<void> => server.saveNow(key, on),
     /** Reads the saved settings again, for Plugin's switches. */
     loadSaved: (): Promise<void> => server.load(),
-    /** The snapshot with All places' unsaved words, which every surface shows while you edit. */
-    withDraftWords(snapshot: QuotaSnapshot | undefined): QuotaSnapshot | undefined {
-      const words = server.draftWords();
-      if (!snapshot || Object.keys(words).length === 0) return snapshot;
-      return { ...snapshot, words: { ...(snapshot.words ?? DEFAULT_WORDS), ...words } };
-    },
     /**
      * The window shows `next`; undefined when it closed, which drops the changes. Any tab
      * change stops typing, so the window gets its keys back.

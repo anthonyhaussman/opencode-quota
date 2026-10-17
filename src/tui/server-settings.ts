@@ -1,6 +1,6 @@
 /** All Settings tabs edit the server's settings.jsonc through the quota RPC. */
 import { createSignal } from "solid-js";
-import type { QuotaSnapshot, Words } from "../core/types.js";
+import type { QuotaSnapshot } from "../core/types.js";
 import { isRecord } from "../lib/json-guards.js";
 import type {
   QuotaRpcSaveSettingsInput,
@@ -215,17 +215,6 @@ export function createServerSettings(rpc: ServerSettingsRpc) {
     },
     changedSinceReview: (id: string): boolean => changedIds().includes(id),
     dirty,
-    /** The words this window changed, for the surfaces to show while you edit. */
-    draftWords(): Partial<Words> {
-      return Object.fromEntries(
-        Object.entries(changes())
-          .filter(([key]) => key.startsWith("words."))
-          .map(([key, value]) => [
-            key.slice("words.".length),
-            value === null ? defaults[key] : value,
-          ]),
-      );
-    },
     async load(): Promise<void> {
       await readSaved();
     },

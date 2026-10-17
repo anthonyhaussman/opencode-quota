@@ -374,7 +374,8 @@ export function createQuotaWindow(
       });
       return;
     }
-    copyWithToast(quotaLimitsText(snapshot, Date.now()), "Limits", {
+    const words = host.display().words;
+    copyWithToast(quotaLimitsText({ ...snapshot, words }, Date.now()), "Limits", {
       copied: "Copied the limits report",
       failed: "This terminal doesn't allow copying.",
     });

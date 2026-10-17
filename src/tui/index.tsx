@@ -100,7 +100,7 @@ const plugin = Plugin.define({
     const quota = createQuotaClient(api, (snapshot) => {
       const current = quota.snapshot()?.settings;
       if (current) server.receive(current);
-      toasts.showResetNotices(settings.withDraftWords(snapshot) ?? snapshot);
+      toasts.showResetNotices(snapshot);
       if (snapshot.settingsConverted && !conversionShown) {
         conversionShown = true;
         api.ui.toast.show({
@@ -120,24 +120,17 @@ const plugin = Plugin.define({
       owner: () => appOwner,
     });
     const settings = createSettingsEditor(api, display, showToast);
-    const draftQuota = {
-      ...quota,
-      snapshot: (sessionID?: string) => settings.withDraftWords(quota.snapshot(sessionID)),
-      refresh: async (reason: Parameters<typeof quota.refresh>[0], sessionID?: string) =>
-        settings.withDraftWords(await quota.refresh(reason, sessionID)),
-    };
     const toasts = createToasts({
       show: showToast,
       display: display.shown,
       terminalWidth: () => api.renderer.width,
-      quota: draftQuota,
+      quota,
       isChildSession,
     });
     const host: SurfaceHost = {
       theme: () => api.theme,
       display: display.shown,
-      // While All places has unsaved words, every surface shows them.
-      quota: draftQuota,
+      quota,
       editing: settings,
     };
     const quotaWindow = createQuotaWindow(api, host, settings);
