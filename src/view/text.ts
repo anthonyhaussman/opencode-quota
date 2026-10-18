@@ -294,12 +294,15 @@ export function sidebarLines(input: SidebarInput): Line[] {
     const labelText = `${" ".repeat(layout.indent)}${fit(row.name, nameWidth)} `;
     return {
       id: row.id,
-      segments: [
-        { text: labelText, role: "label", percent },
-        ...barSegments(layout.bar, percent, barWidth, row.evenLeft),
-        { text: row.value.padStart(5), role: "percent", percent },
-        { text: row.reset.padStart(resetWidth), role: "reset", percent },
-      ],
+      segments: clip(
+        [
+          { text: labelText, role: "label", percent },
+          ...barSegments(layout.bar, percent, barWidth, row.evenLeft),
+          { text: row.value.padStart(5), role: "percent", percent },
+          { text: row.reset.padStart(resetWidth), role: "reset", percent },
+        ],
+        width,
+      ),
     };
   };
 

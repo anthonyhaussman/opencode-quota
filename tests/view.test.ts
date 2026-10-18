@@ -458,6 +458,22 @@ describe("view text", () => {
   });
 
   it.each([
+    { width: 4, row: " 5h " },
+    { width: 8, row: " 5h   5…" },
+    { width: 12, row: " 5h   58% 2…" },
+    { width: 15, row: " 5h   58% 2h 1…" },
+  ])("cuts every sidebar line to $width columns, rows with a bar too", ({ width, row }) => {
+    const lines = sidebarLines({
+      groups: groups("sidebar", [CLAUDE, ZEN]),
+      ...drawn,
+      layout: { ...display.layout, barWidth: 8 },
+      width,
+    }).map(lineText);
+    for (const line of lines) expect(columnsOf(line)).toBeLessThanOrEqual(width);
+    expect(lines[1]).toBe(row);
+  });
+
+  it.each([
     { percent: "left", title: "▼ Quota left" },
     { percent: "remaining", title: "▼ Quota remaining" },
     { percent: "used", title: "▼ Quota used" },
