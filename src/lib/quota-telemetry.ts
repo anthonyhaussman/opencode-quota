@@ -88,12 +88,7 @@ function getState(): QuotaTelemetryState {
 }
 
 function safeProviderAttribute(providerId: string): string {
-  if (
-    providerId === QUOTA_PROVIDERS_AGGREGATE_ID ||
-    providerId.startsWith(`${QUOTA_PROVIDERS_AGGREGATE_ID}:`)
-  ) {
-    return "custom";
-  }
+  if (providerId === QUOTA_PROVIDERS_AGGREGATE_ID) return "custom";
   return getCanonicalQuotaProviderId(providerId) ?? "other";
 }
 

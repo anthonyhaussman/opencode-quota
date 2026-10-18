@@ -83,8 +83,6 @@ export async function fetchGoogleProviderQuota<Key extends GoogleAuthSourceKey, 
     companion_package_path:
       companion.state === "missing" ? "(none)" : (companion.resolvedPath ?? "(none)"),
     auth_error: auth.state === "invalid" ? sanitizeDisplayText(auth.error) : undefined,
-    companion_error:
-      companion.state !== "present" ? sanitizeDisplayText(companion.error) : undefined,
   });
 
   const requestTimeoutMs = ctx.config?.requestTimeoutMsConfigured

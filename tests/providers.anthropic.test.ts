@@ -147,7 +147,6 @@ describe("anthropic provider", () => {
         { key: "binary_path", value: claude.path },
         { key: "quota_source", value: "claude-auth-status-json" },
         { key: "oauth_credential_source", value: "(none)" },
-        { key: "five_hour_remaining", value: `43% reset_at=${FIVE_HOUR_RESET}` },
       ]),
     );
   });
@@ -166,10 +165,7 @@ describe("anthropic provider", () => {
     const fetched = await fetchRows(anthropicProvider, { anthropicBinaryPath: "bad\0claude" });
 
     expect(fetched.error).toMatchObject({ code: "local_tool", tool: "Claude CLI" });
-    expect(fetched.debug.slice(0, 2)).toEqual([
-      { key: "cli_installed", value: "false" },
-      { key: "message", value: expect.stringMatching(/^failed to probe Claude CLI: /u) },
-    ]);
+    expect(fetched.debug[0]).toEqual({ key: "cli_installed", value: "false" });
   });
 
   it("asks for sign-in again for an expired login, without asking Anthropic", async () => {

@@ -244,9 +244,7 @@ export async function loadProviderSource(host: ProviderSourceHost): Promise<Stor
   const providers = registeredProviders(host);
   const ctx = providerContext(host, loaded);
   const { enabledProviders } = ctx.config;
-  const enabled = providers.filter(
-    (provider) => enabledProviders === "auto" || enabledProviders.includes(provider.id),
-  );
+  const enabled = providers.filter((provider) => enabledProviders.includes(provider.id));
   const available = await Promise.all(
     enabled.map(async (provider) => {
       try {

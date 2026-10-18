@@ -15,7 +15,7 @@ import { columnsOf } from "./columns.js";
 import { DEFAULT_WORDS, fit, formatTokens, formatUsd } from "./format.js";
 import { errorWords, type Place, rowFacts } from "./row-facts.js";
 import { type Group, type RowSettings, visibleGroups } from "./select.js";
-import { costText, type UsageMode, type UsageRole } from "./usage.js";
+import { costText } from "./usage.js";
 
 /** The range of the usage `/quota` shows. */
 export const DEFAULT_QUICK_LOOK_RANGE: Exclude<UsageRange, "between"> = "7d";
@@ -30,7 +30,7 @@ type QuickLookTextInput = {
 };
 
 /** A provider's block: its usage (when OpenCode used it) and its quota groups (when checked). */
-type Block = { name: string; dot: UsageRole; usage?: UsageProviderRow; groups: Group[] };
+type Block = { name: string; usage?: UsageProviderRow; groups: Group[] };
 
 /** A limit label is cut to this many columns. */
 const LABEL_MAX_WIDTH = 16;
@@ -78,40 +78,29 @@ function quotaGroups(snapshot: QuotaSnapshot | undefined, settings: RowSettings)
 }
 
 /**
- * One block per provider OpenCode used (most cost, or most tokens, first) with the quota groups
- * it matches, then one per quota group no used provider matched, in the sidebar's order.
+ * One block per provider OpenCode used, in the usage report's order (most cost first), with the
+ * quota groups it matches, then one per quota group no used provider matched, in the sidebar's
+ * order.
  */
 function blocksOf(
   groups: Group[],
   snapshot: QuotaSnapshot | undefined,
   report: UsageReport | undefined,
-  mode: UsageMode,
 ): Block[] {
   const customRowProviders = snapshot?.customRowProviders ?? {};
   const used = (report?.providers ?? []).filter((row) => row.tokens > 0);
-  const ordered = mode === "cost" ? used : [...used].sort((a, b) => b.tokens - a.tokens);
   const claimed = new Set<Group>();
-  const usedBlocks = ordered.map((row): Block => {
+  const usedBlocks = used.map((row): Block => {
     const own = groups.filter(
       (group) => !claimed.has(group) && groupServesUsage(group, row.providerID, customRowProviders),
     );
     for (const group of own) claimed.add(group);
-    const index = report?.providers.indexOf(row) ?? 0;
     // One group: its title names the account ("Custom providers (Team)").
     const name = own.length === 1 ? own[0].title : own[0]?.name;
-    return {
-      name: name ?? getQuotaProviderDisplayLabel(row.providerID),
-      dot: `provider:${index}`,
-      usage: row,
-      groups: own,
-    };
+    return { name: name ?? getQuotaProviderDisplayLabel(row.providerID), usage: row, groups: own };
   });
   const unused = groups.filter((group) => !claimed.has(group));
-  const quotaBlocks = unused.map((group, index): Block => ({
-    name: group.title,
-    dot: `provider:${(report?.providers.length ?? 0) + index}`,
-    groups: [group],
-  }));
+  const quotaBlocks = unused.map((group): Block => ({ name: group.title, groups: [group] }));
   return [...usedBlocks, ...quotaBlocks];
 }
 
@@ -160,12 +149,7 @@ function flowPieces(pieces: Piece[], width: number | undefined): string[] {
 export function quickLookText(input: QuickLookTextInput): string {
   const { usage, nowMs, width } = input;
   const words = input.snapshot?.words ?? DEFAULT_WORDS;
-  const blocks = blocksOf(
-    quotaGroups(input.snapshot, input.settings),
-    input.snapshot,
-    usage,
-    "cost",
-  );
+  const blocks = blocksOf(quotaGroups(input.snapshot, input.settings), input.snapshot, usage);
   const header: Piece[] = [{ text: "Quota", before: "" }];
   if (usage) {
     const totals =

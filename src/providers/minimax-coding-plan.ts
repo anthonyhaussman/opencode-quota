@@ -35,19 +35,11 @@ const REQUEST_UNIT = { kind: "count", unit: "request" } as const;
 
 type MiniMaxQuotaEndpointId = "international" | "china";
 
-/** Each region's API server and quota URL. */
-const MINIMAX_ENDPOINTS: Readonly<
-  Record<MiniMaxQuotaEndpointId, { apiBaseUrl: string; quotaUrl: string }>
-> = {
-  international: {
-    apiBaseUrl: "https://api.minimax.io",
-    quotaUrl: "https://api.minimax.io/v1/api/openplatform/coding_plan/remains",
-  },
-  china: {
-    apiBaseUrl: "https://api.minimaxi.com",
-    // CN Token Plan docs use this path on minimaxi.com; api.minimaxi.com returns MiniMax base_resp auth errors for it.
-    quotaUrl: "https://api.minimaxi.com/v1/token_plan/remains",
-  },
+/** Each region's quota URL. */
+const MINIMAX_QUOTA_URLS: Readonly<Record<MiniMaxQuotaEndpointId, string>> = {
+  international: "https://api.minimax.io/v1/api/openplatform/coding_plan/remains",
+  // CN Token Plan docs use this path on minimaxi.com; api.minimaxi.com returns MiniMax base_resp auth errors for it.
+  china: "https://api.minimaxi.com/v1/token_plan/remains",
 };
 
 interface MiniMaxModelRemain {
@@ -217,7 +209,7 @@ async function queryMiniMaxQuota(
   endpointId: MiniMaxQuotaEndpointId,
   requestTimeoutMs: number | undefined,
 ): Promise<{ rows: ProviderRow[] } | { error: string; facts?: ErrorFacts }> {
-  const reply = await requestJson(MINIMAX_ENDPOINTS[endpointId].quotaUrl, {
+  const reply = await requestJson(MINIMAX_QUOTA_URLS[endpointId], {
     method: "GET",
     headers: { Authorization: `Bearer ${apiKey}`, "User-Agent": USER_AGENT },
     secrets: [apiKey],
@@ -268,11 +260,6 @@ function isMiniMaxChinaExplicitlyEnabled(context?: QuotaProviderMatchContext): b
   );
 }
 
-function usageDetail(row: ProviderRow | undefined): string | undefined {
-  if (!row) return undefined;
-  return `percent_remaining=${row.percentRemaining ?? "(none)"} reset_at=${row.resetsAt ?? "(none)"}`;
-}
-
 async function fetchMiniMaxQuota(
   spec: MiniMaxSpec,
   ctx: QuotaProviderContext,
@@ -281,10 +268,7 @@ async function fetchMiniMaxQuota(
   const configured = vendorKeyState(keys).state === "configured";
   const debug = [
     ...vendorKeyDetails(spec.auth, keys),
-    ...statusDetailsFromRecord({
-      api_endpoint: configured ? spec.endpoint : undefined,
-      api_base_url: configured ? MINIMAX_ENDPOINTS[spec.endpoint].apiBaseUrl : undefined,
-    }),
+    ...statusDetailsFromRecord({ api_endpoint: configured ? spec.endpoint : undefined }),
   ];
   const query = (apiKey: string) =>
     queryMiniMaxQuota(apiKey, spec.endpoint, ctx.config?.requestTimeoutMs);
@@ -313,19 +297,10 @@ async function fetchMiniMaxQuota(
     };
   }
 
-  const fiveHour = result.rows.find((row) => row.key === FIVE_HOUR.key);
-  const weekly = result.rows.find((row) => row.key === WEEKLY.key);
   return {
     attempted: true,
     accounts: [{ name: spec.label, rows: result.rows, errors: [] }],
-    debug: [
-      ...debug,
-      ...statusDetailsFromRecord({
-        five_hour_usage: usageDetail(fiveHour),
-        weekly_usage: usageDetail(weekly),
-        live_state: !fiveHour && !weekly ? `no reportable ${spec.label} quota` : undefined,
-      }),
-    ],
+    debug,
   };
 }
 

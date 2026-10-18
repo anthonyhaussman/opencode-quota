@@ -44,7 +44,8 @@ export interface QuotaProviderContext {
     onlyCurrentModel?: boolean;
     currentModel?: string;
     currentProviderID?: string;
-    enabledProviders: string[] | "auto";
+    /** The registered providers not turned off in the settings. */
+    enabledProviders: string[];
     /** The list filters automatic discovery, rather than explicitly enrolling providers. */
     automaticDiscovery?: boolean;
     quotaProviders?: QuotaProviderDefinition[];

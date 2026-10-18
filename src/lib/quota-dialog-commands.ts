@@ -13,6 +13,7 @@ import { matchesQuotaProviderCurrentSelection } from "../core/selection.js";
 import { createQuotaStore } from "../core/store.js";
 import type { DebugDetail, ProviderSnapshot, QuotaSnapshot, SessionModel } from "../core/types.js";
 import { type UsageReport, usageReport } from "../core/usage.js";
+import { cursorAuthDetails } from "../providers/cursor.js";
 import { resolveOpenRouterApiKey } from "../providers/openrouter.js";
 import {
   apiKeyStatusDetails,
@@ -119,15 +120,7 @@ async function apiKeySetupDetails(providerId: string): Promise<DebugDetail[]> {
       credentialDatabasePaths: resolved.credentialDatabasePaths,
     });
   }
-  if (providerId === "cursor") {
-    const auth = await inspectCursorAuthPresence();
-    return [
-      { key: "auth_state", value: auth.state },
-      { key: "auth_selected_path", value: auth.selectedPath ?? "(none)" },
-      { key: "auth_present_paths", value: auth.presentPaths.join(" | ") || "(none)" },
-      { key: "auth_candidate_paths", value: auth.candidatePaths.join(" | ") || "(none)" },
-    ];
-  }
+  if (providerId === "cursor") return cursorAuthDetails(await inspectCursorAuthPresence());
   return [];
 }
 
@@ -177,7 +170,7 @@ async function checkKnownProviders(
   const source = await loadProviderSource(host);
   const sourceIds = new Set(source.providers.map((provider) => provider.id));
   const { enabledProviders } = ctx.config;
-  const turnedOn = (id: string) => enabledProviders === "auto" || enabledProviders.includes(id);
+  const turnedOn = (id: string) => enabledProviders.includes(id);
   const known = registeredProviders(host).filter(
     (provider) => !providerId || provider.id === providerId,
   );

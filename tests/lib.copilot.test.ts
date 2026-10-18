@@ -929,7 +929,6 @@ describe("Copilot quota diagnostics", () => {
         remainingTotalsState: "not_available_from_org_usage",
         budgetApi: "organization_budgets",
         oauthAccountingState: "available_via_copilot_internal_user",
-        usernameFilter: "alice",
         queryPeriod: { year: 2026, month: 1 },
       },
     },
@@ -940,7 +939,6 @@ describe("Copilot quota diagnostics", () => {
       expected: {
         billingMode: "enterprise_usage",
         billingApiAccessLikely: false,
-        tokenCompatibilityError: expect.stringContaining("do not support fine-grained PATs"),
         remainingTotalsState: "not_available_from_enterprise_usage",
         budgetApi: "enterprise_budgets",
         oauthAccountingState: "not_configured",

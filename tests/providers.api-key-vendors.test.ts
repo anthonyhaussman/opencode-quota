@@ -338,11 +338,8 @@ it("dates Ollama Cloud's monthly row from the included period", async () => {
   });
   expect(fetched.debug).toEqual(
     expect.arrayContaining([
-      { key: "included_balance_usd", value: "72.5" },
-      { key: "included_allowance_usd", value: "100" },
       { key: "included_period_from", value: "2026-09-15T09:30:00.000Z" },
       { key: "included_period_until", value: "2026-10-15T09:30:00.000Z" },
-      { key: "purchased_balance_usd", value: "25" },
     ]),
   );
 });

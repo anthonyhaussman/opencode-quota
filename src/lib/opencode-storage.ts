@@ -45,8 +45,6 @@ export interface OpenCodeMessage {
     created?: number;
     completed?: number;
   };
-  agent?: string;
-  mode?: string;
 }
 
 export interface OpenCodeSessionInfo {
@@ -80,8 +78,6 @@ type ProjectedMessageRow = {
   tokens_cache_write: unknown;
   cost: unknown;
   time_completed: unknown;
-  agent: unknown;
-  mode: unknown;
 };
 
 type SessionRow = {
@@ -133,8 +129,6 @@ function mapRowToOpenCodeMessage(row: ProjectedMessageRow): OpenCodeMessage | nu
       created: row.time_created,
       completed: normalizeNumber(row.time_completed),
     },
-    agent: normalizeString(row.agent),
-    mode: normalizeString(row.mode),
   };
 }
 
@@ -168,7 +162,6 @@ const PROJECTED_MESSAGE_COLUMNS = [
   `${guardedJsonScalar("$.tokens.cache.write")} AS tokens_cache_write`,
   `${guardedJsonScalar("$.cost")} AS cost`,
   `${guardedJsonScalar("$.time.completed")} AS time_completed`,
-  `${guardedJsonScalar("$.agent")} AS agent`,
 ].join(", ");
 
 const ASSISTANT_FILTER = `type = 'assistant'`;

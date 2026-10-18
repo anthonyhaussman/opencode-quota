@@ -123,7 +123,7 @@ describe("Xiaomi MiMo provider", () => {
     expect(fetched.rows).toEqual([]);
     expect(fetched.error?.code).toBe("not_configured");
     expect(errorDebug(fetched)).toEqual([`Xiaomi MiMo: Invalid config (${source}): ${problem}`]);
-    expect(fetched.debug).toContainEqual({ key: "config_error", value: problem });
+    expect(fetched.debug).toContainEqual({ key: "config_state", value: "invalid" });
     expect(JSON.stringify(fetched)).not.toMatch(/private-user|secret/);
     expect(http).not.toHaveBeenCalled();
   });

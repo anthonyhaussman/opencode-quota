@@ -2,6 +2,7 @@
  * OpenAI (Plus/Pro) provider wrapper.
  */
 
+import type { DebugDetail } from "../core/types.js";
 import type { QuotaProvider, QuotaProviderContext } from "../lib/entries.js";
 import {
   type OpenAILogin,
@@ -86,30 +87,30 @@ function tokenStatus({ row, oauth: login }: OpenAILogin): string {
  * active (e.g. an env-selected connection or a failed active lookup) is never
  * reported as the active one.
  */
-function activeLoginStatusDetails(logins: readonly OpenAILogin[]): Record<string, string> {
+function activeLoginStatusDetails(logins: readonly OpenAILogin[]): DebugDetail[] {
   const active = logins.find(({ row }) => row.active);
   if (!active) {
     // With stored logins but none marked active, which one OpenCode uses is unknown.
     const value = logins.length > 0 ? "unknown" : "(none)";
-    return {
+    return statusDetailsFromRecord({
       auth_configured: logins.length > 0 ? "true" : "false",
       auth_source: value,
       auth_method: value,
       token_status: value,
       token_expires_at: value,
-    };
+    });
   }
   const { row: activeRow, oauth: login } = active;
   const isKey = activeRow.value.type === "api";
   const expiresAt = login?.state === "configured" ? login.expiresAt : undefined;
-  return {
+  return statusDetailsFromRecord({
     auth_configured: isKey || login ? "true" : "false",
     auth_source: isKey ? activeRow.integrationId : (login?.sourceKey ?? "(none)"),
     // OpenCode 2's sign-in method, e.g. chatgpt-token-sharing ("Sign in with ChatGPT").
     auth_method: typeof activeRow.value.methodID === "string" ? activeRow.value.methodID : "(none)",
     token_status: tokenStatus(active),
     token_expires_at: expiresAt ? new Date(expiresAt).toISOString() : "(none)",
-  };
+  });
 }
 
 const CODE_REVIEW = { key: "code_review", label: "Code review", window: "code_review" } as const;
@@ -204,7 +205,7 @@ export const openaiProvider: QuotaProvider = {
       },
     });
 
-    const debug = statusDetailsFromRecord(activeLoginStatusDetails(logins));
+    const debug = activeLoginStatusDetails(logins);
     if (accounts.length > 0) return { attempted: true, accounts, debug };
     return { ...(await fetchActiveLoginQuota(requestTimeoutMs)), debug };
   },

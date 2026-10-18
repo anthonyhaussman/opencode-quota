@@ -30,14 +30,6 @@ import {
 } from "./contract.js";
 import { statusDetailsFromRecord } from "./result-helpers.js";
 
-function formatWindowDetail(
-  window: { percentRemaining: number; resetTimeIso?: string } | undefined,
-): string | undefined {
-  return window
-    ? `${window.percentRemaining}% reset_at=${window.resetTimeIso ?? "(none)"}`
-    : undefined;
-}
-
 /** The 5h, Weekly, Usage Credits and Fable weekly rows of one Claude account. */
 function quotaRows(quota: AnthropicQuotaResult, method: ProviderRow["method"]): ProviderRow[] {
   const rows = [
@@ -105,7 +97,6 @@ async function fetchOpenCodeLogin(
 
 /** The Claude CLI's details for /quota_status. */
 function cliStatusDetails(diagnostics: AnthropicDiagnostics) {
-  const quota = diagnostics.quota;
   return statusDetailsFromRecord({
     cli_installed: diagnostics.installed ? "true" : "false",
     cli_version: diagnostics.version ?? "(none)",
@@ -115,10 +106,6 @@ function cliStatusDetails(diagnostics: AnthropicDiagnostics) {
     quota_source: diagnostics.quotaSource === "none" ? "(none)" : diagnostics.quotaSource,
     oauth_credential_source: diagnostics.oauthCredentialSource ?? "(none)",
     checked_commands: diagnostics.checkedCommands.join(" | ") || "(none)",
-    message: diagnostics.message,
-    five_hour_remaining: formatWindowDetail(quota?.five_hour),
-    seven_day_remaining: formatWindowDetail(quota?.seven_day),
-    fable_weekly_remaining: formatWindowDetail(quota?.fable_weekly),
   });
 }
 
@@ -133,10 +120,7 @@ async function probeClaudeCli(options: {
     const message = sanitizeDisplayText(error instanceof Error ? error.message : String(error));
     return {
       failure: `Claude CLI probe failed: ${message}`,
-      debug: statusDetailsFromRecord({
-        cli_installed: "false",
-        message: `failed to probe Claude CLI: ${message}`,
-      }),
+      debug: statusDetailsFromRecord({ cli_installed: "false" }),
     };
   }
 }

@@ -62,8 +62,6 @@ describe("opencode storage multi-session reads", () => {
             tokens_cache_write: 4,
             cost: 0.01,
             time_completed: completedSinceMs + 1,
-            agent: "build",
-            mode: "primary",
           },
         ];
       }),
@@ -85,8 +83,6 @@ describe("opencode storage multi-session reads", () => {
       modelID: "gpt-5",
       tokens: { input: 10, output: 5, reasoning: 2, cache: { read: 3, write: 4 } },
       cost: 0.01,
-      agent: "build",
-      mode: "primary",
     });
     expect(conn.close).toHaveBeenCalledOnce();
   });
@@ -113,8 +109,6 @@ describe("opencode storage multi-session reads", () => {
             tokens_cache_write: 1,
             cost: 0.02,
             time_completed: 101,
-            agent: null,
-            mode: null,
           },
         ];
       }),
@@ -135,8 +129,6 @@ describe("opencode storage multi-session reads", () => {
         tokens: { input: 11, output: 7, cache: { read: 2, write: 1 } },
         cost: 0.02,
         time: { created: 100, completed: 101 },
-        agent: undefined,
-        mode: undefined,
       },
     ]);
   });
@@ -193,8 +185,6 @@ describe("opencode storage forked session copies", () => {
     tokens_cache_write: 30,
     cost: 10,
     time_completed: 150,
-    agent: "build",
-    mode: null,
   };
   // Message ids ascend with time. OpenCode copies finished parent rows into the
   // fork with a newer id and identical data.

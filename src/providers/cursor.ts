@@ -1,4 +1,4 @@
-import type { Amount } from "../core/types.js";
+import type { Amount, DebugDetail } from "../core/types.js";
 import {
   CURSOR_CANONICAL_PLUGIN_PACKAGE,
   inspectCursorAuthPresence,
@@ -12,7 +12,6 @@ import {
 } from "../lib/cursor-pricing.js";
 import { getCurrentCursorUsageSummary } from "../lib/cursor-usage.js";
 import type { QuotaProvider, QuotaProviderContext } from "../lib/entries.js";
-import { fmtUsdAmount } from "../lib/format-utils.js";
 import { isCanonicalProviderAvailable } from "../lib/provider-availability.js";
 import { accountingDecimalFromNumber } from "./accounting-decimal.js";
 import {
@@ -48,8 +47,17 @@ function spendRow(
   };
 }
 
-function formatUsage(bucket: { costUsd: number; messageCount: number }): string {
-  return `${fmtUsdAmount(bucket.costUsd)} across ${bucket.messageCount.toLocaleString("en-US")} messages`;
+/** Where Cursor's login was looked for, and its state; never its contents. */
+export function cursorAuthDetails(
+  auth: Awaited<ReturnType<typeof inspectCursorAuthPresence>>,
+): DebugDetail[] {
+  return statusDetailsFromRecord({
+    auth_state: auth.state,
+    auth_selected_path: auth.selectedPath ?? "(none)",
+    auth_present_paths: auth.presentPaths.join(" | ") || "(none)",
+    auth_candidate_paths: auth.candidatePaths.join(" | ") || "(none)",
+    auth_error: auth.error,
+  });
 }
 
 export const cursorProvider: QuotaProvider = {
@@ -87,31 +95,26 @@ export const cursorProvider: QuotaProvider = {
       inspectCursorAuthPresence(),
       inspectCursorOpenCodeIntegration(),
     ]);
-    const debug = statusDetailsFromRecord({
-      plan: planLabel ?? "none",
-      included_api_usd:
-        typeof includedApiUsd === "number" ? fmtUsdAmount(includedApiUsd) : "(none)",
-      billing_cycle_start_day:
-        typeof ctx.config.cursorBillingCycleStartDay === "number"
-          ? String(ctx.config.cursorBillingCycleStartDay)
-          : "(calendar month)",
-      auth_state: auth.state,
-      auth_selected_path: auth.selectedPath ?? "(none)",
-      auth_present_paths: auth.presentPaths.join(" | ") || "(none)",
-      auth_candidate_paths: auth.candidatePaths.join(" | ") || "(none)",
-      auth_error: auth.error,
-      plugin_enabled: integration.pluginEnabled ? "true" : "false",
-      canonical_plugin_package: CURSOR_CANONICAL_PLUGIN_PACKAGE,
-      provider_configured: integration.providerConfigured ? "true" : "false",
-      config_matches: integration.matchedPaths.join(" | ") || "(none)",
-      config_checked_paths: integration.checkedPaths.join(" | ") || "(none)",
-      cycle_source: usage.window.source,
-      cycle_reset_at: usage.window.resetTimeIso,
-      api_usage: formatUsage(usage.api),
-      auto_composer_usage: formatUsage(usage.autoComposer),
-      total_cursor_usage: formatUsage(usage.total),
-      unknown_cursor_models: usage.unknownModels.length.toLocaleString("en-US"),
-    });
+    const debug = [
+      ...statusDetailsFromRecord({
+        plan: planLabel ?? "none",
+        billing_cycle_start_day:
+          typeof ctx.config.cursorBillingCycleStartDay === "number"
+            ? String(ctx.config.cursorBillingCycleStartDay)
+            : "(calendar month)",
+      }),
+      ...cursorAuthDetails(auth),
+      ...statusDetailsFromRecord({
+        plugin_enabled: integration.pluginEnabled ? "true" : "false",
+        canonical_plugin_package: CURSOR_CANONICAL_PLUGIN_PACKAGE,
+        provider_configured: integration.providerConfigured ? "true" : "false",
+        config_matches: integration.matchedPaths.join(" | ") || "(none)",
+        config_checked_paths: integration.checkedPaths.join(" | ") || "(none)",
+        cycle_source: usage.window.source,
+        cycle_reset_at: usage.window.resetTimeIso,
+        unknown_cursor_models: usage.unknownModels.length.toLocaleString("en-US"),
+      }),
+    ];
 
     if (usage.total.messageCount === 0 && includedApiUsd === undefined) {
       return { attempted: false, accounts: [], debug };
