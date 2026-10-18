@@ -237,14 +237,18 @@ describe("quota telemetry", () => {
     ]);
   });
 
-  it("maps aggregate sources to custom and reduces privacy-collapsed series by maximum", async () => {
+  it("maps custom providers to custom and reduces privacy-collapsed series by maximum", async () => {
     const otel = installOtel();
     publishQuotaTelemetry(
       enable({}),
       snapshot(
         provider("quota-providers", [
-          row("quota-providers.team", { window: "month", percentRemaining: 70 }),
-          row("quota-providers.gateway", { window: "month", percentRemaining: 40 }),
+          row("quota-providers.custom.team.monthly", { window: "month", percentRemaining: 70 }),
+          row("quota-providers.custom.gateway.monthly", { window: "month", percentRemaining: 40 }),
+        ]),
+        // Only the provider id "quota-providers" is custom; a cache identity's form is not.
+        provider("quota-providers:team", [
+          row("quota-providers:team.monthly", { window: "month", percentRemaining: 90 }),
         ]),
         provider("private-a", [row("private-a.monthly", { percentRemaining: 80 })]),
         provider("private-b", [row("private-b.monthly", { percentRemaining: 30 })]),
@@ -254,6 +258,7 @@ describe("quota telemetry", () => {
 
     expect(otel.collect("opencode.quota.consumed")).toEqual([
       consumedSeries(0.6, "custom", "month"),
+      consumedSeries(0.1, "other", "month"),
       consumedSeries(0.7, "other", "unknown"),
     ]);
   });
