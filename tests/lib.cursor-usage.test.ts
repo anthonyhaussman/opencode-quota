@@ -1,21 +1,39 @@
-import { describe, expect, it, vi } from "vite-plus/test";
-
-vi.mock("../src/lib/opencode-storage.js", () => ({
-  iterAssistantMessages: vi.fn(),
-}));
+import { join } from "node:path";
+import { describe, expect, it } from "vite-plus/test";
 
 import { computeCursorCycleWindow, getCurrentCursorUsageSummary } from "../src/lib/cursor-usage.js";
-import { iterAssistantMessages } from "../src/lib/opencode-storage.js";
+import { useProviderWorld } from "./helpers/provider-fetch.js";
+import { type SessionDatabaseMessage, writeSessionDatabase } from "./helpers/session-database.js";
+
+const world = useProviderWorld();
 
 const nowMs = new Date(2026, 2, 19, 10, 0, 0, 0).getTime();
+/** Inside the cycle that starts on the 7th. */
+const createdMs = new Date(2026, 2, 10).getTime();
 
-function message(providerID: string, modelID: string, input: number, output: number) {
-  return {
-    role: "assistant",
-    providerID,
-    modelID,
-    tokens: { input, output, cache: { read: 0, write: 0 } },
-  };
+function message(
+  providerID: string,
+  modelID: string,
+  input: number,
+  output: number,
+): Omit<SessionDatabaseMessage, "id" | "sessionID" | "created"> {
+  return { providerID, modelID, tokens: { input, output } };
+}
+
+/** These assistant messages in one session of a temp `opencode.db`. */
+function storeMessages(
+  messages: ReadonlyArray<Omit<SessionDatabaseMessage, "id" | "sessionID" | "created">>,
+): void {
+  writeSessionDatabase(join(world.configDir, "..", "..", "data", "opencode", "opencode.db"), {
+    sessions: [{ id: "ses_1", created: createdMs }],
+    messages: messages.map((fields, index) => ({
+      ...fields,
+      id: `msg_${index}`,
+      sessionID: "ses_1",
+      created: createdMs + index,
+      completed: createdMs + index + 1,
+    })),
+  });
 }
 
 describe("computeCursorCycleWindow", () => {
@@ -76,7 +94,7 @@ describe("getCurrentCursorUsageSummary", () => {
       { auto: [0, 0], api: [1, 15.75], total: 1, unknown: [] },
     ],
   ])("buckets %s by Cursor pool", async (_label, messages, expected) => {
-    vi.mocked(iterAssistantMessages).mockResolvedValueOnce(messages as any);
+    storeMessages(messages);
 
     const summary = await getCurrentCursorUsageSummary({ nowMs, billingCycleStartDay: 7 });
 

@@ -1,25 +1,21 @@
-// Gemini CLI quota parsing. The OAuth flow it shares with Google AGY is in lib.google-agy.test.ts.
+// Gemini CLI quota parsing, with the companion plugin installed in a temp package cache and each
+// login's own unexpired token. The OAuth flow it shares with Google AGY is in
+// lib.google-agy.test.ts.
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
-vi.mock("../src/lib/google-token-cache.js", () => ({
-  makeAccountCacheKey: () => "cache-key",
-  getCachedAccessToken: async () => ({ accessToken: "cached-access-token" }),
-  setCachedAccessToken: async () => undefined,
-}));
-vi.mock("../src/lib/google-companion-credentials.js", () => ({
-  geminiCliCompanion: {
-    resolveCredentials: async () => ({
-      state: "configured",
-      clientId: "client-id",
-      clientSecret: "client-secret",
-    }),
-  },
-}));
 
+import { geminiCliCompanion } from "../src/lib/google-companion-credentials.js";
 import { GEMINI_CLI_FLAVOR } from "../src/lib/google-gemini-cli.js";
 import { queryGoogleQuota } from "../src/lib/google-oauth-quota.js";
-/** The Gemini CLI query of the one login in `logins`, written as `{ integration id: value }`. */
+import { useProviderWorld } from "./helpers/provider-fetch.js";
+
+const world = useProviderWorld();
+/**
+ * The Gemini CLI query of the one login in `logins`, written as `{ integration id: value }`; the
+ * login holds an unexpired access token, so no token refresh is asked.
+ */
 function queryGeminiCliQuota(logins: Record<string, Record<string, unknown>>) {
-  const [[integrationId, value]] = Object.entries(logins);
+  const [[integrationId, stored]] = Object.entries(logins);
+  const value = { access: "login-access-token", expires: Date.now() + 3_600_000, ...stored };
   return queryGoogleQuota(GEMINI_CLI_FLAVOR, {
     login: { id: "login", integrationId, label: "", active: true, value },
   });
@@ -35,6 +31,11 @@ function quotaResponse(buckets: unknown[]) {
 describe("Gemini CLI quota buckets", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    world.writeCacheFile(
+      "node_modules/opencode-gemini-auth/src/constants.ts",
+      'export const GEMINI_CLIENT_ID = "client-id";\nexport const GEMINI_CLIENT_SECRET = "client-secret";\n',
+    );
+    geminiCliCompanion.clearCacheForTests();
     vi.stubGlobal(
       "fetch",
       vi.fn((url: RequestInfo | URL, init: RequestInit = {}) => fetchResponse(String(url), init)),

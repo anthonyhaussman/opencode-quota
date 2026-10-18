@@ -1,77 +1,62 @@
-import { describe, expect, it, vi } from "vite-plus/test";
+/**
+ * Cursor as one module: its month of spend estimated from Cursor messages in a temp
+ * `opencode.db`, priced as the Usage tab prices them (cursor/gpt-5 input $1.25 per million
+ * tokens for the API pool, Cursor's `auto` input $1.25 per million for Auto+Composer), and its
+ * plugin or provider found in a temp `opencode.json`.
+ */
 
-vi.mock("../src/lib/provider-availability.js", () => ({
-  isCanonicalProviderAvailable: vi.fn(),
-}));
+import { join } from "node:path";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
-vi.mock("../src/lib/cursor-detection.js", () => ({
-  CURSOR_CANONICAL_PLUGIN_PACKAGE: "cursor-opencode-provider",
-  inspectCursorAuthPresence: vi.fn(async () => ({
-    state: "missing",
-    presentPaths: [],
-    candidatePaths: [],
-  })),
-  inspectCursorOpenCodeIntegration: vi.fn(async () => ({
-    pluginEnabled: false,
-    providerConfigured: false,
-    matchedPaths: [],
-    checkedPaths: [],
-  })),
-}));
-
-vi.mock("../src/lib/cursor-usage.js", () => ({
-  getCurrentCursorUsageSummary: vi.fn(),
-}));
-
-import { rowsFromProviderResult } from "../src/core/rows.js";
-import { inspectCursorOpenCodeIntegration } from "../src/lib/cursor-detection.js";
-import { getCurrentCursorUsageSummary } from "../src/lib/cursor-usage.js";
-import { isCanonicalProviderAvailable } from "../src/lib/provider-availability.js";
-import type { ProviderFetchResult } from "../src/providers/contract.js";
 import { cursorProvider } from "../src/providers/cursor.js";
-import { rowSummary } from "./helpers/provider-fetch.js";
+import { fetchRows, rowSummary, useProviderWorld } from "./helpers/provider-fetch.js";
+import { createProviderAvailabilityContext } from "./helpers/provider-test-harness.js";
+import { type SessionDatabaseMessage, writeSessionDatabase } from "./helpers/session-database.js";
 
-const RESET = "2026-03-01T00:00:00.000Z";
-const CYCLE_START = "2026-02-01T00:00:00.000Z";
-const OBSERVED_AT = "2026-02-15T12:00:00.000Z";
+const world = useProviderWorld();
 
-function usageSummary(params: {
-  apiCost: number;
-  apiMessages?: number;
-  autoCost?: number;
-  autoMessages?: number;
-  unknownModels?: number;
-  source?: "configured_day" | "calendar_month";
-}) {
-  const apiMessages = params.apiMessages ?? 1;
-  const autoCost = params.autoCost ?? 0;
-  const autoMessages = params.autoMessages ?? 0;
-  return {
-    window: {
-      source: params.source ?? "calendar_month",
-      sinceMs: Date.parse(CYCLE_START),
-      untilMs: Date.parse(RESET),
-      resetTimeIso: RESET,
-    },
-    observedAtMs: Date.parse(OBSERVED_AT),
-    api: { costUsd: params.apiCost, tokens: {}, messageCount: apiMessages },
-    autoComposer: { costUsd: autoCost, tokens: {}, messageCount: autoMessages },
-    total: {
-      costUsd: params.apiCost + autoCost,
-      tokens: {},
-      messageCount: apiMessages + autoMessages,
-    },
-    unknownModels: Array.from({ length: params.unknownModels ?? 0 }, () => ({
-      sourceModelID: "cursor/future-model",
-      messageCount: 1,
-      tokens: {},
-    })),
-  };
+// The cycle is the local calendar month, or the month from the configured start day.
+const NOW = new Date(2026, 1, 15, 12);
+const CYCLE_START = new Date(2026, 1, 1).toISOString();
+const RESET = new Date(2026, 2, 1).toISOString();
+
+beforeEach(() => {
+  vi.useFakeTimers({ toFake: ["Date"] });
+  vi.setSystemTime(NOW);
+});
+
+afterEach(() => {
+  vi.useRealTimers();
+});
+
+/** Input tokens that cost `usd` at $1.25 per million. */
+function tokensFor(usd: number): number {
+  return Math.round((usd / 1.25) * 1_000_000);
 }
 
-async function fetchCursor(config: Record<string, unknown>, summary: unknown) {
-  vi.mocked(getCurrentCursorUsageSummary).mockResolvedValueOnce(summary as never);
-  return (await cursorProvider.fetch({ config } as never)) as ProviderFetchResult;
+/** This month's Cursor messages: API spend, Auto+Composer spend, and unknown models. */
+function storeHistory(spend: { api?: number; auto?: number; unknownModels?: number }): void {
+  const created = new Date(2026, 1, 10).getTime();
+  const message = (index: number, modelID: string, input: number): SessionDatabaseMessage => ({
+    id: `msg_${index}`,
+    sessionID: "ses_1",
+    created: created + index,
+    completed: created + index + 1,
+    providerID: "cursor",
+    modelID,
+    tokens: { input },
+  });
+  const messages = [
+    ...(spend.api === undefined ? [] : [message(1, "cursor/gpt-5", tokensFor(spend.api))]),
+    ...(spend.auto === undefined ? [] : [message(2, "auto", tokensFor(spend.auto))]),
+    ...Array.from({ length: spend.unknownModels ?? 0 }, (_, index) =>
+      message(10 + index, "cursor/future-model", 10),
+    ),
+  ];
+  writeSessionDatabase(join(world.configDir, "..", "..", "data", "opencode", "opencode.db"), {
+    sessions: [{ id: "ses_1", created }],
+    messages,
+  });
 }
 
 describe("cursor provider", () => {
@@ -79,14 +64,14 @@ describe("cursor provider", () => {
     [
       "nothing without usage or an included budget",
       { cursorPlan: "none" },
-      usageSummary({ apiCost: 0, apiMessages: 0 }),
+      {},
       [],
       { code: "not_configured" },
     ],
     [
       "the plan's API budget and Auto+Composer spend",
       { cursorPlan: "pro" },
-      usageSummary({ apiCost: 5, autoCost: 1.25, autoMessages: 1 }),
+      { api: 5, auto: 1.25 },
       [
         ["cursor.api", "Pro", "API", "month", "75 (5 USD of 20 USD)", RESET],
         ["cursor.auto_composer", "Pro", "Auto+Composer", "month", "1.25 USD", RESET],
@@ -95,10 +80,10 @@ describe("cursor provider", () => {
     ],
     [
       "an overspent configured budget below zero",
-      { cursorPlan: "pro", cursorIncludedApiUsd: 10 },
-      usageSummary({ apiCost: 12 }),
+      { cursorPlan: "pro", cursorIncludedApiUsd: 8 },
+      { api: 10 },
       [
-        ["cursor.api", "Pro", "API", "month", "-20 (12 USD of 10 USD)", RESET],
+        ["cursor.api", "Pro", "API", "month", "-25 (10 USD of 8 USD)", RESET],
         ["cursor.auto_composer", "Pro", "Auto+Composer", "month", "0 USD", RESET],
       ],
       undefined,
@@ -106,7 +91,7 @@ describe("cursor provider", () => {
     [
       "spend without a plan",
       { cursorPlan: "none" },
-      usageSummary({ apiCost: 0.5, autoCost: 1.25, autoMessages: 1 }),
+      { api: 0.5, auto: 1.25 },
       [
         ["cursor.api", null, "API", "month", "0.5 USD", RESET],
         ["cursor.auto_composer", null, "Auto+Composer", "month", "1.25 USD", RESET],
@@ -116,7 +101,7 @@ describe("cursor provider", () => {
     [
       "spend for a zero allowance",
       { cursorPlan: "pro", cursorIncludedApiUsd: 0 },
-      usageSummary({ apiCost: 0 }),
+      { api: 0 },
       [
         ["cursor.api", "Pro", "API", "month", "0 USD", RESET],
         ["cursor.auto_composer", "Pro", "Auto+Composer", "month", "0 USD", RESET],
@@ -126,15 +111,17 @@ describe("cursor provider", () => {
     [
       "only known API spend, and an error, when some models are unknown",
       { cursorPlan: "pro" },
-      usageSummary({ apiCost: 2, unknownModels: 1 }),
+      { api: 2, unknownModels: 1 },
       [
         ["cursor.api", "Pro", "Known API", "month", "2 USD", RESET],
         ["cursor.auto_composer", "Pro", "Auto+Composer", "month", "0 USD", RESET],
       ],
       { detail: "Unknown Cursor model ids present in local history (see /quota_status)" },
     ],
-  ])("shows %s", async (_name, config, summary, rows, error) => {
-    const fetched = rowsFromProviderResult("cursor", await fetchCursor(config, summary));
+  ])("shows %s", async (_name, config, spend, rows, error) => {
+    storeHistory(spend);
+
+    const fetched = await fetchRows(cursorProvider, config);
 
     expect(rowSummary(fetched.rows)).toEqual(rows);
     if (error) expect(fetched.error).toMatchObject(error);
@@ -142,57 +129,54 @@ describe("cursor provider", () => {
   });
 
   it.each([
-    ["a configured start day", "configured_day", CYCLE_START],
-    ["the calendar month", "calendar_month", undefined],
-  ] as const)("dates the cycle from %s only when it is fixed", async (_name, source, startedAt) => {
-    const result = await fetchCursor(
-      { cursorPlan: "pro", cursorBillingCycleStartDay: 1 },
-      usageSummary({ apiCost: 5, source }),
-    );
+    ["a configured start day", 1, CYCLE_START],
+    ["the calendar month", undefined, undefined],
+  ])("dates the cycle from %s only when it is fixed", async (_name, startDay, startedAt) => {
+    storeHistory({ api: 5 });
 
-    expect(rowsFromProviderResult("cursor", result).rows[0]?.windowStartedAt).toBe(startedAt);
+    const fetched = await fetchRows(cursorProvider, {
+      cursorPlan: "pro",
+      ...(startDay === undefined ? {} : { cursorBillingCycleStartDay: startDay }),
+    });
+
+    expect(fetched.rows[0]?.windowStartedAt).toBe(startedAt);
   });
 
   it.each([
-    ["provider metadata", true, { currentModel: "openai/gpt-5" }, {}, true],
+    ["provider metadata", ["cursor"], { currentModel: "openai/gpt-5" }, undefined, true],
     [
       "the current provider id",
-      false,
+      [],
       { currentModel: "auto", currentProviderID: "cursor" },
-      {},
+      undefined,
       true,
     ],
-    ["a Cursor model", false, { currentModel: "cursor-acp/auto" }, {}, true],
+    ["a Cursor model", [], { currentModel: "cursor-acp/auto" }, undefined, true],
     [
       "the plugin in a config file",
-      false,
+      [],
       { currentModel: "openai/gpt-5" },
-      { pluginEnabled: true },
+      { plugin: ["cursor-opencode-provider@0.7.3/plugin/opencode2"] },
       true,
     ],
     [
       "a provider in a config file",
-      false,
+      [],
       { currentModel: "openai/gpt-5" },
-      { providerConfigured: true },
+      { provider: { cursor: {} } },
       true,
     ],
-    ["no signal", false, { currentModel: "openai/gpt-5" }, {}, false],
-  ])("isAvailable via %s -> %s", async (_label, viaMetadata, config, integration, expected) => {
-    vi.mocked(isCanonicalProviderAvailable).mockResolvedValue(viaMetadata);
-    vi.mocked(inspectCursorOpenCodeIntegration).mockResolvedValue({
-      pluginEnabled: false,
-      providerConfigured: false,
-      matchedPaths: [],
-      checkedPaths: ["/tmp/opencode.json"],
-      ...integration,
-    });
+    ["no signal", [], { currentModel: "openai/gpt-5" }, { plugin: ["other-plugin"] }, false],
+  ])("isAvailable via %s -> %s", async (_label, providerIds, config, opencodeJson, expected) => {
+    if (opencodeJson) world.writeConfigFile("opencode.json", JSON.stringify(opencodeJson));
 
     await expect(
-      cursorProvider.isAvailable({
-        client: { config: { providers: vi.fn() } },
-        config: { ...config, cursorPlan: "none" },
-      } as never),
+      cursorProvider.isAvailable(
+        createProviderAvailabilityContext({
+          providerIds,
+          configOverrides: { ...config, cursorPlan: "none" },
+        }),
+      ),
     ).resolves.toBe(expected);
   });
 });
