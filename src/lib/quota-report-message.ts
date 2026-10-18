@@ -39,12 +39,13 @@ export function removeQuotaReports(text: string): string {
   return text.replace(QUOTA_REPORT_BLOCKS, "");
 }
 
-const EVERY_ROW: SurfaceRows = { enabled: true, hidden: [], providerOrder: [], rowOrder: {} };
+const EVERY_ROW: SurfaceRows = { hidden: [], providerOrder: [], rowOrder: {} };
 /** Web and Desktop have no display settings: every provider and row, in the server's order. */
 const NO_DISPLAY_CHOICES: RowSettings = {
-  labels: {},
-  window: {},
-  surfaces: { sidebar: EVERY_ROW, collapsed: EVERY_ROW, statusLine: EVERY_ROW, toast: EVERY_ROW },
+  sidebar: EVERY_ROW,
+  collapsed: EVERY_ROW,
+  statusLine: EVERY_ROW,
+  toast: EVERY_ROW,
 };
 
 /**

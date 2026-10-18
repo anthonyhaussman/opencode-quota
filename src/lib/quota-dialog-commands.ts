@@ -44,11 +44,12 @@ import {
 } from "./quota-status.js";
 
 /** `opencode-quota show` lists every row of every provider. */
-const EVERY_ROW: SurfaceRows = { enabled: true, hidden: [], providerOrder: [], rowOrder: {} };
+const EVERY_ROW: SurfaceRows = { hidden: [], providerOrder: [], rowOrder: {} };
 const EVERY_ROW_SETTINGS: RowSettings = {
-  labels: {},
-  window: {},
-  surfaces: { sidebar: EVERY_ROW, collapsed: EVERY_ROW, statusLine: EVERY_ROW, toast: EVERY_ROW },
+  sidebar: EVERY_ROW,
+  collapsed: EVERY_ROW,
+  statusLine: EVERY_ROW,
+  toast: EVERY_ROW,
 };
 
 /**

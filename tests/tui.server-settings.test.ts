@@ -516,7 +516,8 @@ describe("the server settings this window edits", () => {
           marked: () => undefined,
           panelOpen: () => undefined,
           sidebarShown: () => () => {},
-          statusLineShown: () => false,
+          sidebarOnScreen: () => true,
+          tabOpen: () => false,
         },
       };
       const sidebar = () =>

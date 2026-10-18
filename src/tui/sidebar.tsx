@@ -8,16 +8,8 @@
 import type { BoxRenderable } from "@opentui/core";
 import type { JSX } from "@opentui/solid";
 import { createSignal, onCleanup, Show } from "solid-js";
-import { type Surface, visibleGroups } from "../view/select.js";
-import {
-  type ColorRole,
-  collapsedLines,
-  collapsedTitle,
-  type Line,
-  type Segment,
-  sidebarLines,
-  sidebarTitle,
-} from "../view/text.js";
+import type { Surface } from "../view/select.js";
+import { type ColorRole, type Line, type Segment, sidebarPanel } from "../view/text.js";
 import type { QuotaClient } from "./client.js";
 import type { DisplaySettings } from "./display.js";
 import { roleColor, segmentColor, type Theme } from "./theme.js";
@@ -30,11 +22,10 @@ export type SurfaceEditing = {
   panelOpen(): boolean | undefined;
   /** A sidebar panel is on screen until the returned function runs. */
   sidebarShown(): () => void;
-  /**
-   * The status line shows: it is on, and its tab is open, it shows next to the sidebar, or no
-   * sidebar panel with quota is on screen.
-   */
-  statusLineShown(): boolean;
+  /** Some sidebar panel is on screen. */
+  sidebarOnScreen(): boolean;
+  /** The Settings tab of `surface` is open. */
+  tabOpen(surface: Surface): boolean;
 };
 
 /** What every always-on surface reads. */
@@ -107,43 +98,12 @@ export function SidebarPanel(props: {
 
   const display = () => host.display();
   const snapshot = () => host.quota.snapshot(props.sessionID);
-  const words = () => display().words;
-  const groups = (surface: "sidebar" | "collapsed") => {
-    const current = snapshot();
-    return current ? visibleGroups(current, display(), surface, words()) : [];
-  };
-  const lines = (): Line[] => {
-    const current = snapshot();
-    if (!current) return [];
-    if (!open()) {
-      if (!display().surfaces.collapsed.enabled) return [];
-      return collapsedLines({
-        groups: groups("collapsed"),
-        layout: display().layout,
-        words: words(),
-        nowMs: nowMs(),
-        width: width(),
-        window: display().window,
-        runsOut: display().runsOut.collapsed,
-      });
-    }
-    return sidebarLines({
-      groups: groups("sidebar"),
-      layout: display().layout,
-      words: words(),
-      nowMs: nowMs(),
-      width: width(),
-      runsOut: display().runsOut.sidebar,
-      ...(display().sidebar.sessionTokens && current.sessionTokens
-        ? { sessionTokens: current.sessionTokens }
-        : {}),
-    });
-  };
-  const title = () => (open() ? sidebarTitle(words()) : collapsedTitle(groups("collapsed")));
+  const panel = () =>
+    sidebarPanel(snapshot(), display(), { nowMs: nowMs(), width: width(), open: open() });
   const marked = () => host.editing.marked(open() ? "sidebar" : "collapsed");
 
   return (
-    <Show when={display().surfaces.sidebar.enabled}>
+    <Show when={display().sidebar.show}>
       <box
         flexDirection="column"
         onSizeChange={function (this: BoxRenderable) {
@@ -157,10 +117,10 @@ export function SidebarPanel(props: {
           selectable={false}
           onMouseDown={() => props.setOpen(!open())}
         >
-          <b>{title()}</b>
+          <b>{panel().title}</b>
         </text>
         <Show when={snapshot()} fallback={<text fg={host.theme().text.muted}>Loading quota…</text>}>
-          {lines().map((line) => (
+          {panel().lines.map((line) => (
             <LineText line={line} host={host} marked={line.id !== "" && line.id === marked()} />
           ))}
         </Show>

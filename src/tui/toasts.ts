@@ -11,12 +11,12 @@
  * they wait and show after it, so the turn's toast does not replace them at once. When the TUI
  * leaves its server, waiting notices are dropped unshown, so a later snapshot can bring them.
  */
-import type { QuotaSnapshot, ResetNotice, SessionTokens } from "../core/types.js";
+import type { QuotaSnapshot, ResetNotice } from "../core/types.js";
 import { WINDOWS } from "../core/windows.js";
 import { levelOf } from "../view/format.js";
 import { rowFacts } from "../view/row-facts.js";
-import { type Group, visibleGroups, visibleRow } from "../view/select.js";
-import { type Line, lineText, toastLines } from "../view/text.js";
+import { visibleRow } from "../view/select.js";
+import { type Line, lineText, type ToastInput, toastInput, toastLines } from "../view/text.js";
 import type { QuotaClient } from "./client.js";
 import type { DisplaySettings } from "./display.js";
 
@@ -68,11 +68,6 @@ const CLOSE_ROOM = 3;
  */
 export function toastRoom(terminalWidth: number): number {
   return Math.min(60, terminalWidth - 6) - 6 - CLOSE_ROOM;
-}
-
-/** The session tokens a quota toast shows, when its settings show them. */
-function toastTokens(snapshot: QuotaSnapshot, display: DisplaySettings) {
-  return display.toast.sessionTokens ? snapshot.sessionTokens : undefined;
 }
 
 function wantsTurnToast(display: DisplaySettings, trigger: TurnEnd, anyLow: boolean): boolean {
@@ -127,55 +122,47 @@ export function createToasts(host: ToastHost): Toasts {
     waitingNotices = [];
   }
 
-  /**
-   * Shows `groups` as a quota toast in the toast layout the settings pick, as wide as the
-   * toast's text, then the session tokens when given; nothing when it has no text.
-   */
-  function showQuota(
-    variant: ToastOptions["variant"],
-    groups: Group[],
-    display: DisplaySettings,
-    sessionTokens?: SessionTokens,
-  ): void {
-    const lines = toastLines({
-      groups,
-      words: display.words,
-      nowMs: now(),
-      layout: display.layout,
-      toastLayout: display.toast.layout,
-      room: toastRoom(host.terminalWidth()),
-      runsOut: display.runsOut.toast,
-      ...(sessionTokens ? { sessionTokens } : {}),
-    });
+  /** Shows a quota toast of `input`'s lines; nothing when they have no text. */
+  function showQuota(variant: ToastOptions["variant"], input: ToastInput, seconds: number): void {
+    const lines = toastLines(input);
     const message = lines.map(lineText).join("\n");
-    if (message) host.show({ variant, message, duration: display.toast.seconds * 1000 }, lines);
+    if (message) host.show({ variant, message, duration: seconds * 1000 }, lines);
+  }
+
+  /** A quota toast now: the Toast surface's rows, as wide as the toast's text. */
+  function quotaInput(snapshot: QuotaSnapshot, display: DisplaySettings): ToastInput {
+    return toastInput(snapshot, display, {
+      nowMs: now(),
+      width: toastRoom(host.terminalWidth()),
+    });
   }
 
   async function turnToast(trigger: TurnEnd, sessionID: string): Promise<void> {
     const snapshot = await host.quota.refresh("turn", sessionID);
     const display = host.display();
-    if (!snapshot || !display.surfaces.toast.enabled) return;
-    const groups = visibleGroups(snapshot, display, "toast", display.words);
+    if (!snapshot || !display.toast.show) return;
+    const input = quotaInput(snapshot, display);
     const allFail =
       snapshot.providers.length > 0 && snapshot.providers.every((provider) => provider.error);
     if (!allFail) allFailShown = false;
-    const anyLow = groups.some((group) =>
+    const anyLow = input.groups.some((group) =>
       group.rows.some(
         ({ row }) =>
           row.percentRemaining !== undefined &&
-          levelOf(row.percentRemaining, display.thresholds) !== "good",
+          levelOf(row.percentRemaining, display.colors) !== "good",
       ),
     );
     if (wantsTurnToast(display, trigger, anyLow)) {
-      showQuota("info", groups, display, toastTokens(snapshot, display));
+      showQuota("info", input, display.toast.seconds);
       return;
     }
     if (allFail && display.toast.whenAllFail && !allFailShown) {
       allFailShown = true;
+      const failing = input.groups.filter((group) => group.error);
       showQuota(
         "error",
-        groups.filter((group) => group.error),
-        display,
+        { ...input, groups: failing, sessionTokens: undefined },
+        display.toast.seconds,
       );
     }
   }
@@ -200,7 +187,7 @@ export function createToasts(host: ToastHost): Toasts {
         const wanted =
           display.toast.resetNotice === "all" ||
           (display.toast.resetNotice === "weekly" && notice.window === "week");
-        if (!wanted || !display.surfaces.toast.enabled || notice.atMs < startedAtMs) continue;
+        if (!wanted || !display.toast.show || notice.atMs < startedAtMs) continue;
         const message = resetMessage(notice, snapshot, display, now());
         if (message) waitingNotices.push({ id: notice.id, message });
       }
@@ -210,9 +197,8 @@ export function createToasts(host: ToastHost): Toasts {
     preview(sessionID) {
       const snapshot = host.quota.snapshot(sessionID);
       const display = host.display();
-      if (!snapshot || !display.surfaces.toast.enabled) return;
-      const groups = visibleGroups(snapshot, display, "toast", display.words);
-      showQuota("info", groups, display, toastTokens(snapshot, display));
+      if (!snapshot || !display.toast.show) return;
+      showQuota("info", quotaInput(snapshot, display), display.toast.seconds);
     },
 
     cancel() {

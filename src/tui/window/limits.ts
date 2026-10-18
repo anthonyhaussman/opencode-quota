@@ -180,8 +180,7 @@ export function limitsLines(input: LimitsInput): Line[] {
   const { snapshot, display, nowMs, width } = input;
   // Every row: the supplementary ones too, and none hidden.
   const words: Words = { ...display.words, detail: "detailed" };
-  const sidebar = { ...display.surfaces.sidebar, hidden: [] };
-  const settings: RowSettings = { ...display, surfaces: { ...display.surfaces, sidebar } };
+  const settings: RowSettings = { ...display, sidebar: { ...display.sidebar, hidden: [] } };
   const groups = visibleGroups(snapshot, settings, "sidebar", {
     ...words,
     onlyCurrentModel: false,

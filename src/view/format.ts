@@ -131,7 +131,7 @@ export function evenUseCell(evenLeft: number, width: number): number {
 export type Level = "good" | "warning" | "low";
 export type Thresholds = { warningBelow: number; lowBelow: number };
 
-/** Plenty left, getting low, or almost out. */
+/** Plenty left, getting low, or almost out; "almost out" wins where both would. */
 export function levelOf(percentRemaining: number, thresholds: Thresholds): Level {
   const left = clampPercent(percentRemaining);
   if (left < thresholds.lowBelow) return "low";

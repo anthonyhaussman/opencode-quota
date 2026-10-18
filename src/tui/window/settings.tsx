@@ -703,7 +703,7 @@ export function createSettingsEditor(
     const surface = () => (isSurfaceTab(props.tab) ? props.tab : undefined);
     const surfaceOn = () => {
       const current = surface();
-      return current === undefined || shown().surfaces[current].enabled;
+      return current === undefined || shown()[current].show;
     };
     const sidebarHidden = () => info().watchesSidebar && sidebars() === 0;
     const active = () => selected() === SWITCH_ID;
@@ -1182,7 +1182,7 @@ export function createSettingsEditor(
               <Button label={resetLabel(current())} run={() => resetTabLines(current())} />
             )}
           </Show>
-          <Show when={settingsTab() === "toast" && shown().surfaces.toast.enabled}>
+          <Show when={settingsTab() === "toast" && shown().toast.show}>
             <Button label="Show toast" run={() => previewToast(props.sessionID)} />
           </Show>
           <Cell fg={warning()}>{dirty() ? " unsaved changes" : ""}</Cell>
@@ -1207,12 +1207,8 @@ export function createSettingsEditor(
       setSidebars((count) => count + 1);
       return () => setSidebars((count) => count - 1);
     },
-    statusLineShown(): boolean {
-      const settings = shown();
-      if (!settings.surfaces.statusLine.enabled) return false;
-      const sidebarQuota = sidebars() > 0 && settings.surfaces.sidebar.enabled;
-      return tab() === "statusLine" || settings.statusLine.withSidebar || !sidebarQuota;
-    },
+    sidebarOnScreen: (): boolean => sidebars() > 0,
+    tabOpen: (surface: Surface): boolean => tab() === surface,
     /** A line takes typing, so the window's own keys rest. */
     typing: () => typing() !== undefined,
     /** A Plugin switch's saved value (`system.exportFile`); undefined until the server answers. */

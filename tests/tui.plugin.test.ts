@@ -144,7 +144,7 @@ describe("quota toasts", () => {
       trigger: "compaction",
       answer: OK,
       change: (display) => {
-        display.surfaces.toast.enabled = false;
+        display.toast.show = false;
       },
       shown: false,
     },
@@ -207,7 +207,7 @@ describe("quota toasts", () => {
 
   it.each([true, false])("previews the toast a turn shows, with toasts on: %s", async (on) => {
     const { toasts, show } = startToasts(OK, (display) => {
-      display.surfaces.toast.enabled = on;
+      display.toast.show = on;
     });
     await toasts.afterTurn("compaction", "ses_1");
     toasts.preview("ses_1");

@@ -25,7 +25,7 @@ import { createFileDisplay } from "./display.js";
 import { KEY_LAYERS } from "./key-layers.js";
 import { createServerSettings } from "./server-settings.js";
 import { SidebarPanel, type SurfaceHost } from "./sidebar.js";
-import { HomeFooter, StatusLine } from "./status-line.js";
+import { HomeFooter, StatusLine, statusLineShows } from "./status-line.js";
 import type { Theme } from "./theme.js";
 import { createToastShow } from "./toast-colors.js";
 import { createToasts, TOAST_TITLE, type TurnEnd } from "./toasts.js";
@@ -307,7 +307,7 @@ const plugin = Plugin.define({
       append: "prompt.footer",
       // Home has a message box too; Home's status line sits in its own footer instead.
       render: (props) => (
-        <Show when={props.sessionID && settings.statusLineShown()}>
+        <Show when={props.sessionID && statusLineShows(host)}>
           <StatusLine host={host} sessionID={props.sessionID} />
         </Show>
       ),
