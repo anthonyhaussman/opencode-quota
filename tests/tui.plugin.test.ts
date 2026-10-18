@@ -93,8 +93,10 @@ function startToasts(answer: QuotaSnapshot | undefined, change: (d: DisplaySetti
 /** Claude right after its limits reset, with the rows the reset notices name. */
 function claudeAfterReset(): ProviderSnapshot {
   const claude = provider("Claude", 100);
-  const weekly = claude.rows[0]!;
-  const fiveHour = { ...weekly, id: "claude.five_hour", label: "5h", window: "five_hour" as const };
+  const row = claude.rows[0]!;
+  // The weekly row is the "work" account's; the 5h row has no account.
+  const weekly = { ...row, account: "work" };
+  const fiveHour = { ...row, id: "claude.five_hour", label: "5h", window: "five_hour" as const };
   return { ...claude, rows: [weekly, fiveHour] };
 }
 
@@ -322,6 +324,32 @@ describe("quota toasts", () => {
     toasts.showResetNotices(snapshot([claudeAfterReset()], [notice]));
     expect(show.mock.calls.map(([toast]) => toast.message)).toEqual([
       `5h quota reset: Claude Burst is available again ${words}.`,
+    ]);
+  });
+
+  it("names a reset notice's row by its account when accounts share the row id", () => {
+    const copilot = provider("Copilot", 100);
+    const row = copilot.rows[0]!;
+    copilot.rows = [
+      { ...row, account: "work", label: "Business" },
+      { ...row, account: "home", label: "Pro" },
+    ];
+    const notice: ResetNotice = {
+      id: "home-weekly",
+      rowId: "copilot.weekly",
+      providerId: "copilot",
+      account: "home",
+      label: "Pro",
+      window: "week",
+      percentRemaining: 100,
+      atMs: NOW,
+    };
+    const { toasts, show } = startToasts(undefined, (display) => {
+      display.toast.resetNotice = "all";
+    });
+    toasts.showResetNotices(snapshot([copilot], [notice]));
+    expect(show.mock.calls.map(([toast]) => toast.message)).toEqual([
+      "Weekly quota reset: Copilot (home) Pro is available again (100% left).",
     ]);
   });
 

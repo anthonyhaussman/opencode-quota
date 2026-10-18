@@ -7,7 +7,7 @@
  */
 import type { BoxRenderable } from "@opentui/core";
 import type { JSX } from "@opentui/solid";
-import { createSignal, onCleanup, Show } from "solid-js";
+import { createMemo, createSignal, onCleanup, Show } from "solid-js";
 import type { Surface } from "../view/select.js";
 import { type ColorRole, type Line, type Segment, sidebarPanel } from "../view/text.js";
 import type { QuotaClient } from "./client.js";
@@ -98,8 +98,9 @@ export function SidebarPanel(props: {
 
   const display = () => host.display();
   const snapshot = () => host.quota.snapshot(props.sessionID);
-  const panel = () =>
-    sidebarPanel(snapshot(), display(), { nowMs: nowMs(), width: width(), open: open() });
+  const panel = createMemo(() =>
+    sidebarPanel(snapshot(), display(), { nowMs: nowMs(), width: width(), open: open() }),
+  );
   const marked = () => host.editing.marked(open() ? "sidebar" : "collapsed");
 
   return (

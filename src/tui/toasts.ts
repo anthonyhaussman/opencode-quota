@@ -79,7 +79,8 @@ function wantsTurnToast(display: DisplaySettings, trigger: TurnEnd, anyLow: bool
 /**
  * "Weekly quota reset: Claude (work) Weekly is available again (100% left).": the row under its
  * toast name, else its label, with the percent it had at the reset in the percent words.
- * Undefined when the provider no longer has the row.
+ * The row is the notice's account's: several accounts can share a row id. Undefined when the
+ * provider no longer has the row.
  */
 function resetMessage(
   notice: ResetNotice,
@@ -88,7 +89,9 @@ function resetMessage(
   nowMs: number,
 ): string | undefined {
   const provider = snapshot.providers.find((item) => item.providerId === notice.providerId);
-  const row = provider?.rows.find((item) => item.id === notice.rowId);
+  const row = provider?.rows.find(
+    (item) => item.id === notice.rowId && item.account === notice.account,
+  );
   if (!provider || !row) return undefined;
   const item = visibleRow(
     { ...row, percentRemaining: notice.percentRemaining },
