@@ -932,6 +932,28 @@ describe("quota window: the Usage tab", () => {
     expect(activeLabels(usageTab())).toContain("30 days");
   });
 
+  it("starts Between on the month of the day it asks, not the day the plugin started", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date(2026, 9, 18, 12));
+    const { tui, usageTab } = usageHost();
+    const asked: UsageQuery[] = [];
+    const usage = tui.answers.usage;
+    tui.answers.usage = (query: UsageQuery) => {
+      asked.push(query);
+      return usage(query);
+    };
+
+    vi.setSystemTime(new Date(2026, 10, 3, 12));
+    tui.quotaWindow.open("usage");
+    clickable(usageTab(), "Between").props.onMouseUp();
+    await vi.waitFor(() => expect(asked).toHaveLength(2));
+    vi.useRealTimers();
+
+    expect(asked[1]).toEqual(
+      expect.objectContaining({ range: "between", from: "2026-11-01", to: "2026-11-03" }),
+    );
+  });
+
   it("applies two Between dates typed in the tab, and warns about dates out of order", async () => {
     const { tui, usageTab } = usageHost();
     tui.quotaWindow.open("usage");

@@ -323,7 +323,9 @@ export function createUsageTab(
   const [range, setRange] = createSignal<UsageRange>(DEFAULT_USAGE_RANGE);
   const [mode, setMode] = createSignal<UsageMode>("cost");
   const [breakdown, setBreakdown] = createSignal<UsageBreakdown>("model");
-  const [dates, setDates] = createSignal(thisMonth(Date.now()));
+  /** The Between dates typed or named by a command; until then, this month so far. */
+  const [chosenDates, setDates] = createSignal<{ from: string; to: string }>();
+  const dates = () => chosenDates() ?? thisMonth(Date.now());
   const [area, setArea] = createSignal<Area>("ranges");
   /** The model row the content highlights while it has the keyboard (see `litModel`). */
   const [modelFocus, setModelFocus] = createSignal(0);
