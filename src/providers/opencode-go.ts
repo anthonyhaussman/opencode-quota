@@ -93,19 +93,23 @@ export const opencodeGoProvider: QuotaProvider = {
   cachePolicy: {
     kind: "resolved-auth",
     /**
-     * The keys' identity; with a usable Console login, that login and the keys together, since
-     * Go reads the Console first and falls back to the keys.
+     * The keys' identity; with a usable Console login, that login and its usable keys together,
+     * since Go reads the Console first and falls back to the keys. A key login that is empty or
+     * not an API key is left out, so it never hides a Console account switch.
      */
     async resolveIdentity() {
       const keys = await readVendorKeys(OPENCODE_GO_AUTH);
-      const keysIdentity = await vendorKeysIdentity("opencode-go", keys);
       const consoleAuth = await resolveOpenCodeConsoleAuth();
-      if (consoleAuth.state !== "configured") return keysIdentity;
+      if (consoleAuth.state !== "configured") return await vendorKeysIdentity("opencode-go", keys);
       const consoleIdentity = await consoleLoginIdentity("opencode-go", consoleAuth.credential);
-      if (!consoleIdentity || (hasVendorKey(keys) && !keysIdentity)) return null;
+      if (!consoleIdentity) return null;
+      const usableKeysIdentity = await vendorKeysIdentity("opencode-go", {
+        ...keys,
+        logins: keys.logins.filter((login) => login.auth.state === "configured"),
+      });
       return await composeResolvedAuthIdentities({
         providerId: "opencode-go",
-        identities: keysIdentity ? [consoleIdentity, keysIdentity] : [consoleIdentity],
+        identities: usableKeysIdentity ? [consoleIdentity, usableKeysIdentity] : [consoleIdentity],
       });
     },
   },

@@ -253,11 +253,14 @@ it("checks again when a config key is removed and a stored login holds the same 
 
 const POSIX_IDENTITY_STORAGE = process.platform !== "win32" && typeof process.getuid === "function";
 
-it.runIf(POSIX_IDENTITY_STORAGE)(
-  "checks OpenCode Go again when the Console sign-in switches accounts and an API key stays",
-  async () => {
-    // The key alone would let the old account's rows be saved under the new account.
-    process.env.OPENCODE_API_KEY = "go-key";
+it.runIf(POSIX_IDENTITY_STORAGE).each([
+  { keys: "an API key stays", envKey: "go-key", keyRows: [] },
+  { keys: "an empty key row stays", keyRows: [keyLogin("empty", "opencode-go", "")] },
+])(
+  "checks OpenCode Go again when the Console sign-in switches accounts and $keys",
+  async ({ envKey, keyRows }) => {
+    // The keys alone would let the old account's rows be saved under the new account.
+    if (envKey) process.env.OPENCODE_API_KEY = envKey;
     const consoleLogin = (orgID: string, access: string): CredentialDatabaseRow => ({
       id: "console",
       integrationId: "opencode",
@@ -285,12 +288,12 @@ it.runIf(POSIX_IDENTITY_STORAGE)(
       snapshot.providers[0]?.rows.find((row) => row.id === "opencode-go.five_hour")
         ?.percentRemaining;
 
-    world.storeLogins([consoleLogin("org_work", "token-work")]);
+    world.storeLogins([consoleLogin("org_work", "token-work"), ...keyRows]);
     const store = storeFor("opencode-go");
     const work = await store.refresh({ reason: "manual" });
 
-    world.storeLogins([consoleLogin("org_home", "token-home")]);
-    store.invalidateIdentity();
+    // No login-change event: only the identity read at the next check sees the switch.
+    world.storeLogins([consoleLogin("org_home", "token-home"), ...keyRows]);
     const home = await store.refresh({ reason: "poll" });
     await store.dispose();
 

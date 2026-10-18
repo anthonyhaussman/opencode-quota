@@ -19,6 +19,7 @@ vi.mock("../src/lib/resolved-auth-identity.js", async (importOriginal) => {
 });
 
 import type { QuotaProviderCachePolicy } from "../src/lib/entries.js";
+import { composeResolvedAuthIdentities } from "../src/lib/resolved-auth-identity.js";
 import { getProviders } from "../src/providers/registry.js";
 
 const PROVIDER_CACHE_POLICIES: Readonly<Record<string, QuotaProviderCachePolicy>> =
@@ -235,11 +236,24 @@ describe("provider cache policies", () => {
       expect(first).not.toBeNull();
       expect(refreshed).toBe(first);
       expect(other).not.toBe(first);
-      expect(cachePolicyMocks.deriveIdentity).toHaveBeenCalledWith({
-        providerId: "opencode-go",
-        principal: { kind: "stable-id", value: JSON.stringify(["wrk_shared", "acc_b"]) },
-        qualifiers: ["https://opencode.ai/console"],
-      });
+      // The Console login and the key, composed in that order: the saved rows' identity.
+      expect(other).toBe(
+        await composeResolvedAuthIdentities({
+          providerId: "opencode-go",
+          identities: [
+            JSON.stringify({
+              providerId: "opencode-go",
+              principal: { kind: "stable-id", value: JSON.stringify(["wrk_shared", "acc_b"]) },
+              qualifiers: ["https://opencode.ai/console"],
+            }),
+            JSON.stringify({
+              providerId: "opencode-go",
+              principal: { kind: "credential", value: "go-key" },
+              qualifiers: ["env:OPENCODE_API_KEY"],
+            }),
+          ] as never,
+        }),
+      );
     },
   );
 });

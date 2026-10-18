@@ -16,7 +16,7 @@ import { join } from "path";
 
 import type { ErrorFacts } from "../core/errors.js";
 import { sanitizeDisplaySnippet, sanitizeDisplayText } from "./display-sanitize.js";
-import { failureFacts, parseRetryAfterMs, type RequestFailure, requestJson } from "./http.js";
+import { failureFacts, parseRetryAfterMs, requestJson } from "./http.js";
 import { asRecord, finiteNumber, nonEmptyString } from "./json-guards.js";
 import { type CredentialRow, readCredentialRows, readOAuthLogin } from "./opencode-auth.js";
 import {
@@ -582,17 +582,7 @@ async function performAnthropicOAuthUsageRequest(
       ? { state: "success", quota }
       : { state: "unavailable", detail: "Unexpected Anthropic quota response shape" };
   }
-  // A 401 or 403 rejects the token even when its body stalls, so the CLI fallback still runs.
-  const failure: RequestFailure =
-    (reply.failure.status === 401 || reply.failure.status === 403) &&
-    reply.failure.kind === "timeout"
-      ? {
-          ...reply.failure,
-          kind: "http",
-          code: reply.failure.status === 401 ? "login_expired" : "provider_error",
-          detail: "",
-        }
-      : reply.failure;
+  const { failure } = reply;
   // A 429 waits out the cooldown, which is at least its Retry-After.
   const facts =
     cooldownMs === undefined

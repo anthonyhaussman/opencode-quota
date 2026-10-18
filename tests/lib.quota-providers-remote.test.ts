@@ -195,11 +195,17 @@ describe("quota provider remote transport", () => {
     expect(JSON.stringify(result)).not.toMatch(/secret|internal\.example|private response/u);
   });
 
-  it("keeps a 429's Retry-After as the time to try again", async () => {
+  it.each([
+    ["", {}],
+    [" over the size cap", { "content-length": String(QUOTA_PROVIDER_MAX_BODY_BYTES + 1) }],
+  ])("keeps a 429's Retry-After%s as the time to try again", async (_name, headers) => {
     vi.useFakeTimers({ now: Date.parse("2026-10-10T12:00:00.000Z") });
     vi.stubGlobal(
       "fetch",
-      vi.fn(async () => new Response("{}", { status: 429, headers: { "Retry-After": "120" } })),
+      vi.fn(
+        async () =>
+          new Response("{}", { status: 429, headers: { ...headers, "Retry-After": "120" } }),
+      ),
     );
     await expect(fetchRemoteQuotaProvider(source(), "secret")).resolves.toEqual({
       success: false,
@@ -250,6 +256,31 @@ describe("quota provider remote transport", () => {
       facts: { code: "timeout" },
     });
     expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("shows a 401 whose body stalls past the timeout as a sign-in failure", async () => {
+    vi.useFakeTimers();
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (_url: string, init: RequestInit) => {
+        const body = new ReadableStream({
+          start(controller) {
+            init.signal?.addEventListener("abort", () => controller.error(abortError()));
+          },
+        });
+        return new Response(body, { status: 401, headers: JSON_HEADERS });
+      }),
+    );
+
+    const pending = fetchRemoteQuotaProvider(source(), "secret", 10);
+    await vi.advanceTimersByTimeAsync(11);
+
+    await expect(pending).resolves.toEqual({
+      success: false,
+      error: "HTTP 401",
+      outcome: "http_error",
+      facts: { code: "login_expired", status: 401 },
+    });
   });
 });
 

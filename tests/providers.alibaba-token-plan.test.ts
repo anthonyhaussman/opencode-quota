@@ -26,7 +26,10 @@ beforeEach(() => {
   root = mkdtempSync(join(tmpdir(), "opencode-quota-alibaba-token-plan-"));
   project = join(root, "project");
   mkdirSync(project);
-  process.env.PATH = "/usr/bin:/bin";
+  // An empty folder, so no `bl` installed on this machine is found.
+  const emptyBin = join(root, "empty-bin");
+  mkdirSync(emptyBin);
+  process.env.PATH = emptyBin;
 });
 
 afterEach(() => {
@@ -173,10 +176,11 @@ describe("alibaba-token-plan provider", () => {
         { key: "error_kind", value: "timeout" },
       ],
     ],
-  ])("shows %s", async (_name, script, rows, error, debug) => {
+  ])("shows %s", async (name, script, rows, error, debug) => {
     if (script !== undefined) installCli(script);
 
-    const fetched = await fetchTokenPlan(300);
+    // Only the timeout case waits out a short limit; the others get time to start the CLI.
+    const fetched = await fetchTokenPlan(name === "a timeout" ? 300 : undefined);
 
     expect(rowSummary(fetched.rows)).toEqual(rows);
     if (error) expect(fetched.error).toMatchObject(error);

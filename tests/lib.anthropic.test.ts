@@ -846,7 +846,14 @@ describe("OAuth usage request", () => {
       "Anthropic API returned 429 Anthropic OAuth usage probe paused after HTTP 429; retry in 30s.",
       "retry in 25s.",
     ],
-    ["stalls past the deadline", true, "45", 5_000, "Request timeout after 5s", "retry in 40s."],
+    [
+      "stalls past the deadline",
+      true,
+      "45",
+      5_000,
+      "Anthropic API returned 429 Anthropic OAuth usage probe paused after HTTP 429; retry in 45s.",
+      "retry in 40s.",
+    ],
   ])(
     "establishes a cooldown when the 429 response body %s",
     async (_label, stall, retryAfter, stallMs, firstMessage, suppressedMessage) => {

@@ -314,20 +314,22 @@ describe("requestJson", () => {
     });
   });
 
-  it("times out a stalled body and keeps the reply's status and headers", async () => {
+  function stalledBody(signal: AbortSignal | null | undefined) {
+    return new ReadableStream<Uint8Array>({
+      start(controller) {
+        signal?.addEventListener("abort", () => controller.error(new Error("aborted")));
+      },
+    });
+  }
+
+  it("times out a stalled 2xx body and keeps the reply's status and headers", async () => {
     vi.useFakeTimers();
     vi.stubGlobal(
       "fetch",
-      vi.fn(async (_url: string | URL | Request, options?: RequestInit) => {
-        const body = new ReadableStream<Uint8Array>({
-          start(controller) {
-            options?.signal?.addEventListener("abort", () =>
-              controller.error(new Error("aborted")),
-            );
-          },
-        });
-        return new Response(body, { status: 429, headers: { "Retry-After": "45" } });
-      }),
+      vi.fn(
+        async (_url: string | URL | Request, options?: RequestInit) =>
+          new Response(stalledBody(options?.signal), { headers: { "x-test": "1" } }),
+      ),
     );
 
     const request = requestJson("https://example.test/quota", { timeoutMs: 2000 });
@@ -336,9 +338,62 @@ describe("requestJson", () => {
 
     expect(reply).toMatchObject({
       ok: false,
-      failure: { kind: "timeout", status: 429, detail: "Request timeout after 2s" },
+      failure: { kind: "timeout", status: 200, detail: "Request timeout after 2s" },
     });
-    expect(!reply.ok && reply.failure.headers?.get("Retry-After")).toBe("45");
+    expect(!reply.ok && reply.failure.headers?.get("x-test")).toBe("1");
+  });
+
+  it("keeps a 401 whose body stalls past the deadline as a sign-in failure", async () => {
+    vi.useFakeTimers();
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(
+        async (_url: string | URL | Request, options?: RequestInit) =>
+          new Response(stalledBody(options?.signal), { status: 401 }),
+      ),
+    );
+
+    const request = requestJson("https://example.test/quota", { timeoutMs: 2000 });
+    await vi.advanceTimersByTimeAsync(2000);
+    const reply = await request;
+
+    expect(reply).toMatchObject({
+      ok: false,
+      failure: { kind: "http", code: "login_expired", status: 401, detail: "" },
+    });
+  });
+
+  it("keeps the status and Retry-After of a 429 larger than the cap", async () => {
+    vi.useFakeTimers({ now: 1_000_000, toFake: ["Date"] });
+    answer(
+      new Response("{}", {
+        status: 429,
+        headers: { "content-length": "20", "Retry-After": "45" },
+      }),
+    );
+
+    const reply = await requestJson("https://example.test/quota", { maxBytes: 10 });
+
+    expect(reply).toMatchObject({
+      ok: false,
+      failure: {
+        kind: "http",
+        code: "rate_limited",
+        status: 429,
+        retryAtMs: 1_045_000,
+        detail: "",
+      },
+    });
+  });
+
+  it("still reads a non-2xx body's words when the body arrives", async () => {
+    answer(new Response("account not subscribed", { status: 403 }));
+
+    const reply = await requestJson("https://example.test/quota");
+    if (reply.ok) throw new Error("expected a failure");
+
+    expect(reply.failure).toMatchObject({ kind: "http", status: 403 });
+    expect(providerError(reply.failure.detail, failureFacts(reply.failure)).code).toBe("no_plan");
   });
 });
 
