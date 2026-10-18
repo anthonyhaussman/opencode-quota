@@ -27,6 +27,8 @@ interface RunCliCommandOptions {
   cwd?: string;
   stdout?: Pick<NodeJS.WriteStream, "write">;
   stderr?: Pick<NodeJS.WriteStream, "write">;
+  /** The registered providers; `getProviders()` when absent. */
+  providers?: ProviderSourceHost["providers"];
 }
 
 type CliCommand = "show" | "status";
@@ -224,6 +226,7 @@ async function runCliReport(params: {
   build: (host: ProviderSourceHost) => Promise<CliReport>;
   stdout: Pick<NodeJS.WriteStream, "write">;
   stderr: Pick<NodeJS.WriteStream, "write">;
+  providers: ProviderSourceHost["providers"];
 }): Promise<number> {
   const unbind = bindCredentialSource(createSqliteCredentialSource());
   let unbindPricingSettings = () => {};
@@ -239,6 +242,7 @@ async function runCliReport(params: {
       }),
       workspaceRoot: roots.workspaceRoot,
       settings: () => loaded,
+      providers: params.providers,
     };
     const report = await params.build(host);
     params.stdout.write(report.stdout);
@@ -290,6 +294,7 @@ async function runCliCommand(
     build: (host) => build(host, { ...parsed, providerId }),
     stdout,
     stderr,
+    providers: options.providers,
   });
 }
 

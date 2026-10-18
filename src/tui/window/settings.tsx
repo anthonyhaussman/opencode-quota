@@ -15,39 +15,25 @@ import {
 } from "@opentui/core";
 import type { JSX } from "@opentui/solid";
 import { createEffect, createMemo, createSignal, For, on, Show } from "solid-js";
-import type { QuotaSnapshot, QuotaWindow } from "../../core/types.js";
-import { ALL_PROVIDERS, WINDOWS } from "../../core/windows.js";
-import type { CustomProviderSwitch } from "../../settings/index.js";
-import { CHANGED_SINCE_REVIEW } from "../../settings/schema.js";
+import type { QuotaSnapshot } from "../../core/types.js";
 import { columnsOf } from "../../view/columns.js";
 import { fit } from "../../view/format.js";
 import type { Surface, WindowChoice } from "../../view/select.js";
-import type { ColorRole } from "../../view/text.js";
 import { rpcErrorMessage } from "../client.js";
-import {
-  COLOR_NAMES,
-  type DisplayStore,
-  FIELDS,
-  type Field,
-  type FieldValue,
-  isSurfaceTab,
-  PRESETS,
-  type PresetName,
-  presetChoice,
-  presetValues,
-  resetKeys,
-  type SettingsTab,
-  setIn,
-  stepIn,
-  typedColor,
-  typedNumber,
-} from "../display.js";
+import { type DisplayStore, isSurfaceTab, type SettingsTab } from "../display.js";
 import { KEY_LAYERS } from "../key-layers.js";
-import { foundProviderIds, isTicked, PROVIDERS_KEY, withTick } from "../server-settings.js";
 import type { SurfaceHost } from "../sidebar.js";
-import { namedColor, roleColor } from "../theme.js";
-import { plainMessage, quotaToastLines, type ToastHost } from "../toasts.js";
+import type { Toasts } from "../toasts.js";
+import { type OptionLine, stepSelection, type Typed } from "./option-line.js";
 import { Rail, railRoom } from "./rail.js";
+import {
+  lineKey,
+  resetPage,
+  type SettingsPage,
+  SWITCH_ID,
+  settingsPage,
+  windowTitle,
+} from "./settings-page.js";
 import type { WindowHost, WindowTheme } from "./shell.js";
 import {
   type SettingsEdit,
@@ -56,6 +42,8 @@ import {
   surfaceEditor,
   type TreeLine,
 } from "./surface-editor.js";
+
+export type { OptionLine } from "./option-line.js";
 
 export const SETTINGS_TABS: ReadonlyArray<{
   tab: SettingsTab;
@@ -141,39 +129,10 @@ function resetLabel(tab: SettingsTab): string {
   return pagesOf(tab) ? "Reset page" : "Reset tab";
 }
 
-/** A line ↑↓ select: ‹ value › steps through values, value ▸ runs a button; some take typing. */
-export type OptionLine = {
-  id: string;
-  /** A heading above the line, which starts a group. */
-  group?: string;
-  /** A blank line above the line, between blocks of one group. */
-  gap?: boolean;
-  title: string;
-  value: () => string;
-  cycle?: (delta: number) => void;
-  run?: () => void;
-  typed?: Typed;
-  note?: () => string;
-  /** The note in the warning color. */
-  warning?: boolean;
-  /** A second muted line under the value. */
-  detail?: string;
-  /** Nesting under the line above: 1 for a provider's settings under its tick. */
-  depth?: number;
-  /** A tick box ([x] or [ ] in its title): no ‹ ›, a click on the title flips it too. */
-  tick?: boolean;
-  swatches?: () => RGBA[];
-};
-
-/** What a line takes when you type into it (e, or a double-click). */
-type Typed = { placeholder: string; hint: string; apply: (text: string) => void };
-
 type Click = (run: () => void) => () => void;
 
 const KEYS = "Quota window";
 const TRANSPARENT = RGBA.fromInts(0, 0, 0, 0);
-/** The id of a surface tab's switch line. */
-const SWITCH_ID = "surface";
 /** The selection id of Layout's page list: the list has the keyboard. */
 const PAGES_ID = "pages";
 /** The body starts right after the page list's line: its lines carry their own indent. */
@@ -201,11 +160,6 @@ export function lineColumns(
   return { title, value };
 }
 
-/** Selection id of a tree line; a row id could equal a setting's path. */
-function lineKey(id: string): string {
-  return `line:${id}`;
-}
-
 /** Renderable id of a line, so the list can scroll it into view. */
 function boxId(id: string): string {
   return `quota-settings.${id}`;
@@ -214,10 +168,6 @@ function boxId(id: string): string {
 /** Renderable id of a page in Layout's page list. */
 function pageId(tab: SettingsTab): string {
   return `quota-layout-page-${tab}`;
-}
-
-function windowTitle(choice: WindowChoice): string {
-  return choice === "lowest" ? "lowest left" : WINDOWS[choice].short;
 }
 
 /**
@@ -364,7 +314,7 @@ export type SettingsEditor = ReturnType<typeof createSettingsEditor>;
 export function createSettingsEditor(
   api: WindowHost,
   display: DisplayStore,
-  showToast: ToastHost["show"],
+  previewToast: Toasts["preview"],
 ) {
   const [tab, setTabNow] = createSignal<SettingsTab>();
   const [selected, setSelected] = createSignal("");
@@ -384,13 +334,14 @@ export function createSettingsEditor(
   const server = display.server;
   const dirty = server.dirty;
   const discard = server.discard;
-  const lineValue = (path: string): FieldValue => server.value(path) as FieldValue;
-  function setValues(values: Readonly<Record<string, FieldValue>>): void {
-    for (const [path, value] of Object.entries(values)) server.set(path, value);
-  }
-  function resetTabLines(settingsTab: SettingsTab): void {
-    for (const key of resetKeys(settingsTab)) server.reset(key);
-    if (settingsTab === "providers") server.reset(PROVIDERS_KEY);
+
+  /** `tab`'s page over this window's draft. */
+  function pageOf(
+    settingsTab: SettingsTab,
+    snapshot: QuotaSnapshot | undefined,
+    refocus: () => void,
+  ): SettingsPage {
+    return settingsPage({ tab: settingsTab, draft: display, snapshot, host: api, refocus });
   }
 
   /** `run` as a click handler that skips the click OpenCode sends right after a drag. */
@@ -406,236 +357,11 @@ export function createSettingsEditor(
     return double;
   }
 
-  /** What typing into a line does: a color for a color line, a number for a server number. */
-  function typedValue(field: Field, role: ColorRole | undefined): Typed | undefined {
-    if (role) {
-      return {
-        placeholder: "#rrggbb",
-        hint: "Type a color like #89b4fa, then enter · enter with nothing typed = the theme's color · esc stop",
-        apply: (text) => display.edit((settings) => typedColor(settings, field, text)),
-      };
-    }
-    const placeholder = field.placeholder;
-    if (!placeholder) return undefined;
-    return {
-      placeholder,
-      hint: `Type ${placeholder}, then enter · enter with nothing typed = ${field.show(null)} · esc stop`,
-      apply: (text) => {
-        const value = typedNumber(field, text);
-        if (value !== undefined) server.set(field.path, value);
-      },
-    };
-  }
-
-  /** A field's line: ‹ › step through its values, or you type one. */
-  function fieldLine(field: Field): OptionLine {
-    const role = field.color ? (field.path.slice("colors.".length) as ColorRole) : undefined;
-    const value = () => lineValue(field.path);
-    return {
-      id: field.path,
-      group: field.group,
-      title: field.title,
-      depth: field.provider ? 1 : 0,
-      value: () => field.show(value()),
-      cycle:
-        field.values.length > 0
-          ? (delta) => {
-              const values = field.choices?.(shown()) ?? field.values;
-              setValues({ [field.path]: stepIn(values, value(), delta) });
-            }
-          : undefined,
-      typed: typedValue(field, role),
-      note: () =>
-        field.preset && presetChoice(field.preset, lineValue) !== undefined
-          ? "from the preset"
-          : (field.note ?? ""),
-      swatches: role ? () => [roleColor(theme(), shown(), role, 60)] : undefined,
-    };
-  }
-
-  function presetLine(name: PresetName): OptionLine {
-    const choice = () => presetChoice(name, lineValue);
-    return {
-      id: `preset.${name}`,
-      title: PRESETS[name].title,
-      value: () => choice() ?? "your own",
-      cycle: (delta) => setValues(presetValues(name, choice(), delta)),
-      note: () => `sets ${PRESETS[name].drives}`,
-    };
-  }
-
-  /**
-   * OpenCode's own theme list and light/dark switch; quota's colors follow them. `refocus` gives
-   * the window the keyboard again.
-   */
-  function themeLines(refocus: () => void): OptionLine[] {
-    return [
-      {
-        id: "theme",
-        group: "OpenCode theme",
-        title: "Theme",
-        value: () => "open the theme list",
-        run: () => api.keymap.dispatch("theme.switch"),
-        swatches: () => COLOR_NAMES.map((name) => namedColor(theme(), name)),
-        note: () => "↑↓ shows each theme live · enter keeps it · esc puts it back",
-      },
-      {
-        id: "themeMode",
-        title: "Light or dark",
-        value: () => api.themeMode ?? "dark",
-        cycle: () => {
-          api.keymap.dispatch("theme.switch_mode");
-          // OpenCode's switch also closes its dialogs, which gives the keyboard to whatever had
-          // it before the last dialog opened (the message box); take it back after that.
-          setTimeout(refocus, 50);
-        },
-        note: () => "some themes have only one",
-      },
-    ];
-  }
-
-  /**
-   * A custom provider's switch, its web address and the key it would send; marked when the server
-   * would not switch it on because it changed since the window showed it.
-   */
-  function customLine(entry: CustomProviderSwitch, first: boolean): OptionLine {
-    const on = () => server.customOn(entry.id);
-    const request = entry.request;
-    const changed = server.changedSinceReview(entry.id);
-    const where = !request
-      ? "a local estimate: sends nothing"
-      : request.insecure
-        ? `${request.url}  plain http: the key travels unencrypted`
-        : request.url;
-    return {
-      id: `custom.${entry.id}`,
-      group: first ? "Custom providers (added in settings.jsonc)" : undefined,
-      gap: !first,
-      title: entry.label,
-      value: () => (on() ? "on" : "off"),
-      cycle: () => server.switchCustom(entry.id, !on()),
-      note: () => (changed ? `${CHANGED_SINCE_REVIEW} · ${where}` : where),
-      warning: changed || request?.insecure,
-      detail: request ? `key: ${request.key}` : undefined,
-    };
-  }
-
-  /**
-   * The custom providers' switches (on top: an agent sends the user here to switch one on), which
-   * providers quota checks (ticks, with Cursor's and OpenCode Zen's settings nested; the ones
-   * quota found first), then the other groups.
-   */
-  function providerLines(snapshot: QuotaSnapshot | undefined): OptionLine[] {
-    const loaded = server.saved();
-    if (!loaded) return [];
-    const found = foundProviderIds(snapshot);
-    const off = () => server.value(PROVIDERS_KEY) as string[];
-    const savedOff = loaded.values[PROVIDERS_KEY] as string[];
-    const ordered = [
-      ...loaded.providers.filter(({ id }) => found.includes(id)),
-      ...loaded.providers.filter(({ id }) => !found.includes(id)),
-    ];
-    const ticks = ordered.flatMap(({ id, label }): OptionLine[] => {
-      const ticked = isTicked(off(), id);
-      const tick: OptionLine = {
-        id: `provider.${id}`,
-        group: id === ordered[0]?.id ? "Which providers" : undefined,
-        title: `${ticked ? "[x]" : "[ ]"} ${label}`,
-        tick: true,
-        warning: true,
-        // The tick says on or off; only a saved tick quota can't use says more (a tick not
-        // saved yet is not checked yet).
-        value: () =>
-          ticked && isTicked(savedOff, id) && snapshot && !found.includes(id) ? "not set up" : "",
-        cycle: () => server.set(PROVIDERS_KEY, withTick(off(), id, !ticked)),
-      };
-      const nested = ticked ? FIELDS.filter((field) => field.provider === id) : [];
-      return [tick, ...nested.map(fieldLine)];
-    });
-    return [
-      ...loaded.custom.map((entry, index) => customLine(entry, index === 0)),
-      ...ticks,
-      ...FIELDS.filter((field) => field.tab === "providers" && !field.provider).map(fieldLine),
-    ];
-  }
-
-  /**
-   * Collapsed's and Status line's window for every provider without its own pick in the list
-   * below. ‹ › step through lowest and the windows the providers have.
-   */
-  function allProvidersLine(
-    surface: "collapsed" | "statusLine",
-    snapshot: QuotaSnapshot | undefined,
-  ): OptionLine {
-    const current = (): WindowChoice => shown()[surface].window[ALL_PROVIDERS] ?? "lowest";
-    const choices = (): WindowChoice[] => {
-      const found = new Set(
-        (snapshot?.providers ?? []).flatMap((provider) =>
-          provider.rows.flatMap((row) =>
-            row.window && row.percentRemaining !== undefined ? [row.window] : [],
-          ),
-        ),
-      );
-      const windows = (Object.keys(WINDOWS) as QuotaWindow[]).filter(
-        (window) => found.has(window) || window === current(),
-      );
-      return ["lowest", ...windows];
-    };
-    return {
-      id: `${surface}.window.${ALL_PROVIDERS}`,
-      group: "Window",
-      title: "For all providers",
-      value: () => windowTitle(current()),
-      cycle: (delta) => {
-        const next = stepIn(choices(), current(), delta);
-        display.edit((settings) =>
-          setIn(settings, [surface, "window", ALL_PROVIDERS], next === "lowest" ? undefined : next),
-        );
-      },
-      note: () => "a pick below wins; a provider without it shows its lowest",
-    };
-  }
-
-  /**
-   * A Settings page's lines. A preset sits above the line it names, under that line's heading,
-   * or else first, under "Preset". `refocus` gives the window the keyboard again.
-   */
-  function optionLines(
-    settingsTab: SettingsTab,
-    snapshot?: QuotaSnapshot,
-    refocus: () => void = () => {},
-  ): OptionLine[] {
-    if (settingsTab === "providers") return providerLines(snapshot);
-    if (!server.saved()) return [];
-    const presets = (Object.keys(PRESETS) as PresetName[]).filter(
-      (name) => PRESETS[name].tab === settingsTab,
-    );
-    const fields = FIELDS.filter((field) => field.tab === settingsTab).flatMap((field) => {
-      const line = fieldLine(field);
-      const preset = presets.find((name) => PRESETS[name].before === field.path);
-      return preset
-        ? [
-            { ...presetLine(preset), group: line.group },
-            { ...line, group: undefined },
-          ]
-        : [line];
-    });
-    return [
-      ...presets
-        .filter((name) => PRESETS[name].before === undefined)
-        .map((name) => ({ ...presetLine(name), group: "Preset" })),
-      ...(settingsTab === "colors" ? themeLines(refocus) : []),
-      ...fields,
-      ...(settingsTab === "collapsed" || settingsTab === "statusLine"
-        ? [allProvidersLine(settingsTab, snapshot)]
-        : []),
-    ];
-  }
-
   function firstLine(settingsTab: SettingsTab | undefined): string {
     if (settingsTab === undefined) return "";
     if (pagesOf(settingsTab)) return PAGES_ID;
-    return isSurfaceTab(settingsTab) ? SWITCH_ID : (optionLines(settingsTab)[0]?.id ?? "");
+    if (isSurfaceTab(settingsTab)) return SWITCH_ID;
+    return pageOf(settingsTab, undefined, () => {}).options[0]?.id ?? "";
   }
 
   /** Reads the file settings each time a Settings tab shows. */
@@ -667,17 +393,6 @@ export function createSettingsEditor(
         <Cell fg={props.primary ? text.action.primary.focused : text.base}>{props.label}</Cell>
       </box>
     );
-  }
-
-  function previewToast(host: SurfaceHost, sessionID: string): void {
-    const settings = shown();
-    const snapshot = host.quota.snapshot(sessionID);
-    if (!snapshot || !settings.surfaces.toast.enabled) return;
-    const lines = quotaToastLines(snapshot, settings, Date.now(), api.renderer.width);
-    const message = plainMessage(lines);
-    if (!message) return;
-    const duration = settings.toast.seconds * 1000;
-    showToast({ variant: "info", message, duration }, lines);
   }
 
   /**
@@ -714,7 +429,7 @@ export function createSettingsEditor(
     const surface = () => (isSurfaceTab(props.tab) ? props.tab : undefined);
     const surfaceOn = () => {
       const current = surface();
-      return current === undefined || shown().surfaces[current].enabled;
+      return current === undefined || shown()[current].show;
     };
     const sidebarHidden = () => info().watchesSidebar && sidebars() === 0;
     const active = () => selected() === SWITCH_ID;
@@ -778,27 +493,23 @@ export function createSettingsEditor(
     scroll: () => ScrollBoxRenderable | undefined;
     /** The body's room: the scrollbar's column and a gap before it stay free. */
     width: number;
+    /** The window's clock, so the tree's reset times count down. */
+    nowMs: number;
   }): JSX.Element {
     /** The box with only the tree lines, so the drag math counts lines from its top. */
     let list: BoxRenderable | undefined;
     let dragId: string | undefined;
-    const surface = () => (isSurfaceTab(props.tab) ? props.tab : undefined);
     const snapshot = () => props.host.quota.snapshot(props.sessionID);
-    const options = createMemo(() =>
-      optionLines(props.tab, snapshot(), () => props.box()?.focus()),
-    );
-    /** The page's tree and its edits; undefined on a page without a surface. */
-    const editor = () => {
-      const current = surface();
-      return current && surfaceEditor(current, snapshot());
-    };
-    const lines = createMemo(() => editor()?.lines(shown(), Date.now()) ?? []);
+    const page = createMemo(() => pageOf(props.tab, snapshot(), () => props.box()?.focus()));
+    const surface = () => page().surface;
+    const options = () => page().options;
+    const lines = createMemo(() => page().tree(props.nowMs));
     const selectedOption = () => options().find((line) => line.id === selected());
     const selectedLine = () => lines().find((line) => lineKey(line.id) === selected());
 
     /** Makes an edit of this page's surface; nothing on a page without one. */
     function editSurface(edit: (editor: SurfaceEditor) => SettingsEdit): void {
-      const current = editor();
+      const current = page().editor;
       if (current) display.edit(edit(current));
     }
 
@@ -811,14 +522,9 @@ export function createSettingsEditor(
         stepPage(delta);
         return;
       }
-      const ids = [
-        ...(pagesOf(props.tab) ? [PAGES_ID] : []),
-        ...(surface() ? [SWITCH_ID] : []),
-        ...options().map((line) => line.id),
-        ...lines().map((line) => lineKey(line.id)),
-      ];
-      const next = ids.indexOf(selected()) + delta;
-      if (next < 0 || next >= ids.length) props.scroll()?.scrollBy(delta);
+      const ids = [...(pagesOf(props.tab) ? [PAGES_ID] : []), ...page().ids(lines())];
+      const next = stepSelection(ids.length, ids.indexOf(selected()), delta);
+      if (next === undefined) props.scroll()?.scrollBy(delta);
       else setSelected(ids[next] as string);
     }
 
@@ -835,7 +541,7 @@ export function createSettingsEditor(
         return;
       }
       const line = selectedLine();
-      const rename = line && editor()?.rename(line.id);
+      const rename = line && page().editor?.rename(line.id);
       if (!line || !rename) return;
       setTyping({
         id: lineKey(line.id),
@@ -874,30 +580,20 @@ export function createSettingsEditor(
      * value, or show/hide a line.
      */
     function activate(): void {
-      const option = selectedOption();
-      const line = selectedLine();
       if (selected() === PAGES_ID) toFirstLine();
-      else if (selected() === SWITCH_ID) editSurface((current) => current.toggleSurface());
-      else if (option) useOption(option);
-      else if (line) editSurface((current) => current.toggleHidden(line.id));
+      else useLine(selected());
     }
 
-    /** A click on an option's value: run its button, its next value, or start typing. */
-    function useOption(option: OptionLine): void {
-      if (option.run) option.run();
-      else if (option.cycle) option.cycle(1);
-      else startTyping();
+    /** Space, enter or a click on a line's value; a line that takes typing starts it. */
+    function useLine(id: string): void {
+      if (page().activate(id) === "type") startTyping();
     }
 
     /** ←/→ change the selected line's value; → in the page list goes to the page's lines. */
     function sideways(delta: number): void {
-      const option = selectedOption();
-      const line = selectedLine();
       if (selected() === PAGES_ID) {
         if (delta > 0) toFirstLine();
-      } else if (option) option.cycle?.(delta);
-      else if (line && !line.row)
-        editSurface((current) => current.cycleWindow(line.providerId, delta));
+      } else page().step(selected(), delta);
     }
 
     /** A provider moves with all its rows; a row moves only among its own provider's rows. */
@@ -923,7 +619,7 @@ export function createSettingsEditor(
           return props.tab === "toast" && JSON.stringify(shown().toast);
         },
         (key) => {
-          if (key) previewToast(props.host, props.sessionID);
+          if (key) previewToast(props.sessionID);
         },
       ),
     );
@@ -955,7 +651,7 @@ export function createSettingsEditor(
           bind: "ctrl+r",
           title: "Reset this tab or page",
           group: KEYS,
-          run: () => resetTabLines(props.tab),
+          run: () => page().reset(),
         },
       ],
     }));
@@ -1071,7 +767,7 @@ export function createSettingsEditor(
                 setSelected(line.id);
                 if (line.typed && isDoubleClick(line.id)) startTyping();
               }}
-              use={() => useOption(line)}
+              use={() => useLine(line.id)}
               input={
                 typing()?.id === line.id
                   ? (width: number) => (
@@ -1190,11 +886,11 @@ export function createSettingsEditor(
           </Show>
           <Show when={settingsTab()}>
             {(current: () => SettingsTab) => (
-              <Button label={resetLabel(current())} run={() => resetTabLines(current())} />
+              <Button label={resetLabel(current())} run={() => resetPage(server, current())} />
             )}
           </Show>
-          <Show when={settingsTab() === "toast" && shown().surfaces.toast.enabled}>
-            <Button label="Show toast" run={() => previewToast(props.host, props.sessionID)} />
+          <Show when={settingsTab() === "toast" && shown().toast.show}>
+            <Button label="Show toast" run={() => previewToast(props.sessionID)} />
           </Show>
           <Cell fg={warning()}>{dirty() ? " unsaved changes" : ""}</Cell>
         </Show>
@@ -1218,12 +914,8 @@ export function createSettingsEditor(
       setSidebars((count) => count + 1);
       return () => setSidebars((count) => count - 1);
     },
-    statusLineShown(): boolean {
-      const settings = shown();
-      if (!settings.surfaces.statusLine.enabled) return false;
-      const sidebarQuota = sidebars() > 0 && settings.surfaces.sidebar.enabled;
-      return tab() === "statusLine" || settings.statusLine.withSidebar || !sidebarQuota;
-    },
+    sidebarOnScreen: (): boolean => sidebars() > 0,
+    tabOpen: (surface: Surface): boolean => tab() === surface,
     /** A line takes typing, so the window's own keys rest. */
     typing: () => typing() !== undefined,
     /** A Plugin switch's saved value (`system.exportFile`); undefined until the server answers. */

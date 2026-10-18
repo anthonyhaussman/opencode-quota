@@ -3,19 +3,6 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
-const runtimeDirs = vi.hoisted(() => ({
-  value: {
-    dataDir: "",
-    configDir: "",
-    cacheDir: "",
-    stateDir: "",
-  },
-}));
-
-vi.mock("../src/lib/opencode-runtime-paths.js", () => ({
-  getOpencodeRuntimeDirs: () => runtimeDirs.value,
-}));
-
 import { extractProviderIdsFromParsedConfig } from "../src/lib/config-file-utils.js";
 import {
   loadConfiguredOpenCodeConfig,
@@ -34,12 +21,8 @@ describe("opencode config provider discovery", () => {
     workspaceDir = join(tempDir, "workspace");
     mkdirSync(globalConfigDir, { recursive: true });
     mkdirSync(workspaceDir, { recursive: true });
-    runtimeDirs.value = {
-      dataDir: join(tempDir, "data"),
-      configDir: globalConfigDir,
-      cacheDir: join(tempDir, "cache"),
-      stateDir: join(tempDir, "state"),
-    };
+    // OpenCode's global config folder by its own rule: `$XDG_CONFIG_HOME/opencode`.
+    vi.stubEnv("XDG_CONFIG_HOME", join(tempDir, "global-config"));
   });
 
   afterEach(() => {

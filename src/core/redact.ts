@@ -287,14 +287,6 @@ function holdsSecret(key: string): boolean {
   return namesSecret(key) && !FACT_WORDS.has(last ?? "");
 }
 
-/**
- * A debug detail's value made safe: fully redacted when its key holds a secret; any other
- * value still has the secrets inside it redacted.
- */
-export function safeDebugValue(key: string, value: string, maxLength: number): string {
-  return holdsSecret(key) ? REDACTED : safeDetail(value, maxLength);
-}
-
 /** Whose data a field is about: a "<word> id" field holds a private identity. */
 const PRIVATE_ID_WORDS = ["account", "team", "org", "organization", "user", "session"];
 

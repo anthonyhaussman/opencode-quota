@@ -8,7 +8,7 @@ import { WINDOWS } from "../src/core/windows.js";
 import { API_KEY_VENDORS } from "../src/lib/api-key-resolver.js";
 import { COPILOT_AUTH_KEYS } from "../src/lib/copilot.js";
 import { CURSOR_CANONICAL_PLUGIN_PACKAGE } from "../src/lib/cursor-detection.js";
-import type { QuotaProviderContext } from "../src/lib/entries.js";
+import type { QuotaProvider, QuotaProviderContext } from "../src/lib/entries.js";
 import { AGY_AUTH_KEYS } from "../src/lib/google-agy.js";
 import { GEMINI_CLI_AUTH_KEYS } from "../src/lib/google-gemini-cli.js";
 import { usePricingSettings } from "../src/lib/modelsdev-pricing.js";
@@ -40,10 +40,8 @@ import { PROVIDER_IDS, setPath, THEME_COLOR_NAMES } from "../src/settings/schema
 import { answer, percentRow } from "./helpers/fake-answers.js";
 import { PROVIDER_ROW_KEYS } from "./helpers/provider-assertions.js";
 
-const registry = vi.hoisted(() => ({ providers: [] as unknown[] }));
-
 // The providers are the edge here: fakes that answer like the real adapters.
-vi.mock("../src/providers/registry.js", () => ({ getProviders: () => registry.providers }));
+const registry = { providers: [] as QuotaProvider[] };
 
 const NOW = Date.UTC(2026, 9, 10, 12, 0, 0);
 const NOW_ISO = new Date(NOW).toISOString();
@@ -2270,7 +2268,12 @@ describe("statusReport", () => {
     const workspace = join(root, "workspace");
     mkdirSync(workspace, { recursive: true });
     const loaded = await loadSettings();
-    const host = { client, workspaceRoot: workspace, settings: () => loaded };
+    const host = {
+      client,
+      workspaceRoot: workspace,
+      settings: () => loaded,
+      providers: () => registry.providers,
+    };
     const data = await statusReport(host, { origin: "slash_command", nowMs: NOW, ...options });
     return { data, text: data.text };
   }

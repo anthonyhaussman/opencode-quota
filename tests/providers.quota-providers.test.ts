@@ -1,7 +1,4 @@
-import { mkdtempSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
+import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 import type { QuotaProviderContext } from "../src/lib/entries.js";
 import { bindCredentialSource } from "../src/lib/opencode-auth.js";
@@ -11,21 +8,14 @@ import type {
 } from "../src/lib/quota-providers.js";
 import { createRuntimeProviderIdResolver } from "../src/lib/runtime-provider-ids.js";
 import type { ProviderFetchResult, ProviderRow } from "../src/providers/contract.js";
+import { useOpencodeFolders } from "./helpers/opencode-folders.js";
+
+useOpencodeFolders();
 
 const runtimeMocks = vi.hoisted(() => ({
-  root: "",
   resolveQuotaProviderApiKey: vi.fn(),
   fetchRemoteQuotaProvider: vi.fn(),
   collectLocalQuotaProviderEstimate: vi.fn(),
-}));
-
-vi.mock("../src/lib/opencode-runtime-paths.js", () => ({
-  getOpencodeRuntimeDirs: () => ({
-    dataDir: `${runtimeMocks.root}/data`,
-    configDir: `${runtimeMocks.root}/config`,
-    cacheDir: `${runtimeMocks.root}/cache`,
-    stateDir: `${runtimeMocks.root}/state`,
-  }),
 }));
 
 vi.mock("../src/lib/quota-providers-remote.js", async (importOriginal) => {
@@ -129,7 +119,6 @@ function context(
 
 describe("quota-providers aggregate provider", () => {
   beforeEach(() => {
-    runtimeMocks.root = mkdtempSync(join(tmpdir(), "opencode-quota-provider-cache-"));
     runtimeMocks.resolveQuotaProviderApiKey.mockReset().mockResolvedValue({
       key: "secret",
       source: "opencode.db",
@@ -141,10 +130,6 @@ describe("quota-providers aggregate provider", () => {
       rows: [],
     });
     runtimeMocks.collectLocalQuotaProviderEstimate.mockReset().mockResolvedValue({ rows: [] });
-  });
-
-  afterEach(() => {
-    rmSync(runtimeMocks.root, { recursive: true, force: true });
   });
 
   const alibabaTuning: QuotaProviderDefinition = {
@@ -283,7 +268,12 @@ describe("quota-providers aggregate provider", () => {
     runtimeMocks.fetchRemoteQuotaProvider.mockImplementation(
       async (definition: RemoteApiQuotaProviderDefinition) =>
         definition.id === "bad"
-          ? { success: false, error: "HTTP 503" }
+          ? {
+              success: false,
+              error: "HTTP 503",
+              outcome: "http_error",
+              facts: { code: "provider_error", status: 503 },
+            }
           : { success: true, rows: [adapterRow("Balance", { text: "$5.00" })] },
     );
 
@@ -297,7 +287,12 @@ describe("quota-providers aggregate provider", () => {
         rows: [adapterRow("custom.good.Balance", { text: "$5.00" }, "Balance")],
         errors: [],
       },
-      { name: "bad", login: "bad", rows: [], errors: [{ message: "HTTP 503" }] },
+      {
+        name: "bad",
+        login: "bad",
+        rows: [],
+        errors: [{ message: "HTTP 503", facts: { code: "provider_error", status: 503 } }],
+      },
     ]);
     expect(result.debug.map((item) => item.value.split(" ")[0])).toEqual([
       "outcome=success",
@@ -305,24 +300,62 @@ describe("quota-providers aggregate provider", () => {
     ]);
   });
 
+  const json = { "content-type": "application/json" };
   it.each([
-    ["HTTP 503", "outcome=http_error http_status=503"],
-    ["Redirect rejected", "outcome=redirect_error"],
-    ["Request timeout after 5s", "outcome=timeout"],
-    ["Response exceeded 262144 bytes", "outcome=body_too_large"],
-    ["Expected a JSON response", "outcome=invalid_content_type"],
-    ["Invalid JSON response", "outcome=invalid_json"],
-    ["Invalid quota-v1 response", "outcome=invalid_response"],
-    ["Failed to read accounting data", "outcome=network_error"],
-  ])("classifies the remote error %j in the check", async (error, outcome) => {
-    runtimeMocks.fetchRemoteQuotaProvider.mockResolvedValue({ success: false, error });
+    ["HTTP 503", () => new Response("{}", { status: 503 }), "outcome=http_error http_status=503"],
+    ["Redirect rejected", () => new Response(null, { status: 302 }), "outcome=redirect_error"],
+    [
+      "Response exceeded 262144 bytes",
+      () => new Response("{}", { headers: { ...json, "content-length": "262145" } }),
+      "outcome=body_too_large",
+    ],
+    ["Expected a JSON response", () => new Response("{}"), "outcome=invalid_content_type"],
+    ["Invalid JSON response", () => new Response("{", { headers: json }), "outcome=invalid_json"],
+    [
+      "Invalid quota-v1 response",
+      () => new Response("{}", { headers: json }),
+      "outcome=invalid_response",
+    ],
+    [
+      "Failed to read accounting data",
+      () => Promise.reject(new Error("fetch failed")),
+      "outcome=network_error",
+    ],
+  ])("names the remote error %j in the check", async (error, respond, outcome) => {
+    const actual = await vi.importActual<typeof import("../src/lib/quota-providers-remote.js")>(
+      "../src/lib/quota-providers-remote.js",
+    );
+    runtimeMocks.fetchRemoteQuotaProvider.mockImplementation(actual.fetchRemoteQuotaProvider);
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => respond()),
+    );
     const result = await quotaProvidersProvider.fetch(context([remote("bad")], ["bad"]));
     expect(result.accounts).toEqual([
-      { name: "bad", login: "bad", rows: [], errors: [{ message: error }] },
+      {
+        name: "bad",
+        login: "bad",
+        rows: [],
+        errors: [expect.objectContaining({ message: error })],
+      },
     ]);
     expect(checks(result)).toEqual([
       `custom_bad_check: ${outcome} credential_source=opencode_db checked_paths=/trusted/opencode.json | /trusted/opencode.db`,
     ]);
+  });
+
+  it("names a timeout in the check", async () => {
+    runtimeMocks.fetchRemoteQuotaProvider.mockResolvedValue({
+      success: false,
+      error: "Request timeout after 5s",
+      outcome: "timeout",
+      facts: { code: "timeout" },
+    });
+    const result = await quotaProvidersProvider.fetch(context([remote("bad")], ["bad"]));
+    expect(result.accounts[0]?.errors).toEqual([
+      { message: "Request timeout after 5s", facts: { code: "timeout" } },
+    ]);
+    expect(checks(result)[0]).toMatch(/^custom_bad_check: outcome=timeout /u);
   });
 
   it("reports a missing API key without calling the endpoint", async () => {

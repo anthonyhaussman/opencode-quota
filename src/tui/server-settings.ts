@@ -13,6 +13,7 @@ import {
   defaultSettings,
   isRecordSetting,
   offProviderId,
+  UNSET_IS_NOT_DEFAULT,
 } from "../settings/schema.js";
 
 /** The ids switched off; every other provider is checked when found. */
@@ -94,6 +95,9 @@ export function createServerSettings(rpc: ServerSettingsRpc) {
     if (!Array.isArray(current.fromFile)) return !same(savedValue(key), defaults[key]);
     return current.fromFile.includes(key);
   };
+  /** The saved value a draft is compared with: null for an unset key whose unset isn't its default. */
+  const savedBase = (key: string): unknown =>
+    UNSET_IS_NOT_DEFAULT.has(key) && !savedInFile(key) ? null : savedValue(key);
   const savedCustom = (id: string) => saved()?.custom.find((entry) => entry.id === id);
   const value = (key: string): unknown => {
     const patch = changes()[key];
@@ -174,7 +178,7 @@ export function createServerSettings(rpc: ServerSettingsRpc) {
             ([id, item]) => !same(item === null ? undefined : item, before[id]),
           );
           if (entries.length > 0) remaining[key] = Object.fromEntries(entries);
-        } else if (patch === null ? savedInFile(key) : !same(patch, savedValue(key))) {
+        } else if (patch === null ? savedInFile(key) : !same(patch, savedBase(key))) {
           remaining[key] = patch;
         }
       }
@@ -215,8 +219,16 @@ export function createServerSettings(rpc: ServerSettingsRpc) {
       setSaved(next);
     },
     value,
+    /**
+     * Whether settings.jsonc leaves a key whose unset isn't its default (the request timeout)
+     * unset, with this window's draft on top.
+     */
+    unset(key: string): boolean {
+      if (!UNSET_IS_NOT_DEFAULT.has(key)) return false;
+      return Object.hasOwn(changes(), key) ? changes()[key] === null : !savedInFile(key);
+    },
     set(key: string, next: unknown): void {
-      if (resets.has(key) && same(next, defaults[key])) {
+      if (resets.has(key) && same(next, defaults[key]) && !UNSET_IS_NOT_DEFAULT.has(key)) {
         reset(key);
         return;
       }
@@ -237,7 +249,7 @@ export function createServerSettings(rpc: ServerSettingsRpc) {
       }
       const patch = draftValue(key, next);
       const unchanged =
-        same(next, savedValue(key)) ||
+        same(UNSET_IS_NOT_DEFAULT.has(key) ? (next ?? null) : next, savedBase(key)) ||
         (isRecordSetting(key) && isRecord(patch) && Object.keys(patch).length === 0);
       setChanges((current) => {
         const result = { ...current };
@@ -255,6 +267,15 @@ export function createServerSettings(rpc: ServerSettingsRpc) {
       setSwitches((current) => changed(current, id, on, savedCustom(id)?.enabled));
     },
     changedSinceReview: (id: string): boolean => changedIds().includes(id),
+    /**
+     * Every custom provider switch back to its saved state: the flips not saved yet are dropped,
+     * also one made while Save waits. settings.jsonc is not touched.
+     */
+    discardSwitches(): void {
+      for (const id of Object.keys(switches())) reviewedFingerprints.delete(id);
+      savingSwitches?.clear();
+      setSwitches({});
+    },
     dirty,
     async load(): Promise<void> {
       await readSaved();

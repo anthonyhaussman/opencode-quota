@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vite-plus/test";
-import { checkSetting, SETTINGS_SCHEMA, type SettingRule } from "../src/settings/schema.js";
+import {
+  checkSetting,
+  SETTINGS_SCHEMA,
+  type SettingRule,
+  UNSET_IS_NOT_DEFAULT,
+} from "../src/settings/schema.js";
 import {
   type DisplaySettings,
   defaultDisplaySettings,
@@ -43,7 +48,11 @@ describe("the Settings tabs' field table", () => {
       const rule: SettingRule = SETTINGS_SCHEMA[path];
       expect(rule.fileOnly).toBeUndefined();
       if (item.values.length > 0) expect(item.values).toContain(rule.default);
-      for (const value of item.values) expect(checkSetting(path, value).issues).toEqual([]);
+      // null on the request timeout leaves it unset: each provider waits its own time.
+      const values = UNSET_IS_NOT_DEFAULT.has(path)
+        ? item.values.filter((value) => value !== null)
+        : item.values;
+      for (const value of values) expect(checkSetting(path, value).issues).toEqual([]);
     },
   );
 
@@ -142,12 +151,12 @@ describe("the Settings tabs' field table", () => {
 
   it("renames a row whose id holds a dot, keeps its own name typed, and nothing puts it back", () => {
     const renamed = renameRow(defaultDisplaySettings(), "sidebar", "anthropic.weekly", " Session ");
-    expect(renamed.labels).toEqual({ "anthropic.weekly": "Session" });
+    expect(renamed.sidebar.names).toEqual({ "anthropic.weekly": "Session" });
     // Typed, its own name stays, so it shows where short row names would show "7d".
-    expect(renameRow(renamed, "sidebar", "anthropic.weekly", "Weekly").labels).toEqual({
+    expect(renameRow(renamed, "sidebar", "anthropic.weekly", "Weekly").sidebar.names).toEqual({
       "anthropic.weekly": "Weekly",
     });
-    expect(renameRow(renamed, "sidebar", "anthropic.weekly", "").labels).toEqual({});
+    expect(renameRow(renamed, "sidebar", "anthropic.weekly", "").sidebar.names).toEqual({});
   });
 
   it("resets only the tab's lines, its surface and its windows; row names stay", () => {

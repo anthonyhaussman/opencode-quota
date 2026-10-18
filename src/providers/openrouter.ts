@@ -71,7 +71,11 @@ export const openRouterProvider: QuotaProvider = {
       ctx.config?.requestTimeoutMs,
     );
     if (!result.success) {
-      return { attempted: true, accounts: [failedAccount(LABEL, result.error)], debug };
+      return {
+        attempted: true,
+        accounts: [failedAccount(LABEL, result.error, result.facts)],
+        debug,
+      };
     }
     return {
       attempted: true,

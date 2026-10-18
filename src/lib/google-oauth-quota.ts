@@ -12,10 +12,10 @@ import {
 import { failureFacts, RequestFailedError, requestJson, thrownFacts } from "./http.js";
 import { nonEmptyString } from "./json-guards.js";
 import {
-  activeCredentialRowsAuthData,
+  activeCredentialRows,
   type CredentialRow,
-  credentialRowAuthData,
   readCredentialRows,
+  readOAuthLogin,
 } from "./opencode-auth.js";
 import {
   composeResolvedAuthIdentities,
@@ -23,12 +23,7 @@ import {
   loginListIdentity,
   type ResolvedAuthIdentity,
 } from "./resolved-auth-identity.js";
-import type {
-  AuthData,
-  GeminiCliAuthSourceKey,
-  GoogleAgyAuthSourceKey,
-  QuotaError,
-} from "./types.js";
+import type { GeminiCliAuthSourceKey, GoogleAgyAuthSourceKey, QuotaError } from "./types.js";
 
 /**
  * The OAuth quota flow shared by Google AGY (Antigravity) and Gemini CLI:
@@ -122,55 +117,56 @@ export async function readGoogleLogins(flavor: {
 }
 
 /**
- * One account per usable OAuth login, in auth-key order. The refresh value may
- * be packed as `refreshToken|projectId|managedProjectId`. Logins that share a
- * refresh token and project are one account.
+ * One account per usable OAuth login among `rows`, in auth-key order. The refresh value may
+ * be packed as `refreshToken|projectId|managedProjectId`. Logins that share a refresh token
+ * and project are one account.
  */
 export function resolveGoogleAccounts<Key extends GoogleAuthSourceKey>(
   flavor: { authKeys: readonly Key[] },
-  auth: AuthData | null | undefined,
+  rows: readonly CredentialRow[],
   configuredProjectId?: string,
 ): GoogleAccount<Key>[] {
-  if (!auth) return [];
-
   const accounts: GoogleAccount<Key>[] = [];
   const seen = new Set<string>();
   for (const sourceKey of flavor.authKeys) {
-    const entry = auth[sourceKey];
-    // A login OpenCode could not return carries no usable token.
-    if (entry?.type !== "oauth" || entry.resolveError !== undefined) continue;
+    for (const row of rows) {
+      if (row.integrationId !== sourceKey) continue;
+      const login = readOAuthLogin(row);
+      // A login OpenCode could not return carries no usable token.
+      if (login?.state !== "signed-in") continue;
 
-    const [packedToken = "", packedProjectId, packedManagedProjectId] = (entry.refresh ?? "").split(
-      "|",
-    );
-    const refreshToken = packedToken.trim();
-    const projectId =
-      nonEmptyString(entry.managedProjectId) ??
-      nonEmptyString(entry.quotaProjectId) ??
-      nonEmptyString(packedManagedProjectId) ??
-      nonEmptyString(entry.projectId) ??
-      nonEmptyString(entry.projectID) ??
-      nonEmptyString(packedProjectId) ??
-      nonEmptyString(configuredProjectId);
-    if (!refreshToken || !projectId) continue;
+      const { fields } = login;
+      const [packedToken = "", packedProjectId, packedManagedProjectId] = (
+        login.refreshToken ?? ""
+      ).split("|");
+      const refreshToken = packedToken.trim();
+      const projectId =
+        nonEmptyString(fields.managedProjectId) ??
+        nonEmptyString(fields.quotaProjectId) ??
+        nonEmptyString(packedManagedProjectId) ??
+        nonEmptyString(fields.projectId) ??
+        nonEmptyString(fields.projectID) ??
+        nonEmptyString(packedProjectId) ??
+        nonEmptyString(configuredProjectId);
+      if (!refreshToken || !projectId) continue;
 
-    const key = `${refreshToken}\n${projectId}`;
-    if (seen.has(key)) continue;
-    seen.add(key);
+      const key = `${refreshToken}\n${projectId}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
 
-    const email =
-      nonEmptyString(entry.email) ??
-      nonEmptyString(entry.accountEmail) ??
-      nonEmptyString(entry.login);
-    const accessToken = nonEmptyString(entry.access);
-    accounts.push({
-      sourceKey,
-      refreshToken,
-      projectId,
-      ...(email ? { email } : {}),
-      ...(accessToken ? { accessToken } : {}),
-      ...(typeof entry.expires === "number" ? { expiresAt: entry.expires } : {}),
-    });
+      const email =
+        nonEmptyString(fields.email) ??
+        nonEmptyString(fields.accountEmail) ??
+        nonEmptyString(fields.login);
+      accounts.push({
+        sourceKey,
+        refreshToken,
+        projectId,
+        ...(email ? { email } : {}),
+        ...(login.accessToken ? { accessToken: login.accessToken } : {}),
+        ...(login.expiresAt !== undefined ? { expiresAt: login.expiresAt } : {}),
+      });
+    }
   }
   return accounts;
 }
@@ -180,15 +176,19 @@ export function inspectGoogleAuthPresence<Key extends GoogleAuthSourceKey>(
   flavor: GoogleAuthFlavor<Key>,
   logins: GoogleLogins,
 ): GoogleAuthPresence<Key> {
-  const auth = activeCredentialRowsAuthData(logins.rows);
-  const oauthKeys = flavor.authKeys.filter((key) => auth?.[key]?.type === "oauth");
+  const active = activeCredentialRows(logins.rows);
+  const activeLogin = (key: Key) => {
+    const row = active.find((candidate) => candidate.integrationId === key);
+    return row ? readOAuthLogin(row) : null;
+  };
+  const oauthKeys = flavor.authKeys.filter((key) => activeLogin(key) !== null);
   if (oauthKeys.length === 0) {
     return { state: "missing", accountCount: 0, validAccountCount: 0 };
   }
 
-  const accounts = resolveGoogleAccounts(flavor, auth, logins.configuredProjectId);
+  const accounts = resolveGoogleAccounts(flavor, active, logins.configuredProjectId);
   const failedLoginKey = flavor.failedLoginCountsAsPresent
-    ? oauthKeys.find((key) => auth?.[key]?.resolveError !== undefined)
+    ? oauthKeys.find((key) => activeLogin(key)?.state === "failed")
     : undefined;
   const presentSourceKey = accounts[0]?.sourceKey ?? failedLoginKey;
   if (!presentSourceKey) {
@@ -234,11 +234,7 @@ export async function googleLoginsIdentity<Key extends GoogleAuthSourceKey>(
 
   const accountIdentities = await Promise.all(
     logins.rows.flatMap((row) => {
-      const accounts = resolveGoogleAccounts(
-        flavor,
-        credentialRowAuthData(row),
-        logins.configuredProjectId,
-      );
+      const accounts = resolveGoogleAccounts(flavor, [row], logins.configuredProjectId);
       return (accounts.length > 0 ? accounts : [null]).map(async (account) => ({
         row,
         identity: account
@@ -423,16 +419,13 @@ async function fetchAccountBuckets<Key extends GoogleAuthSourceKey, Response, Bu
   }
 }
 
-/**
- * The quota of the account of one login (`authData` holds that one login); null when the login
- * has no usable account.
- */
+/** The quota of the account of one login; null when the login has no usable account. */
 export async function queryGoogleQuota<Key extends GoogleAuthSourceKey, Response, Bucket>(
   flavor: GoogleQuotaFlavor<Key, Response, Bucket>,
-  options: { requestTimeoutMs?: number; authData: AuthData },
+  options: { requestTimeoutMs?: number; login: CredentialRow },
 ): Promise<GoogleQuotaResult<Bucket>> {
   const configuredProjectId = await resolveGoogleConfiguredProjectId(flavor);
-  const [account] = resolveGoogleAccounts(flavor, options.authData, configuredProjectId);
+  const [account] = resolveGoogleAccounts(flavor, [options.login], configuredProjectId);
   if (!account) return null;
 
   const credentials = await flavor.companion.resolveCredentials();

@@ -15,32 +15,28 @@ import { ALL_PROVIDERS } from "../core/windows.js";
 
 export type Surface = "sidebar" | "collapsed" | "statusLine" | "toast";
 
-/** What one surface shows. Ids not named in an order follow in the snapshot's order. */
+/**
+ * What one surface shows: its section of the settings (`sidebar.hidden`, …). Ids not named in an
+ * order follow in the snapshot's order.
+ */
 export type SurfaceRows = {
-  enabled: boolean;
-  /** Names selected from this surface's tab. */
-  names?: Record<string, string>;
   /** Provider ids and row ids this surface leaves out. */
   hidden: string[];
   providerOrder: string[];
   /** Row ids per provider id. */
   rowOrder: Record<string, string[]>;
+  /**
+   * Your names for rows, by row id: on the sidebar, which the collapsed sidebar and the status
+   * line share, and on the toast.
+   */
+  names?: Record<string, string>;
 };
 
 /** The window a provider shows in the collapsed sidebar and the status line. */
 export type WindowChoice = "lowest" | QuotaWindow;
 
-/** The part of the display settings that picks rows. */
-export type RowSettings = {
-  /** Your names for rows, by row id. */
-  labels: Record<string, string>;
-  surfaces: Record<Surface, SurfaceRows>;
-  /**
-   * Preferred window by provider id, and by `ALL_PROVIDERS` for every other provider; "lowest"
-   * (the default) shows the row with the least left.
-   */
-  window: Record<string, WindowChoice>;
-};
+/** The part of the settings that picks rows: every surface's section. */
+export type RowSettings = Record<Surface, SurfaceRows>;
 
 /** A row as a place shows it: `label` is your name for it, or its own; `named` says you named it. */
 export type VisibleRow = { row: QuotaRow; label: string; named: boolean };
@@ -117,14 +113,18 @@ function groupsOf(provider: ProviderSnapshot, rows: VisibleRow[], hadRows: boole
   return [{ ...first, error: provider.error }, ...rest];
 }
 
-/** The providers and rows `surface` shows, in order, with your row names. */
+/**
+ * The providers and rows `surface` shows, in order, with your row names: the toast's on toasts,
+ * the sidebar's everywhere else.
+ */
 export function visibleGroups(
   snapshot: QuotaSnapshot,
   settings: RowSettings,
   surface: Surface,
   words: Words,
 ): Group[] {
-  const shown = settings.surfaces[surface];
+  const shown = settings[surface];
+  const names = settings[surface === "toast" ? "toast" : "sidebar"].names ?? {};
   const hidden = new Set(shown.hidden);
   const currentModel = words.onlyCurrentModel ? snapshot.currentModelProviderIds : undefined;
   const rowPrefixes = words.onlyCurrentModel ? snapshot.currentModelRowPrefixes : undefined;
@@ -146,7 +146,7 @@ export function visibleGroups(
         (row) => prefixes === undefined || prefixes.some((prefix) => row.id.startsWith(prefix)),
       )
       .filter((row) => words.detail === "detailed" || row.prominence === "primary")
-      .map((row) => visibleRow(row, shown.names ?? settings.labels));
+      .map((row) => visibleRow(row, names));
     return groupsOf(provider, rows, provider.rows.length > 0);
   });
 }

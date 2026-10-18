@@ -8,14 +8,11 @@ import {
   queryCopilotQuota,
   readCopilotLogins,
 } from "../src/lib/copilot.js";
-import { type CredentialRow, credentialRowAuthData } from "../src/lib/opencode-auth.js";
+import type { CredentialRow } from "../src/lib/opencode-auth.js";
 import type { CopilotResult } from "../src/lib/types.js";
+import { useOpencodeFolders } from "./helpers/opencode-folders.js";
 
 const mocks = vi.hoisted(() => ({
-  configDir:
-    process.platform === "win32"
-      ? "C:\\Users\\test\\.config\\opencode"
-      : "/home/test/.config/opencode",
   existsSync: vi.fn((_path: string) => false),
   readFileSync: vi.fn(),
   readCredentialRows: vi.fn(async (): Promise<CredentialRow[]> => []),
@@ -27,13 +24,6 @@ vi.mock("fs", async (importOriginal) => ({
   existsSync: mocks.existsSync,
   readFileSync: mocks.readFileSync,
 }));
-vi.mock("../src/lib/opencode-runtime-paths.js", () => ({
-  // The state folder is the test's temp one: it keeps the key the login list identity uses.
-  getOpencodeRuntimeDirs: () => ({
-    configDir: mocks.configDir,
-    stateDir: process.env.XDG_STATE_HOME,
-  }),
-}));
 vi.mock("../src/lib/opencode-auth.js", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../src/lib/opencode-auth.js")>()),
   readCredentialRows: mocks.readCredentialRows,
@@ -43,7 +33,9 @@ vi.mock("../src/lib/resolved-auth-identity.js", async (importOriginal) => ({
   deriveResolvedAuthIdentity: mocks.deriveResolvedAuthIdentity,
 }));
 
-const patPath = join(mocks.configDir, "copilot-quota-token.json");
+// The state folder keeps the key the login list identity uses.
+const folders = useOpencodeFolders();
+const patPath = join(folders.configDir, "copilot-quota-token.json");
 
 function configure(value: Record<string, unknown>): void {
   mocks.existsSync.mockImplementation((path) => path === patPath);
@@ -73,7 +65,7 @@ async function query(options: { requestTimeoutMs?: number } = {}): Promise<Copil
   const [login] = await mocks.readCredentialRows();
   return queryCopilotQuota({
     ...options,
-    ...(login ? { authData: credentialRowAuthData(login) } : {}),
+    ...(login ? { login } : {}),
   });
 }
 
@@ -819,10 +811,11 @@ describe("Copilot HTTP failures", () => {
   );
 
   it.each([
-    ["an OAuth internal-user body", "oauth-timeout-canary", 200],
-    ["a PAT billing body", "github_pat_timeout_canary", 200],
-    ["a PAT error body", "github_pat_timeout_canary", 503],
-  ])("times out %s without exposing its token", async (_name, token, status) => {
+    ["an OAuth internal-user body", "oauth-timeout-canary", 200, "Request timeout after 1s"],
+    ["a PAT billing body", "github_pat_timeout_canary", 200, "Request timeout after 1s"],
+    // A stalled error body still has its status.
+    ["a PAT error body", "github_pat_timeout_canary", 503, "GitHub API error 503: "],
+  ])("times out %s without exposing its token", async (_name, token, status, expected) => {
     if (token.startsWith("github_pat_")) configure({ token, tier: "pro", username: "alice" });
     else signIn({ access: token });
     stubFetch((_url, init) => stalledResponse(init?.signal, status));
@@ -830,7 +823,7 @@ describe("Copilot HTTP failures", () => {
     const pending = errorOf(query({ requestTimeoutMs: 1_000 }));
     await vi.advanceTimersByTimeAsync(1_000);
 
-    expect(await pending).toBe("Request timeout after 1s");
+    expect(await pending).toBe(expected);
   });
 
   it.each([

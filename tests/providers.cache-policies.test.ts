@@ -19,6 +19,7 @@ vi.mock("../src/lib/resolved-auth-identity.js", async (importOriginal) => {
 });
 
 import type { QuotaProviderCachePolicy } from "../src/lib/entries.js";
+import { composeResolvedAuthIdentities } from "../src/lib/resolved-auth-identity.js";
 import { getProviders } from "../src/providers/registry.js";
 
 const PROVIDER_CACHE_POLICIES: Readonly<Record<string, QuotaProviderCachePolicy>> =
@@ -190,6 +191,69 @@ describe("provider cache policies", () => {
         policy.resolveIdentity({ config: {} } as never, {} as never),
       ).resolves.toBeNull();
       expect(cachePolicyMocks.deriveIdentity).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each([
+    { state: "none" },
+    { state: "expired", credential: { accessToken: "st_secret-token", orgId: "wrk_shared" } },
+  ])(
+    "keeps OpenCode Go's key identity without a usable Console sign-in (%j)",
+    async (resolution) => {
+      const policy = PROVIDER_CACHE_POLICIES["opencode-go"];
+      if (policy?.kind !== "resolved-auth") throw new Error("Expected a resolved-auth policy");
+      vi.stubEnv("OPENCODE_API_KEY", "go-key");
+      cachePolicyMocks.resolveConsoleAuth.mockResolvedValue(resolution);
+
+      await expect(policy.resolveIdentity({ config: {} } as never, {} as never)).resolves.toBe(
+        JSON.stringify({
+          providerId: "opencode-go",
+          principal: { kind: "credential", value: "go-key" },
+          qualifiers: ["env:OPENCODE_API_KEY"],
+        }),
+      );
+    },
+  );
+
+  it.runIf(process.platform !== "win32" && typeof process.getuid === "function")(
+    "gives OpenCode Go one identity per Console account, stable for the same account",
+    async () => {
+      const policy = PROVIDER_CACHE_POLICIES["opencode-go"];
+      if (policy?.kind !== "resolved-auth") throw new Error("Expected a resolved-auth policy");
+      vi.stubEnv("OPENCODE_API_KEY", "go-key");
+      const identityOf = async (accountId: string, accessToken: string) => {
+        cachePolicyMocks.resolveConsoleAuth.mockResolvedValue({
+          state: "configured",
+          credential: { accessToken, orgId: "wrk_shared", accountId },
+        });
+        return await policy.resolveIdentity({ config: {} } as never, {} as never);
+      };
+
+      const first = await identityOf("acc_a", "token-1");
+      const refreshed = await identityOf("acc_a", "token-2");
+      const other = await identityOf("acc_b", "token-3");
+
+      expect(first).not.toBeNull();
+      expect(refreshed).toBe(first);
+      expect(other).not.toBe(first);
+      // The Console login and the key, composed in that order: the saved rows' identity.
+      expect(other).toBe(
+        await composeResolvedAuthIdentities({
+          providerId: "opencode-go",
+          identities: [
+            JSON.stringify({
+              providerId: "opencode-go",
+              principal: { kind: "stable-id", value: JSON.stringify(["wrk_shared", "acc_b"]) },
+              qualifiers: ["https://opencode.ai/console"],
+            }),
+            JSON.stringify({
+              providerId: "opencode-go",
+              principal: { kind: "credential", value: "go-key" },
+              qualifiers: ["env:OPENCODE_API_KEY"],
+            }),
+          ] as never,
+        }),
+      );
     },
   );
 });

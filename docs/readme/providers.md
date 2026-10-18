@@ -263,7 +263,7 @@ Pair denominators (`limit` and pair-form `budget`) must be greater than zero. Re
 
 **Never put secrets in adapter display configuration.** Static `name`, `label`, and `unit` fields and every `literal` can appear in written configuration, cache identity, rendered quota rows, or exports.
 
-OpenCode Quota sends a fixed authenticated `GET`. The URL must use HTTPS, except for loopback testing. Redirects and URLs containing credentials, queries, or fragments are rejected. Responses must be JSON and are limited to 256 KiB. Standard envelopes are limited to 100 rows and `json-v1` lists to 100 items.
+OpenCode Quota sends a fixed authenticated `GET` and waits up to `providers.checking.requestTimeoutMs` (5 seconds unset). The URL must use HTTPS, except for loopback testing. Redirects and URLs containing credentials, queries, or fragments are rejected. Responses must be JSON and are limited to 256 KiB. Standard envelopes are limited to 100 rows and `json-v1` lists to 100 items. An HTTP 401 shows as `Sign in again`, a 429 as `Rate limited` (with its `Retry-After` wait, at most a day), an endpoint that cannot be reached as `Can't reach …`, and a redirect or a reply that is not valid JSON as `Unexpected reply`.
 
 </details>
 
@@ -527,7 +527,7 @@ Create an Ollama API key, then set `OLLAMA_API_KEY` (or use trusted user/global 
 ### OpenAI and xAI
 
 - **OpenAI:** ChatGPT quota needs a Codex login: `/connect` → OpenAI → **Codex browser (legacy)** or **Codex device code (legacy)**. OpenAI rejects **Sign in with ChatGPT** logins on ChatGPT's usage endpoint (HTTP 401 `no_matching_rule`), so they show "ChatGPT quota unavailable for Sign in with ChatGPT", and stored API keys show "ChatGPT quota unavailable for API key", both without a ChatGPT request. `/quota_status` shows `auth_method: chatgpt-token-sharing` when the active login is Sign in with ChatGPT.
-- **xAI:** reads OpenCode's xAI login and shows its single Weekly window. The credits endpoint sets the quota; a best-effort subscription lookup labels the plan as xAI Lite, xAI SuperGrok, or xAI Heavy. If the plan is unknown, the quota still shows under the xAI SuperGrok label.
+- **xAI:** reads OpenCode's xAI login and shows its single Weekly window. The credits endpoint sets the quota; a best-effort subscription lookup labels the plan as xAI Lite, xAI SuperGrok, or xAI Heavy. That lookup waits at most 2 seconds (less when `providers.checking.requestTimeoutMs` is lower). If the plan is unknown or the lookup fails, the quota still shows under the xAI SuperGrok label.
 
 <a id="openrouter"></a>
 
@@ -549,7 +549,7 @@ API key order:
 4. An `opencode-go` API-key login saved in OpenCode 2 (`opencode.db`). `opencode auth login opencode-go` creates it.
 5. A legacy `opencode` API-key login as the final fallback.
 
-- Without an API key: a sign-in OpenCode cannot return shows as an error, and a failed Console call (including HTTP 403) shows no Go quota.
+- Without an API key: an expired sign-in shows `Sign in again` (as it does for Zen), a sign-in OpenCode cannot return shows as an error, and a failed Console call (including HTTP 403) shows no Go quota.
 - If the Console reports no Go subscription (for example HTTP 404), no Go rows appear.
 - A window with API status `rate-limited` is shown as used up (0% left) with its reset time. Other windows stay visible.
 - Go shows **Five-hour**, **Weekly**, and **Monthly**. The collapsed sidebar shows the window with the least left.

@@ -2,15 +2,14 @@ import {
   API_KEY_VENDORS,
   type ApiKeySource,
   getApiKeyCheckedPaths,
-  getFirstAuthEntryValue,
   parseApiKeyLogin,
-  readApiKeyLoginAuth,
+  readApiKeyLoginRow,
   resolveApiKeyFromEnvAndConfig,
 } from "./api-key-resolver.js";
 import { sanitizeDisplayText } from "./display-sanitize.js";
-import { asRecord, nonEmptyString } from "./json-guards.js";
-import { getCredentialDatabasePaths } from "./opencode-auth.js";
-import type { AlibabaCodingPlanTier, AuthData } from "./types.js";
+import { nonEmptyString } from "./json-guards.js";
+import { type CredentialRow, getCredentialDatabasePaths } from "./opencode-auth.js";
+import type { AlibabaCodingPlanTier } from "./types.js";
 
 const DEFAULT_ALIBABA_CODING_PLAN_TIER: AlibabaCodingPlanTier = "lite";
 const ALIBABA = API_KEY_VENDORS["alibaba-coding-plan"];
@@ -42,18 +41,14 @@ function normalizeAlibabaTier(value: string): AlibabaCodingPlanTier | null {
 
 /** A stored API-key login; its tier field (if any) must name a known plan. */
 export function resolveAlibabaCodingPlanAuth(
-  auth: AuthData | null | undefined,
+  row: CredentialRow | undefined,
   fallbackTier: AlibabaCodingPlanTier = DEFAULT_ALIBABA_CODING_PLAN_TIER,
 ): ResolvedAlibabaCodingPlanAuth {
-  // Unlike the other vendors, an explicit null Alibaba entry is a broken login, not "none".
-  if (getFirstAuthEntryValue(auth, ALIBABA.authKeys) === null) {
-    return { state: "invalid", error: "Alibaba Coding Plan auth entry has invalid shape" };
-  }
-  const login = parseApiKeyLogin(ALIBABA, auth);
+  if (!row) return { state: "none" };
+  const login = parseApiKeyLogin(ALIBABA, row);
   if (login.state !== "configured") return login;
 
-  const entry = asRecord(getFirstAuthEntryValue(auth, ALIBABA.authKeys)) ?? {};
-  const rawTier = TIER_KEYS.map((key) => nonEmptyString(entry[key])).find(Boolean);
+  const rawTier = TIER_KEYS.map((key) => nonEmptyString(row.value[key])).find(Boolean);
   if (!rawTier) return { state: "configured", apiKey: login.apiKey, tier: fallbackTier };
 
   const tier = normalizeAlibabaTier(rawTier);
@@ -80,10 +75,7 @@ async function resolveAlibabaCodingPlanAuthWithSource(params?: {
     };
   }
 
-  const auth = resolveAlibabaCodingPlanAuth(
-    (await readApiKeyLoginAuth(ALIBABA)) as AuthData | null,
-    fallbackTier,
-  );
+  const auth = resolveAlibabaCodingPlanAuth(await readApiKeyLoginRow(ALIBABA), fallbackTier);
   return { auth, source: auth.state === "none" ? null : "opencode.db" };
 }
 

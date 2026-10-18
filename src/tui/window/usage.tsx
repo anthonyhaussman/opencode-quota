@@ -27,7 +27,7 @@ import {
   TextAttributes,
 } from "@opentui/core";
 import { type JSX, useTerminalDimensions } from "@opentui/solid";
-import { createSignal, Show } from "solid-js";
+import { createMemo, createSignal, Show } from "solid-js";
 import {
   DEFAULT_USAGE_RANGE,
   USAGE_RANGES,
@@ -47,10 +47,12 @@ import {
   type UsageLine,
   type UsageMode,
   type UsageRole,
+  type UsageViewLines,
   usageView,
 } from "../../view/usage.js";
 import { errorToast, quotaCallOptions, rpcErrorMessage } from "../client.js";
 import { KEY_LAYERS } from "../key-layers.js";
+import { stepSelection } from "./option-line.js";
 import { Rail, railRoom } from "./rail.js";
 import type { KeyHint, WindowHost, WindowKey, WindowTheme } from "./shell.js";
 
@@ -101,10 +103,6 @@ const RANGE_ITEMS = USAGE_RANGES.map((item) => ({
 /** A model row's element id, to scroll it into view. */
 function modelRowId(index: number): string {
   return `quota-usage-model-${index}`;
-}
-
-function isBreakdownHeading(line: UsageLine): boolean {
-  return line.length === 1 && line[0].role === "heading" && line[0].text === "Breakdown";
 }
 
 /** `from` moved `share` of the way to `to`. */
@@ -323,7 +321,9 @@ export function createUsageTab(
   const [range, setRange] = createSignal<UsageRange>(DEFAULT_USAGE_RANGE);
   const [mode, setMode] = createSignal<UsageMode>("cost");
   const [breakdown, setBreakdown] = createSignal<UsageBreakdown>("model");
-  const [dates, setDates] = createSignal(thisMonth(Date.now()));
+  /** The Between dates typed or named by a command; until then, this month so far. */
+  const [chosenDates, setDates] = createSignal<{ from: string; to: string }>();
+  const dates = () => chosenDates() ?? thisMonth(Date.now());
   const [area, setArea] = createSignal<Area>("ranges");
   /** The model row the content highlights while it has the keyboard (see `litModel`). */
   const [modelFocus, setModelFocus] = createSignal(0);
@@ -495,8 +495,8 @@ export function createUsageTab(
     }
     const current = litModel();
     if (current === undefined) return false;
-    const next = current + delta;
-    if (next < 0 || next >= modelRows().length) return false;
+    const next = stepSelection(modelRows().length, current, delta);
+    if (next === undefined) return false;
     setModelFocus(next);
     scroll()?.scrollChildIntoView(modelRowId(next));
   }
@@ -629,17 +629,12 @@ export function createUsageTab(
       })),
     }));
 
-    const lines = () => {
+    const view = createMemo((): UsageViewLines => {
       const report = readyReport();
       return report
         ? usageView(report, { mode: mode(), breakdown: breakdown(), width: props.width })
-        : [];
-    };
-    /** The model rows follow the Breakdown heading and its column names (see `breakdownModels`). */
-    const firstModelLine = () => {
-      if (modelRows().length === 0) return Number.POSITIVE_INFINITY;
-      return lines().findIndex(isBreakdownHeading) + 2;
-    };
+        : { lines: [], modelLines: [] };
+    });
     const dateBox = (field: DateField) => (
       <input
         ref={(element: InputRenderable) => {
@@ -731,8 +726,8 @@ export function createUsageTab(
               {`Couldn't load the usage: ${failure()}`}
             </text>
           </Show>
-          {lines().map((line, index) => {
-            if (isBreakdownHeading(line)) {
+          {view().lines.map((line, index) => {
+            if (index === view().breakdownAt) {
               return (
                 <box flexDirection="row">
                   <UsageLineText line={line} theme={theme()} />
@@ -754,8 +749,8 @@ export function createUsageTab(
                 </box>
               );
             }
-            const model = index - firstModelLine();
-            if (model < 0 || model >= modelRows().length) {
+            const model = view().modelLines.indexOf(index);
+            if (model < 0) {
               return <UsageLineText line={line} theme={theme()} />;
             }
             return (

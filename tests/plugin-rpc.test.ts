@@ -4,7 +4,7 @@ const CONFIG_PROVIDER_IDS = Object.keys(QUOTA_PROVIDER_CATALOG).map((id) =>
   id === "quota-providers" ? "custom" : id,
 );
 
-import { existsSync, mkdtempSync } from "node:fs";
+import { existsSync } from "node:fs";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -13,10 +13,8 @@ import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from 
 import type { QuotaSnapshot } from "../src/core/types.js";
 import type { UsageReport } from "../src/core/usage.js";
 import { answer, NOT_SET_UP, percentRow } from "./helpers/fake-answers.js";
+import { useOpencodeFolders } from "./helpers/opencode-folders.js";
 import {
-  createAlibabaAuthModuleMock,
-  createPluginRuntimePathsMockModule,
-  createProvidersRegistryModuleMock,
   createServerContext,
   createSessionUsageModuleMock,
   seedDefaultPluginBootstrapMocks,
@@ -24,27 +22,17 @@ import {
 } from "./helpers/plugin-test-harness.js";
 import { writeSessionDatabase } from "./helpers/session-database.js";
 
-// A fresh folder per run, so test runs in sibling checkouts never share it.
-const TEST_RUNTIME_ROOT = mkdtempSync(join(tmpdir(), "opencode-quota-plugin-rpc-"));
+const folders = useOpencodeFolders();
+const TEST_RUNTIME_ROOT = folders.root;
 
 const mocks = vi.hoisted(() => ({
   getProviders: vi.fn(),
-  resolveAlibabaCodingPlanAuthCached: vi.fn(),
   sessionUsage: vi.fn(),
   reconcileDetectedProvidersInGlobalConfig: vi.fn(),
 }));
 
-vi.mock("../src/providers/registry.js", () =>
-  createProvidersRegistryModuleMock(mocks.getProviders),
-);
 vi.mock("../src/core/usage.js", async (importOriginal) =>
   createSessionUsageModuleMock(await importOriginal(), mocks.sessionUsage),
-);
-vi.mock("../src/lib/alibaba-auth.js", () =>
-  createAlibabaAuthModuleMock(mocks.resolveAlibabaCodingPlanAuthCached),
-);
-vi.mock("../src/lib/opencode-runtime-paths.js", () =>
-  createPluginRuntimePathsMockModule(TEST_RUNTIME_ROOT),
 );
 vi.mock("../src/lib/opencode-config-providers.js", () => ({
   reconcileDetectedProvidersInGlobalConfig: mocks.reconcileDetectedProvidersInGlobalConfig,
@@ -59,7 +47,7 @@ const callContext = {
 
 /** settings.jsonc: Copilot only, checked on every call; `overrides` per group. */
 function useSettings(overrides: Record<string, unknown> = {}): void {
-  writePluginTestSettings(TEST_RUNTIME_ROOT, {
+  writePluginTestSettings(folders.configDir, {
     ...overrides,
     providers: {
       off: CONFIG_PROVIDER_IDS.filter((id) => id !== "copilot"),
@@ -69,8 +57,8 @@ function useSettings(overrides: Record<string, unknown> = {}): void {
   });
 }
 
-const SNAPSHOT_FILE = `${TEST_RUNTIME_ROOT}/state/opencode-quota/snapshot-v6.json`;
-const SETTINGS_FILE = `${TEST_RUNTIME_ROOT}/config/opencode-quota/settings.jsonc`;
+const SNAPSHOT_FILE = join(folders.stateDir, "opencode-quota", "snapshot-v6.json");
+const SETTINGS_FILE = join(folders.configDir, "opencode-quota", "settings.jsonc");
 
 /** A set-up provider that answers with `fetch`; `extra` adds fields such as its cache policy. */
 function provider(id: string, fetch: unknown, extra: object = {}) {
@@ -95,7 +83,8 @@ const cleanups: Array<() => unknown> = [];
  * `quota` runs /quota and returns the report it posts into the chat.
  */
 async function setupServer(options: Parameters<typeof createServerContext>[0] = {}) {
-  const { default: server } = await import("../src/plugin.js");
+  const { createQuotaServerPlugin } = await import("../src/plugin.js");
+  const server = createQuotaServerPlugin({ providers: mocks.getProviders });
   const fake = createServerContext({ openCodeProviders: ["copilot"], ...options });
   const cleanup = await server.setup(fake.ctx as never);
   if (typeof cleanup === "function") cleanups.push(cleanup);
@@ -304,6 +293,14 @@ describe("server quota RPC", () => {
     expect(emit).toHaveBeenCalledWith("changed", {
       snapshot: expect.objectContaining({ version: 6 }),
     });
+    // Clients get no server-only provider facts.
+    const events = emit.mock.calls.map(([, event]) => event as { snapshot: QuotaSnapshot });
+    for (const snapshot of [refreshed.snapshot, ...events.map((event) => event.snapshot)]) {
+      for (const provider of snapshot.providers) {
+        expect(provider).not.toHaveProperty("debug");
+        expect(provider).not.toHaveProperty("exportPart");
+      }
+    }
 
     const saved = JSON.parse(await readFile(SNAPSHOT_FILE, "utf8")) as {
       entries: Record<string, { rows: Array<{ login: string; row: unknown }> }>;
@@ -320,9 +317,9 @@ describe("server quota RPC", () => {
     // A v5 sidecar that does not parse, and v5 settings in opencode.json: the start converts
     // them in memory only, and the save writes settings.jsonc with them.
     await rm(SETTINGS_FILE);
-    await writeFile(`${TEST_RUNTIME_ROOT}/config/opencode-quota/quota-toast.jsonc`, "{ broken");
+    await writeFile(join(folders.configDir, "opencode-quota", "quota-toast.jsonc"), "{ broken");
     await writeFile(
-      `${TEST_RUNTIME_ROOT}/config/opencode.json`,
+      join(folders.configDir, "opencode.json"),
       JSON.stringify({
         experimental: { quotaToast: { enabledProviders: ["copilot"], showOnIdle: false } },
       }),
@@ -1067,11 +1064,6 @@ describe("server quota RPC", () => {
     ])("counts $id usage again on every /quota", async ({ id, entry }) => {
       const fetch = vi.fn().mockResolvedValueOnce(entry(70)).mockResolvedValueOnce(entry(60));
       mocks.getProviders.mockReturnValue([provider(id, fetch)]);
-      mocks.resolveAlibabaCodingPlanAuthCached.mockResolvedValue({
-        state: "configured",
-        apiKey: "dashscope-key",
-        tier: "lite",
-      });
       const { quota } = await setupServer();
 
       await quota();

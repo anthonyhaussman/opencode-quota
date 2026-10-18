@@ -71,6 +71,15 @@ export type UsageRole =
 type UsageSpan = { text: string; role: UsageRole; back?: UsageRole };
 export type UsageLine = UsageSpan[];
 
+/** The Usage tab's lines, with where its Breakdown heading and its model rows are. */
+export type UsageViewLines = {
+  lines: UsageLine[];
+  /** The Breakdown heading's line; undefined without a breakdown. */
+  breakdownAt?: number;
+  /** Each model row's line, in `breakdownModels` order; none in the breakdown by day. */
+  modelLines: number[];
+};
+
 /** The chart sits beside the total and the providers, like T3's page, when it gets this much. */
 const BESIDE_CHART_MIN_WIDTH = 32;
 /** The total and the provider list never get wider than this, so their numbers stay close. */
@@ -108,6 +117,17 @@ const OPEN_MARK = " ▸";
 const CACHE_HEADER = "Cache";
 /** A model's Cache cell without input tokens or cache numbers. */
 const NO_CACHE_HIT = "—";
+
+/**
+ * A model's cache hit as the Usage tab writes it, in the breakdown's Cache column and in the
+ * model's details alike: "49.9%", or "—" without one. Rounded down to one decimal, like
+ * CacheHit.text, so a low cache hit never reads "50.0%".
+ */
+function cacheHitText(cache: CacheHit | undefined): string {
+  if (!cache) return NO_CACHE_HIT;
+  const tenths = Math.floor(cache.share * 1000);
+  return tenths === 0 && cache.share > 0 ? "<0.1%" : formatShare(tenths / 1000);
+}
 /** The model breakdown drops its Cache column before its names get narrower than this. */
 const CACHE_NAME_MIN_WIDTH = 8;
 
@@ -658,8 +678,7 @@ function modelName(report: UsageReport, model: UsageModelRow): string {
 }
 
 /**
- * The models of the model breakdown, in its order. In `usageView` with the model breakdown,
- * these models' rows follow the Breakdown heading and its column names, one each, in this order.
+ * The models of the model breakdown, in its order: `usageView`'s `modelLines` are their rows.
  */
 export function breakdownModels(report: UsageReport, mode: UsageMode): UsageModelRow[] {
   return inModeOrder(
@@ -677,7 +696,7 @@ function cacheColumn(shown: BreakdownEntry[]): {
   width: number;
   spans: (entry: BreakdownEntry | undefined) => UsageLine;
 } {
-  const texts = shown.map((entry) => entry.cache?.text ?? NO_CACHE_HIT);
+  const texts = shown.map((entry) => cacheHitText(entry.cache));
   const percentWidth = Math.max(columnsOf(CACHE_HEADER), ...texts.map(columnsOf));
   const lowAfter = ` ${LOW_CACHE_MARK}`;
   const hang = shown.some((entry) => entry.cache?.low) ? columnsOf(lowAfter) : 0;
@@ -689,7 +708,7 @@ function cacheColumn(shown: BreakdownEntry[]): {
     const { cache } = entry;
     let role: UsageRole = "muted";
     if (cache?.judged) role = cache.low ? "warning" : "good";
-    const cell = span(`  ${padStartColumns(cache?.text ?? NO_CACHE_HIT, percentWidth)}`, role);
+    const cell = span(`  ${padStartColumns(cacheHitText(cache), percentWidth)}`, role);
     if (hang === 0) return [cell];
     return [cell, cache?.low ? span(lowAfter, "warning") : span(" ".repeat(hang), "muted")];
   };
@@ -701,13 +720,14 @@ function cacheColumn(shown: BreakdownEntry[]): {
  * for models their cache hit (`cacheColumn`) while the names keep 8 columns or their full width.
  * `colored` (the TUI) puts a bar of each row's amount between the names and the numbers, the
  * biggest row's bar full, when there is room for it, and ends each model row with ▸.
+ * `modelLines`: the model rows' lines in `lines`.
  */
 function breakdownLines(
   view: View,
   fullWidth: number,
   maxRows: number,
   colored: boolean,
-): UsageLine[] {
+): { lines: UsageLine[]; modelLines: number[] } {
   const mark = colored && view.breakdown === "model" ? OPEN_MARK : "";
   const width = fullWidth - columnsOf(mark);
   const entries = breakdownEntries(view);
@@ -760,7 +780,9 @@ function breakdownLines(
       ...(mark ? [span(" ".repeat(columnsOf(mark)), "muted")] : []),
     ],
   ];
+  const modelLines: number[] = [];
   shown.forEach((entry, position) => {
+    if (view.breakdown === "model") modelLines.push(lines.length);
     lines.push([
       span(`${padStartColumns(String(position + 1), numberWidth)}  `, "muted"),
       ...(entry.dot ? [span(DOT, entry.dot)] : []),
@@ -774,7 +796,7 @@ function breakdownLines(
   if (entries.length > shown.length) {
     lines.push([span(`and ${entries.length - shown.length} more`, "muted")]);
   }
-  return lines;
+  return { lines, modelLines };
 }
 
 /** `right` beside `left`, starting at column `rightStart`. */
@@ -792,10 +814,10 @@ function buildView(
   report: UsageReport,
   options: UsageViewOptions,
   contents: Contents,
-): UsageLine[] {
+): UsageViewLines {
   const width = Math.max(0, Math.floor(options.width));
   if (report.totals.tokens.processed <= 0) {
-    return [clip([span("No usage in this range.", "muted")], width)];
+    return { lines: [clip([span("No usage in this range.", "muted")], width)], modelLines: [] };
   }
   const view: View = {
     report,
@@ -834,6 +856,7 @@ function buildView(
       if (chart.length > 0) top = [...list, [], ...chart];
     }
   }
+  const breakdown = breakdownLines(view, layoutWidth, contents.breakdownRows, contents.colored);
   const sections = [
     top,
     totalsLines(view, layoutWidth),
@@ -843,17 +866,30 @@ function buildView(
       layoutWidth,
       contents.colored,
     ),
-    breakdownLines(view, layoutWidth, contents.breakdownRows, contents.colored),
+    breakdown.lines,
     unpricedLines(view, layoutWidth),
-  ].filter((lines) => lines.length > 0);
+  ].filter((section) => section.length > 0);
   const gap: UsageLine[] = Array.from({ length: contents.sectionGap }, () => []);
-  return sections
-    .flatMap((lines, index) => (index === 0 ? lines : [...gap, ...lines]))
-    .map((line) => clip(line, width));
+  const lines: UsageLine[] = [];
+  let breakdownAt: number | undefined;
+  for (const section of sections) {
+    if (lines.length > 0) lines.push(...gap);
+    if (section === breakdown.lines) breakdownAt = lines.length;
+    lines.push(...section);
+  }
+  return {
+    lines: lines.map((line) => clip(line, width)),
+    breakdownAt,
+    modelLines:
+      breakdownAt === undefined ? [] : breakdown.modelLines.map((line) => breakdownAt + line),
+  };
 }
 
-/** The usage view for the TUI Usage tab: lines of role-tagged spans, each at most `width`. */
-export function usageView(report: UsageReport, options: UsageViewOptions): UsageLine[] {
+/**
+ * The usage view for the TUI Usage tab: lines of role-tagged spans, each at most `width`, and
+ * where the Breakdown heading and the model rows are among them.
+ */
+export function usageView(report: UsageReport, options: UsageViewOptions): UsageViewLines {
   return buildView(report, options, {
     chart: true,
     breakdownRows: Number.POSITIVE_INFINITY,
@@ -895,8 +931,6 @@ export function modelDetailView(
     mode === "cost"
       ? `${formatShare(model.costShare)} of cost`
       : `${formatShare(model.tokenShare)} of tokens`;
-  const { input, cacheRead, cacheWrite } = model.tokensByType;
-  const allInput = input + cacheRead + cacheWrite;
   let perMillion = "—";
   if (!model.priced) perMillion = "no price";
   else if (model.tokens > 0) perMillion = formatUsd((model.costUsd / model.tokens) * 1_000_000);
@@ -910,7 +944,7 @@ export function modelDetailView(
         ["Cost", costText(model)],
         ["Tokens", formatTokens(model.tokens)],
         ["Per 1M tokens", perMillion],
-        ["Cache hit", allInput > 0 ? formatShare(cacheRead / allInput) : "—"],
+        ["Cache hit", cacheHitText(cacheHit(model.tokensByType))],
       ],
       layoutWidth,
     ),
@@ -945,7 +979,7 @@ export function modelDetailView(
  */
 export function usageText(report: UsageReport, options: UsageTextOptions): string {
   const width = Math.min(TEXT_MAX_WIDTH, options.width ?? TEXT_MAX_WIDTH);
-  const lines = buildView(
+  const { lines } = buildView(
     report,
     { mode: options.mode, breakdown: options.breakdown, width },
     { chart: false, breakdownRows: TEXT_BREAKDOWN_ROWS, colored: false, sectionGap: 1 },

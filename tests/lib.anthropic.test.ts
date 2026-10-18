@@ -22,6 +22,7 @@ import {
 } from "../src/lib/anthropic.js";
 import {
   bindCredentialSource,
+  type CredentialRow,
   createIntegrationCredentialSource,
 } from "../src/lib/opencode-auth.js";
 import { __resetResolvedAuthIdentityForTests } from "../src/lib/resolved-auth-identity.js";
@@ -845,7 +846,14 @@ describe("OAuth usage request", () => {
       "Anthropic API returned 429 Anthropic OAuth usage probe paused after HTTP 429; retry in 30s.",
       "retry in 25s.",
     ],
-    ["stalls past the deadline", true, "45", 5_000, "Request timeout after 5s", "retry in 40s."],
+    [
+      "stalls past the deadline",
+      true,
+      "45",
+      5_000,
+      "Anthropic API returned 429 Anthropic OAuth usage probe paused after HTTP 429; retry in 45s.",
+      "retry in 40s.",
+    ],
   ])(
     "establishes a cooldown when the 429 response body %s",
     async (_label, stall, retryAfter, stallMs, firstMessage, suppressedMessage) => {
@@ -951,41 +959,45 @@ describe("OAuth usage request", () => {
 });
 
 describe("anthropic auth resolution", () => {
+  /** One stored Claude login; `resolveError` when OpenCode could not return it. */
+  const login = (value: Record<string, unknown>, resolveError?: string): CredentialRow => ({
+    id: "claude",
+    integrationId: "anthropic",
+    label: "",
+    active: true,
+    value,
+    ...(resolveError ? { resolveError } : {}),
+  });
+
   it.each([
     [
       "resolves the OpenCode anthropic OAuth entry",
-      { anthropic: { type: "oauth", access: "opencode-token", expires: 4_000 } },
+      login({ type: "oauth", access: "opencode-token", expires: 4_000 }),
       { state: "configured", accessToken: "opencode-token", expiresAt: 4_000 },
     ],
     [
       "resolves entries without an expiry",
-      { anthropic: { type: "oauth", access: "opencode-token" } },
+      login({ type: "oauth", access: "opencode-token" }),
       { state: "configured", accessToken: "opencode-token" },
     ],
     [
       "ignores API key auth entries because the usage endpoint requires OAuth",
-      { anthropic: { type: "api", access: "opencode-token" } },
+      login({ type: "api", access: "opencode-token" }),
       { state: "none" },
     ],
-    [
-      "ignores blank access tokens",
-      { anthropic: { type: "oauth", access: "   " } },
-      { state: "none" },
-    ],
+    ["ignores blank access tokens", login({ type: "oauth", access: "   " }), { state: "none" }],
     [
       "reports expired entries as expired instead of configured",
-      { anthropic: { type: "oauth", access: "opencode-token", expires: 1_000 } },
+      login({ type: "oauth", access: "opencode-token", expires: 1_000 }),
       { state: "expired", expiresAt: 1_000 },
     ],
     [
       "reports a login OpenCode could not return as failed",
-      { anthropic: { type: "oauth", resolveError: "refresh_failed: HTTP 500" } },
+      login({ type: "oauth" }, "refresh_failed: HTTP 500"),
       { state: "failed", error: "refresh_failed: HTTP 500" },
     ],
-    ["returns none when auth data is missing", null, { state: "none" }],
-    ["returns none when the anthropic entry is missing", {}, { state: "none" }],
-  ])("%s", (_label, auth, expected) => {
-    expect(resolveAnthropicOAuth(auth as never, { nowMs: 2_000 })).toStrictEqual(expected);
+  ])("%s", (_label, row, expected) => {
+    expect(resolveAnthropicOAuth(row, { nowMs: 2_000 })).toStrictEqual(expected);
   });
 });
 

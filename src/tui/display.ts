@@ -1,7 +1,4 @@
-/**
- * File-backed settings for the TUI and its Settings lines. DisplaySettings also exposes the
- * row selectors the existing renderers consume; these are derived from the tab sections.
- */
+/** File-backed settings for the TUI and its Settings lines. */
 import type { Words } from "../core/types.js";
 import {
   type CursorQuotaPlan,
@@ -27,7 +24,7 @@ import {
   formatDuration,
   percentText,
 } from "../view/format.js";
-import type { RowSettings, Surface } from "../view/select.js";
+import type { Surface } from "../view/select.js";
 import type { ColorRole } from "../view/text.js";
 
 /** Named colors follow OpenCode's theme; hex colors stay fixed; bar follows the row's level. */
@@ -36,11 +33,8 @@ export type ColorName = Exclude<ColorChoice, "bar" | `#${string}`>;
 export const COLOR_NAMES = THEME_COLOR_NAMES.filter((name): name is ColorName => name !== "bar");
 type StatusDetail = Settings["statusLine"]["detail"];
 
-export type DisplaySettings = Settings &
-  RowSettings & {
-    thresholds: { warningBelow: number; lowBelow: number };
-    runsOut: Record<Surface, boolean>;
-  };
+/** The settings the TUI shows: the saved ones, with the Settings tabs' draft on top. */
+export type DisplaySettings = Settings;
 
 /** Every colored thing: its Colors line (and group) and the theme color it gets by default. */
 const COLOR_LINES: ReadonlyArray<{
@@ -72,34 +66,6 @@ export const THEME_COLORS = Object.fromEntries(
 ) as Record<ColorRole, ColorName | "bar">;
 const SURFACES: readonly Surface[] = ["sidebar", "collapsed", "statusLine", "toast"];
 
-/** The tab sections as the row settings the renderers use. */
-export function displaySettings(settings: Settings): DisplaySettings {
-  return {
-    ...settings,
-    labels: settings.sidebar.names,
-    surfaces: Object.fromEntries(
-      SURFACES.map((surface) => [
-        surface,
-        {
-          enabled: settings[surface].show,
-          hidden: settings[surface].hidden,
-          providerOrder: settings[surface].providerOrder,
-          rowOrder: settings[surface].rowOrder,
-          names: surface === "toast" ? settings.toast.names : settings.sidebar.names,
-        },
-      ]),
-    ) as RowSettings["surfaces"],
-    window: settings.collapsed.window,
-    thresholds: {
-      warningBelow: Math.max(settings.colors.warningBelow, settings.colors.lowBelow),
-      lowBelow: settings.colors.lowBelow,
-    },
-    runsOut: Object.fromEntries(
-      SURFACES.map((surface) => [surface, settings[surface].runsOut]),
-    ) as Record<Surface, boolean>,
-  };
-}
-
 /** The value at a field's path, for example "layout.barWidth". */
 export function valueAt(settings: unknown, path: string): FieldValue {
   let value = settings;
@@ -130,11 +96,11 @@ export function setIn(
 ): DisplaySettings {
   const next = JSON.parse(JSON.stringify(settings)) as DisplaySettings;
   putAt(next, keys, value);
-  return displaySettings(next);
+  return next;
 }
 
 export function defaultDisplaySettings(): DisplaySettings {
-  return displaySettings(defaultSettings());
+  return defaultSettings();
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -280,7 +246,7 @@ const SHOW = {
   decimals: (value) =>
     `${value} (${formatDuration(RESET_EXAMPLES_MS[0] as number, "decimal", Number(value))})`,
   minutes: (value) => `every ${Number(value) / MINUTE_MS} min`,
-  seconds: (value) => `after ${Number(value) / 1_000} s`,
+  timeout: (value) => (value === null ? "each provider's own" : `after ${Number(value) / 1_000} s`),
   days: (value) => (value === 1 ? "every day" : `every ${value} days`),
   day: (value) => (typeof value === "number" ? `day ${value}` : "calendar month"),
   rows: named({ summary: "main rows only", detailed: "all rows" }),
@@ -407,8 +373,9 @@ export const FIELDS: readonly Field[] = [
     group: "Checking",
     values: [1, 2, 5, 10, 15, 30].map((count) => count * MINUTE_MS),
   }),
-  field("providers.checking.requestTimeoutMs", "Slow provider: give up", SHOW.seconds, {
-    values: [5_000, 8_000, 12_000, 20_000, 30_000],
+  // Unset (null), each provider waits its own time; set, every provider waits that long.
+  field("providers.checking.requestTimeoutMs", "Slow provider: give up", SHOW.timeout, {
+    values: [null, 5_000, 8_000, 12_000, 20_000, 30_000],
   }),
   field("providers.checking.waitForQuotaReset", "A model hits its limit", SHOW.limitHit),
   field(
@@ -606,7 +573,7 @@ export function createFileDisplay(server: import("./server-settings.js").ServerS
         if (value !== undefined) setPath(settings, key, value);
       }
     }
-    return displaySettings(settings);
+    return settings;
   };
   return {
     server,

@@ -4,26 +4,55 @@ import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 
 import {
   bindCredentialSource,
-  clearReadAuthFileCacheForTests,
+  clearCredentialRowCacheForTests,
+  activeCredentialRows,
+  type CredentialMethod,
+  type CredentialRow,
   createIntegrationCredentialSource,
-  credentialRowAuthEntry,
   formatCredentialDisplayNames,
   getCredentialDatabasePaths,
   getCredentialSourceDiagnostics,
   notifyCredentialsChanged,
-  readAuthFile,
-  readAuthFileCached,
+  readActiveCredentialRowsCached,
   readCredentialRows,
+  readOAuthLogin,
   selectConnectionCredentialRows,
 } from "../src/lib/opencode-auth.js";
 import { createFakeIntegration, type FakeCredential } from "./helpers/fake-integration.js";
+
+/** Rows as `{ integration id: value }` (the first row of each id), null without rows. */
+function byId(rows: readonly CredentialRow[]): Record<string, unknown> | null {
+  const active = activeCredentialRows(rows);
+  if (active.length === 0) return null;
+  return Object.fromEntries(
+    active.map((row) => [
+      row.integrationId,
+      row.resolveError === undefined ? row.value : { ...row.value, resolveError: row.resolveError },
+    ]),
+  );
+}
+
+/** The active login of each requested id (a `firstOnly` read), as `byId` shows rows. */
+async function readActive(params: {
+  integrationIds: readonly string[];
+  methods?: readonly CredentialMethod[];
+}) {
+  return byId(
+    await readCredentialRows(params.integrationIds, { methods: params.methods, firstOnly: true }),
+  );
+}
+
+/** `readActiveCredentialRowsCached`, as `byId` shows rows. */
+async function readCachedById(params: Parameters<typeof readActiveCredentialRowsCached>[0]) {
+  return byId(await readActiveCredentialRowsCached(params));
+}
 
 const unbinds: Array<() => void> = [];
 
 afterEach(() => {
   for (const unbind of unbinds.splice(0)) unbind();
   notifyCredentialsChanged();
-  clearReadAuthFileCacheForTests();
+  clearCredentialRowCacheForTests();
   vi.useRealTimers();
   vi.unstubAllEnvs();
 });
@@ -314,7 +343,7 @@ describe("integration credential source", () => {
     });
 
     expect(await readIds(["openrouter", "deepseek"])).toEqual(["cred_openrouter"]);
-    await expect(readAuthFile({ integrationIds: ["deepseek"] })).resolves.toBeNull();
+    await expect(readActive({ integrationIds: ["deepseek"] })).resolves.toBeNull();
     expect(resolvedIds(integration)).toEqual(["cred_openrouter"]);
   });
 
@@ -368,12 +397,12 @@ describe("integration credential source", () => {
     expect(integration.list).not.toHaveBeenCalled();
     expect(resolvedIds(integration)).toEqual(["cred_active", "cred_deepseek", "cred_codex"]);
 
-    // A mismatched active connection yields nothing and is not resolved, also through readAuthFile.
+    // A mismatched active connection yields nothing and is not resolved, also among other ids.
     await expect(
       readCredentialRows(["deepseek"], { firstOnly: true, methods: ["oauth"] }),
     ).resolves.toEqual([]);
     await expect(
-      readAuthFile({ integrationIds: ["openai", "deepseek"], methods: ["key"] }),
+      readActive({ integrationIds: ["openai", "deepseek"], methods: ["key"] }),
     ).resolves.toEqual({ deepseek: { type: "api", key: "cred_deepseek-key" } });
     expect(resolvedIds(integration)).toHaveLength(4);
   });
@@ -495,7 +524,7 @@ describe("integration credential source", () => {
       expect.objectContaining({ id: "cred_ok", active: false }),
     ]);
     // First row still wins: the failed active login is not replaced by the next one.
-    await expect(readAuthFile({ integrationIds: ["openai"] })).resolves.toEqual({
+    await expect(readActive({ integrationIds: ["openai"] })).resolves.toEqual({
       openai: { type: "oauth", resolveError: "refresh_failed: Token refresh failed: 400" },
     });
     expect(getCredentialSourceDiagnostics().failures).toEqual([
@@ -651,10 +680,12 @@ describe("integration credential source", () => {
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
 
     await expect(unboundReader.readCredentialRows(["openai"])).resolves.toEqual([]);
-    await expect(unboundReader.readAuthFile({ integrationIds: ["openai"] })).resolves.toBeNull();
     await expect(
-      unboundReader.readAuthFileCached({ maxAgeMs: 0, integrationIds: ["openai"] }),
-    ).resolves.toBeNull();
+      unboundReader.readCredentialRows(["openai"], { firstOnly: true }),
+    ).resolves.toEqual([]);
+    await expect(
+      unboundReader.readActiveCredentialRowsCached({ maxAgeMs: 0, integrationIds: ["openai"] }),
+    ).resolves.toEqual([]);
 
     expect(warn.mock.calls).toEqual([["[opencode-quota] credential source is not bound"]]);
     expect(unboundReader.getCredentialSourceDiagnostics()).toEqual({
@@ -686,7 +717,7 @@ describe("integration credential source", () => {
   });
 });
 
-describe("readAuthFile and readAuthFileCached", () => {
+describe("active logins and readActiveCredentialRowsCached", () => {
   it("maps the first login of each requested id, metadata on top", async () => {
     bindFakeIntegration([
       oauthCredential("github-copilot", "cred_copilot", {
@@ -705,7 +736,7 @@ describe("readAuthFile and readAuthFileCached", () => {
     ]);
 
     await expect(
-      readAuthFile({ integrationIds: ["github-copilot", "deepseek", "openai"] }),
+      readActive({ integrationIds: ["github-copilot", "deepseek", "openai"] }),
     ).resolves.toEqual({
       "github-copilot": expect.objectContaining({
         access: "copilot-access",
@@ -714,60 +745,60 @@ describe("readAuthFile and readAuthFileCached", () => {
       deepseek: { type: "api", key: "deepseek-key" },
       openai: expect.objectContaining({ access: "cred_openai_active-access" }),
     });
-    await expect(readAuthFile({ integrationIds: ["xai"] })).resolves.toBeNull();
+    await expect(readActive({ integrationIds: ["xai"] })).resolves.toBeNull();
   });
 
-  it("caches auth maps per sorted id list", async () => {
+  it("caches active logins per sorted id list", async () => {
     vi.useFakeTimers({ toFake: ["Date"] });
     vi.setSystemTime(1_000_000);
     const openai = oauthCredential("openai", "cred_openai");
     bindFakeIntegration([openai, keyCredential("deepseek", "cred_deepseek")]);
 
     await expect(
-      readAuthFileCached({ maxAgeMs: 60_000, integrationIds: ["openai", "deepseek"] }),
+      readCachedById({ maxAgeMs: 60_000, integrationIds: ["openai", "deepseek"] }),
     ).resolves.toMatchObject({ openai: { access: "cred_openai-access" } });
     openai.value = { type: "oauth", access: "rotated-access" };
 
     // Same ids in another order hit the same cache entry.
     await expect(
-      readAuthFileCached({ maxAgeMs: 60_000, integrationIds: ["deepseek", "openai"] }),
+      readCachedById({ maxAgeMs: 60_000, integrationIds: ["deepseek", "openai"] }),
     ).resolves.toMatchObject({ openai: { access: "cred_openai-access" } });
     // A different id list has its own entry and reads fresh.
-    await expect(
-      readAuthFileCached({ maxAgeMs: 60_000, integrationIds: ["openai"] }),
-    ).resolves.toEqual({ openai: { type: "oauth", access: "rotated-access" } });
+    await expect(readCachedById({ maxAgeMs: 60_000, integrationIds: ["openai"] })).resolves.toEqual(
+      { openai: { type: "oauth", access: "rotated-access" } },
+    );
     // Once time moves on, maxAgeMs 0 re-reads the first entry too.
     vi.setSystemTime(1_000_001);
     await expect(
-      readAuthFileCached({ maxAgeMs: 0, integrationIds: ["openai", "deepseek"] }),
+      readCachedById({ maxAgeMs: 0, integrationIds: ["openai", "deepseek"] }),
     ).resolves.toMatchObject({ openai: { access: "rotated-access" } });
   });
 
-  it("caches auth maps per method filter as well as per id list", async () => {
+  it("caches active logins per method filter as well as per id list", async () => {
     const integration = bindFakeIntegration([oauthCredential("opencode", "cred_console")]);
     const keyOnly = { maxAgeMs: 60_000, integrationIds: ["opencode"], methods: ["key"] as const };
 
-    await expect(readAuthFileCached(keyOnly)).resolves.toBeNull();
+    await expect(readCachedById(keyOnly)).resolves.toBeNull();
     // Same ids without a filter have their own entry, so the sign-in is read.
     await expect(
-      readAuthFileCached({ maxAgeMs: 60_000, integrationIds: ["opencode"] }),
+      readCachedById({ maxAgeMs: 60_000, integrationIds: ["opencode"] }),
     ).resolves.toMatchObject({ opencode: { access: "cred_console-access" } });
     // The key-only entry stays cached and empty.
-    await expect(readAuthFileCached(keyOnly)).resolves.toBeNull();
+    await expect(readCachedById(keyOnly)).resolves.toBeNull();
     expect(resolvedIds(integration)).toEqual(["cred_console"]);
   });
 
-  it("drops cached auth maps when OpenCode reports a credential change", async () => {
+  it("drops cached logins when OpenCode reports a credential change", async () => {
     const openai = oauthCredential("openai", "cred_openai");
     bindFakeIntegration([openai]);
 
-    await readAuthFileCached({ maxAgeMs: 60_000, integrationIds: ["openai"] });
+    await readCachedById({ maxAgeMs: 60_000, integrationIds: ["openai"] });
     openai.value = { type: "oauth", access: "switched-access" };
     notifyCredentialsChanged();
 
-    await expect(
-      readAuthFileCached({ maxAgeMs: 60_000, integrationIds: ["openai"] }),
-    ).resolves.toEqual({ openai: { type: "oauth", access: "switched-access" } });
+    await expect(readCachedById({ maxAgeMs: 60_000, integrationIds: ["openai"] })).resolves.toEqual(
+      { openai: { type: "oauth", access: "switched-access" } },
+    );
   });
 
   it("does not cache a read that was in flight when the logins changed", async () => {
@@ -784,15 +815,15 @@ describe("readAuthFile and readAuthFileCached", () => {
     });
     unbinds.push(bindCredentialSource({ kind: "opencode-integration-api", readRows: () => rows }));
 
-    const oldRead = readAuthFileCached({ maxAgeMs: 60_000, integrationIds: ["openai"] });
+    const oldRead = readCachedById({ maxAgeMs: 60_000, integrationIds: ["openai"] });
     notifyCredentialsChanged();
     releaseOldRead([openaiRow("old-access")]);
     await expect(oldRead).resolves.toEqual({ openai: { type: "oauth", access: "old-access" } });
     rows = Promise.resolve([openaiRow("new-access")]);
 
-    await expect(
-      readAuthFileCached({ maxAgeMs: 60_000, integrationIds: ["openai"] }),
-    ).resolves.toEqual({ openai: { type: "oauth", access: "new-access" } });
+    await expect(readCachedById({ maxAgeMs: 60_000, integrationIds: ["openai"] })).resolves.toEqual(
+      { openai: { type: "oauth", access: "new-access" } },
+    );
   });
 
   it("shares one in-flight read per id list", async () => {
@@ -801,29 +832,67 @@ describe("readAuthFile and readAuthFileCached", () => {
     ]);
 
     const [first, second] = await Promise.all([
-      readAuthFileCached({ maxAgeMs: 0, integrationIds: ["deepseek"] }),
-      readAuthFileCached({ maxAgeMs: 0, integrationIds: ["deepseek"] }),
+      readActiveCredentialRowsCached({ maxAgeMs: 0, integrationIds: ["deepseek"] }),
+      readActiveCredentialRowsCached({ maxAgeMs: 0, integrationIds: ["deepseek"] }),
     ]);
-    expect(first).toEqual({ deepseek: { type: "api", key: "deepseek-key" } });
+    expect(byId(first)).toEqual({ deepseek: { type: "api", key: "deepseek-key" } });
     expect(second).toBe(first);
   });
 
-  it("adds resolveError to the auth entry of a failed row only", () => {
-    const row = {
-      id: "openai",
-      integrationId: "openai",
-      label: "default",
-      active: true,
-      value: { type: "oauth", access: "token" },
-    };
-    expect(credentialRowAuthEntry(row)).toBe(row.value);
+  it("keeps the first row of each integration id, in order", () => {
+    const row = (id: string, integrationId: string): CredentialRow => ({
+      id,
+      integrationId,
+      label: "",
+      active: false,
+      value: { type: "api", key: id },
+    });
     expect(
-      credentialRowAuthEntry({
-        ...row,
-        value: { type: "oauth" },
-        resolveError: "refresh_failed: HTTP 400",
-      }),
-    ).toEqual({ type: "oauth", resolveError: "refresh_failed: HTTP 400" });
+      activeCredentialRows([row("a1", "openai"), row("b1", "deepseek"), row("a2", "openai")]).map(
+        (active) => active.id,
+      ),
+    ).toEqual(["a1", "b1"]);
+  });
+});
+
+describe("readOAuthLogin", () => {
+  const row = (value: Record<string, unknown>, resolveError?: string): CredentialRow => ({
+    id: "login",
+    integrationId: "openai",
+    label: "",
+    active: true,
+    value,
+    ...(resolveError ? { resolveError } : {}),
+  });
+
+  it.each([
+    ["a key login", row({ type: "api", key: "k" }), null],
+    [
+      "a login OpenCode could not return",
+      row({ type: "oauth" }, "refresh_failed: HTTP 400"),
+      { state: "failed", error: "refresh_failed: HTTP 400" },
+    ],
+    [
+      "trimmed tokens, the expiry and every stored field",
+      row({ type: "oauth", access: " a ", refresh: " r ", expires: 5, accountId: "acct" }),
+      {
+        state: "signed-in",
+        accessToken: "a",
+        refreshToken: "r",
+        expiresAt: 5,
+        fields: { type: "oauth", access: " a ", refresh: " r ", expires: 5, accountId: "acct" },
+      },
+    ],
+    [
+      "no blank or non-text token and no non-finite expiry",
+      row({ type: "oauth", access: "  ", refresh: 7, expires: Number.NaN }),
+      {
+        state: "signed-in",
+        fields: { type: "oauth", access: "  ", refresh: 7, expires: Number.NaN },
+      },
+    ],
+  ])("reads %s", (_name, login, expected) => {
+    expect(readOAuthLogin(login)).toEqual(expected);
   });
 });
 

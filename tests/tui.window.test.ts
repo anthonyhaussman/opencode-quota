@@ -70,7 +70,7 @@ const CLAUDE = provider("anthropic", "Claude", [
 
 function limitLines(providers: ProviderSnapshot[], width = WIDE, hidden: string[] = []) {
   const display = defaultDisplaySettings();
-  display.surfaces.sidebar.hidden = hidden;
+  display.sidebar.hidden = hidden;
   const snapshot: QuotaSnapshot = { version: 6, providers, resetNotices: [], generatedAtMs: NOW };
   return limitsLines({ snapshot, display, nowMs: NOW, width });
 }

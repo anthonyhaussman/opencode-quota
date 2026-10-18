@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it } from "vite-plus/test";
 
 import {
   bindCredentialSource,
-  clearReadAuthFileCacheForTests,
+  clearCredentialRowCacheForTests,
   createIntegrationCredentialSource,
   notifyCredentialsChanged,
 } from "../src/lib/opencode-auth.js";
@@ -18,7 +18,7 @@ const unbinds: Array<() => void> = [];
 afterEach(() => {
   for (const unbind of unbinds.splice(0)) unbind();
   notifyCredentialsChanged();
-  clearReadAuthFileCacheForTests();
+  clearCredentialRowCacheForTests();
 });
 
 function bindConsoleLogins(credentials: FakeCredential[]) {

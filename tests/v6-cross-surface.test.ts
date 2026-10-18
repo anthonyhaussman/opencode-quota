@@ -16,8 +16,7 @@ const CONFIG_PROVIDER_IDS = Object.keys(QUOTA_PROVIDER_CATALOG).map((id) =>
  * Agent tool to plugin: a custom provider an agent replaces is switched off, and the running
  * server stops its requests through the settings reload alone.
  */
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { parse as parseJsonc } from "jsonc-parser";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
@@ -34,9 +33,8 @@ import {
   textLines,
   words,
 } from "./helpers/jsx-tree.js";
+import { useOpencodeFolders } from "./helpers/opencode-folders.js";
 import {
-  createAlibabaAuthModuleMock,
-  createProvidersRegistryModuleMock,
   createSessionUsageModuleMock,
   seedDefaultPluginBootstrapMocks,
   writePluginTestSettings,
@@ -51,34 +49,20 @@ const CANARIES = {
   failureBody: "v6-private-http-body-canary",
 };
 
+const folders = useOpencodeFolders();
+
 const mocks = vi.hoisted(() => ({
-  root: "",
   terminal: { width: 120, height: 40 },
   getProviders: vi.fn(),
-  resolveAlibabaCodingPlanAuthCached: vi.fn(),
   sessionUsage: vi.fn(),
 }));
 
 vi.mock("@opentui/solid", () => ({
   useTerminalDimensions: () => () => mocks.terminal,
 }));
-vi.mock("../src/providers/registry.js", () =>
-  createProvidersRegistryModuleMock(mocks.getProviders),
-);
 vi.mock("../src/core/usage.js", async (importOriginal) =>
   createSessionUsageModuleMock(await importOriginal(), mocks.sessionUsage),
 );
-vi.mock("../src/lib/alibaba-auth.js", () =>
-  createAlibabaAuthModuleMock(mocks.resolveAlibabaCodingPlanAuthCached),
-);
-vi.mock("../src/lib/opencode-runtime-paths.js", () => ({
-  getOpencodeRuntimeDirs: () => ({
-    dataDir: `${mocks.root}/data`,
-    configDir: `${mocks.root}/config`,
-    cacheDir: `${mocks.root}/cache`,
-    stateDir: `${mocks.root}/state`,
-  }),
-}));
 
 // Resets in 2h 14m (the 30 s margin keeps the minute while the test runs).
 const RESET = new Date(Date.now() + 134 * 60_000 - 30_000).toISOString();
@@ -151,7 +135,8 @@ function expectNoCanary(...outputs: unknown[]): void {
 }
 
 async function startHosts() {
-  const { default: serverPlugin } = await import("../src/plugin.js");
+  const { createQuotaServerPlugin } = await import("../src/plugin.js");
+  const serverPlugin = createQuotaServerPlugin({ providers: mocks.getProviders });
   const events = createQuotaRpcEvents();
   const register = vi.fn(async () => ({ dispose: async () => {}, events: { emit: events.emit } }));
   // The server's slash commands, and the messages they post (Web, Desktop, the TUI chat form).
@@ -253,12 +238,11 @@ describe("v6 surfaces on the quota snapshot", () => {
   let telemetry = fakeTelemetry();
 
   beforeEach(async () => {
-    mocks.root = await mkdtemp(join(tmpdir(), "opencode-quota-v6-cross-surface-"));
     mocks.terminal = { width: 120, height: 40 };
     process.env.V6_TEAM_KEY = CANARIES.teamKey;
     process.env.V6_FAILING_KEY = CANARIES.failingKey;
     seedDefaultPluginBootstrapMocks(mocks, { resetPluginState: true });
-    writePluginTestSettings(mocks.root, {
+    writePluginTestSettings(folders.configDir, {
       // Pinned, so a new default changes no expected text here.
       layout: {
         bar: "blocks",
@@ -283,7 +267,7 @@ describe("v6 surfaces on the quota snapshot", () => {
       },
       system: {
         exportFile: true,
-        exportPath: join(mocks.root, "quota-export.json"),
+        exportPath: join(folders.root, "quota-export.json"),
         telemetry: true,
       },
     });
@@ -320,7 +304,6 @@ describe("v6 surfaces on the quota snapshot", () => {
     }
     vi.unstubAllGlobals();
     vi.unstubAllEnvs();
-    await rm(mocks.root, { recursive: true, force: true, maxRetries: 3 });
   });
 
   it("shows one snapshot in the sidebar, status line, toast, the window, export and gauges", async () => {
@@ -447,7 +430,7 @@ describe("v6 surfaces on the quota snapshot", () => {
 
     // The export file (version 3) and the gauges follow the snapshot without asking a provider
     // again.
-    const exportPath = join(mocks.root, "quota-export.json");
+    const exportPath = join(folders.root, "quota-export.json");
     const exported = await vi.waitFor(async () => {
       const file = JSON.parse(await readFile(exportPath, "utf8"));
       expect(file.providers["quota-providers"]?.status).toBe("partial");
@@ -494,7 +477,7 @@ describe("v6 surfaces on the quota snapshot", () => {
 
     // No API key and no private error body reaches a surface, the RPC, a file or a gauge.
     const savedSnapshot = await vi.waitFor(() =>
-      readFile(join(mocks.root, "state", "opencode-quota", "snapshot-v6.json"), "utf8"),
+      readFile(join(folders.stateDir, "opencode-quota", "snapshot-v6.json"), "utf8"),
     );
     expectNoCanary(
       expanded,
@@ -521,7 +504,7 @@ describe("v6 surfaces on the quota snapshot", () => {
     await vi.waitFor(() => expect(windowTree()).toBe(""), { timeout: 5_000 });
     expect(
       parseJsonc(
-        await readFile(join(mocks.root, "config", "opencode-quota", "settings.jsonc"), "utf8"),
+        await readFile(join(folders.configDir, "opencode-quota", "settings.jsonc"), "utf8"),
       ),
     ).toMatchObject({ sidebar: { sessionTokens: false } });
     expect(tui.stored.has("settings")).toBe(false);
@@ -548,7 +531,7 @@ describe("v6 surfaces on the quota snapshot", () => {
     }
 
     it("checks found providers by default, saves unticks and checks a provider found later", async () => {
-      writePluginTestSettings(mocks.root, {
+      writePluginTestSettings(folders.configDir, {
         providers: { off: [], checking: { minIntervalMs: 1 } },
       });
       let cursorFound = false;
@@ -594,7 +577,7 @@ describe("v6 surfaces on the quota snapshot", () => {
         await vi.waitFor(() => expect(windowTree()).toBe(""), { timeout: 5_000 });
         expect(
           parseJsonc(
-            await readFile(join(mocks.root, "config", "opencode-quota", "settings.jsonc"), "utf8"),
+            await readFile(join(folders.configDir, "opencode-quota", "settings.jsonc"), "utf8"),
           ).providers.off,
         ).toEqual(["copilot"]);
         cursorFound = true;
@@ -626,7 +609,7 @@ describe("v6 surfaces on the quota snapshot", () => {
         const sidebar = () => words(tui.render("sidebar.content", { sessionID: "ses_1" }));
         await vi.waitFor(() => expect(sidebar()).toContain("Plan ███████████████░░░ 81%"));
         clickable(settingLine(windowTree(), "sidebar.sessionTokens"), "›").props.onMouseUp();
-        const path = join(mocks.root, "config", "opencode-quota", "settings.jsonc");
+        const path = join(folders.configDir, "opencode-quota", "settings.jsonc");
         const file = parseJsonc(await readFile(path, "utf8"));
         file.sidebar = { names: { "copilot.allowance": "Sidebar quota" } };
         file.toast = { afterReply: "always", names: { "copilot.allowance": "Reply" } };
@@ -654,7 +637,7 @@ describe("v6 surfaces on the quota snapshot", () => {
     });
 
     it("hides the status line while a sidebar panel shows quota, except on its own tab", async () => {
-      const path = join(mocks.root, "config", "opencode-quota", "settings.jsonc");
+      const path = join(folders.configDir, "opencode-quota", "settings.jsonc");
       const file = parseJsonc(await readFile(path, "utf8"));
       file.statusLine = { detail: "one" };
       await writeFile(path, JSON.stringify(file));
@@ -691,7 +674,7 @@ describe("v6 surfaces on the quota snapshot", () => {
     });
 
     it("saves the words on All places and a custom provider switched on in Providers to settings.jsonc, then fetches it", async () => {
-      writePluginTestSettings(mocks.root, {
+      writePluginTestSettings(folders.configDir, {
         providers: {
           off: CONFIG_PROVIDER_IDS.filter((id) => !["copilot", "custom"].includes(id)),
           custom: [{ ...CUSTOM_SOURCES[0], enabled: false }],
@@ -727,7 +710,7 @@ describe("v6 surfaces on the quota snapshot", () => {
 
       clickable(team(), "›").props.onMouseUp();
       clickable(windowTree(), "Save").props.onMouseUp();
-      const settingsFile = join(mocks.root, "config", "opencode-quota", "settings.jsonc");
+      const settingsFile = join(folders.configDir, "opencode-quota", "settings.jsonc");
       await vi.waitFor(async () =>
         expect(parseJsonc(await readFile(settingsFile, "utf8"))).toMatchObject({
           words: { percent: "used" },
@@ -745,7 +728,7 @@ describe("v6 surfaces on the quota snapshot", () => {
 
     it("keeps a custom provider off when it changed after the Providers tab showed it", async () => {
       const settings = (url: string) =>
-        writePluginTestSettings(mocks.root, {
+        writePluginTestSettings(folders.configDir, {
           providers: {
             off: CONFIG_PROVIDER_IDS.filter((id) => !["copilot", "custom"].includes(id)),
             custom: [{ ...CUSTOM_SOURCES[0], url, enabled: false }],
@@ -753,7 +736,7 @@ describe("v6 surfaces on the quota snapshot", () => {
           },
         });
       settings("https://team-gateway.example/accounting");
-      const settingsFile = join(mocks.root, "config", "opencode-quota", "settings.jsonc");
+      const settingsFile = join(folders.configDir, "opencode-quota", "settings.jsonc");
       const custom = async () => parseJsonc(await readFile(settingsFile, "utf8")).providers.custom;
       const { tui, windowTree } = await openSettings("Providers");
       const team = () => settingLine(windowTree(), "custom.team-accounting");
@@ -785,7 +768,7 @@ describe("v6 surfaces on the quota snapshot", () => {
   it("shows OpenCode's usage in the Usage tab, its model popup and Web /quota_usage", async () => {
     const now = Date.now();
     const M = 1_000_000;
-    writeSessionDatabase(join(mocks.root, "data", "opencode.db"), {
+    writeSessionDatabase(join(folders.dataDir, "opencode.db"), {
       sessions: [{ id: "ses_1", created: now - 3_600_000 }],
       messages: [
         {
@@ -826,14 +809,14 @@ describe("v6 surfaces on the quota snapshot", () => {
         "Cost by type",
         "# Model Cost Share Tokens Cache",
         // Cache: 3M of the 4M input tokens came from the cache; output alone has no cache hit.
-        expect.stringMatching(/^1 ● claude-sonnet-4-5 ━+ \$\d+\.\d\d 100\.0% 4\.10M 75% ▸$/u),
+        expect.stringMatching(/^1 ● claude-sonnet-4-5 ━+ \$\d+\.\d\d 100\.0% 4\.10M 75\.0% ▸$/u),
         "2 ● mystery-1 no price 0% 500K — ▸",
       ]),
     );
     // A cache hit that is not low takes the theme's success color.
     const cacheHit = findAll(
       usageTab(),
-      (node) => node.type === "span" && node.props.children === "    75%",
+      (node) => node.type === "span" && node.props.children === "  75.0%",
     );
     expect(cacheHit.map((node) => node.props.style.fg)).toEqual(["green"]);
     // The share without a price is the content's last line.
@@ -867,7 +850,7 @@ describe("v6 surfaces on the quota snapshot", () => {
   });
 
   it("starts the Usage tab on the range typed after /quota_usage, and says why one is wrong", async () => {
-    writeUsageHistory(join(mocks.root, "data", "opencode.db"));
+    writeUsageHistory(join(folders.dataDir, "opencode.db"));
     const tui = await startHosts();
     const usageTab = () => tui.render("session.composer.top", { sessionID: "ses_1" });
 
@@ -917,7 +900,7 @@ describe("v6 surfaces on the quota snapshot", () => {
   });
 
   it("runs the 4.x and 5.x /tokens_* names, on by default, names the new command while the Plugin switch is off, and runs them again once it is back on", async () => {
-    writeUsageHistory(join(mocks.root, "data", "opencode.db"));
+    writeUsageHistory(join(folders.dataDir, "opencode.db"));
     const tui = await startHosts();
     const windowTree = () => tui.render("session.composer.top", { sessionID: "ses_1" });
 
@@ -977,7 +960,7 @@ describe("v6 surfaces on the quota snapshot", () => {
   });
 
   it("says why a price download failed", async () => {
-    writeUsageHistory(join(mocks.root, "data", "opencode.db"));
+    writeUsageHistory(join(folders.dataDir, "opencode.db"));
     const tui = await startHosts();
     const usageTab = () => tui.render("session.composer.top", { sessionID: "ses_1" });
     await tui.command("usage").run();
@@ -1023,7 +1006,8 @@ type ChangedEvent = { snapshot: { providers: Array<{ providerId: string }> } };
 
 /** The real server plugin alone: its agent tools, a manual refresh, and its `changed` events. */
 async function startServer() {
-  const { default: serverPlugin } = await import("../src/plugin.js");
+  const { createQuotaServerPlugin } = await import("../src/plugin.js");
+  const serverPlugin = createQuotaServerPlugin({ providers: mocks.getProviders });
   const changed: ChangedEvent[] = [];
   const register = vi.fn(async () => ({
     dispose: async () => {},
@@ -1073,11 +1057,10 @@ describe("an agent tool replacing an active custom provider", () => {
   let server: Awaited<ReturnType<typeof startServer>> | undefined;
 
   beforeEach(async () => {
-    mocks.root = await mkdtemp(join(tmpdir(), "opencode-quota-v6-tool-reload-"));
     process.env.V6_OLD_TEAM_KEY = OLD_TEAM_KEY;
     process.env.V6_NEW_TEAM_KEY = NEW_TEAM_KEY;
     seedDefaultPluginBootstrapMocks(mocks, { resetPluginState: true });
-    writePluginTestSettings(mocks.root, {
+    writePluginTestSettings(folders.configDir, {
       providers: {
         off: CONFIG_PROVIDER_IDS.filter((id) => !["custom"].includes(id)),
         custom: [ACTIVE_SOURCE],
@@ -1106,7 +1089,6 @@ describe("an agent tool replacing an active custom provider", () => {
       else process.env[name] = value;
     }
     vi.unstubAllGlobals();
-    await rm(mocks.root, { recursive: true, force: true, maxRetries: 3 });
   });
 
   it("sends no further request with the old definition or key once the agent tool answers", async () => {

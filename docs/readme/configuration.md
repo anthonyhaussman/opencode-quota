@@ -17,7 +17,7 @@ Every quota setting lives here, in the sections `sidebar`, `collapsed`, `statusL
 
 Only the sidebar panel's open or collapsed state lives in OpenCode's plugin storage. Custom definitions, the Claude CLI path and the export path are file-only settings. The Plugin tab (`/quota_status`) has the old command names, quota file and OpenTelemetry switches; they save as soon as you change them.
 
-OpenCode Quota writes only the settings you change. A setting the file does not set uses its default, also when a newer version changes that default. **Reset page** (ctrl+r; **Reset tab** on Colors and Providers) removes that page's settings, except row names, from the file on Save, so they use their defaults again.
+OpenCode Quota writes only the settings you change. A setting the file does not set uses its default, also when a newer version changes that default. **Reset page** (ctrl+r; **Reset tab** on Colors and Providers) removes that page's settings, except row names, from the file on Save, so they use their defaults again. On Providers it also puts each custom provider's switch back to its saved state.
 
 Without the file, OpenCode Quota uses its defaults and writes nothing. The first Save, Plugin tab switch or agent change creates it with `version` and the settings changed. After 4.x or 5.x, the first start converts the global settings you set there into it. See [Updating](updating.md#moving-from-5x).
 
@@ -218,7 +218,7 @@ In the TUI, they are on **Layout → All places**, since every place follows the
 | `providers.cursor.billingCycleStartDay` | `null` | The day of the month your Cursor bill renews, 1–28. Unset uses the calendar month. |
 | `providers.opencode.monthlyLimitUsd` | `null` | Positive monthly USD amount, used instead of the Console's budget or credit limit. |
 | `providers.checking.minIntervalMs` | `300000` | Positive milliseconds between provider checks. |
-| `providers.checking.requestTimeoutMs` | unset | Positive request timeout in milliseconds, for every provider. Unset, each provider uses its own: `5000`, except OpenCode Zen and Xiaomi MiMo `10000`, and Google AGY and Gemini CLI `8000` to sign in and `6000` for the quota. So a set `8000` shortens Zen and MiMo. |
+| `providers.checking.requestTimeoutMs` | unset | Positive request timeout in milliseconds, for every provider. Unset, each provider uses its own: `5000`, except OpenCode Zen and Xiaomi MiMo `10000`, and Google AGY and Gemini CLI `8000` to sign in and `6000` for the quota. So a set `8000` shortens Zen and MiMo. xAI's plan-label lookup waits at most `2000`, also when this is higher. |
 | `providers.checking.waitForQuotaReset` | `true` | On a model limit error, wait until 1 minute after the earliest exhausted window resets, at most 5 hours. `false` keeps normal retry timing. |
 | `providers.pricing.source` | `"auto"` | `auto`, `bundled`, `runtime`. |
 | `providers.pricing.autoRefreshDays` | `7` | Whole number of days, at least 1. |

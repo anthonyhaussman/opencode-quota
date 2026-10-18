@@ -16,15 +16,39 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test"
 import { createSqliteCredentialSource } from "../src/lib/opencode-auth-sqlite.js";
 import {
   bindCredentialSource,
-  clearReadAuthFileCacheForTests,
+  clearCredentialRowCacheForTests,
   getCredentialSourceDiagnostics,
-  readAuthFile,
+  activeCredentialRows,
+  type CredentialMethod,
+  type CredentialRow,
   readCredentialRows,
 } from "../src/lib/opencode-auth.js";
 import {
   type CredentialDatabaseRow,
   writeCredentialDatabase,
 } from "./helpers/credential-database.js";
+
+/** Rows as `{ integration id: value }` (the first row of each id), null without rows. */
+function byId(rows: readonly CredentialRow[]): Record<string, unknown> | null {
+  const active = activeCredentialRows(rows);
+  if (active.length === 0) return null;
+  return Object.fromEntries(
+    active.map((row) => [
+      row.integrationId,
+      row.resolveError === undefined ? row.value : { ...row.value, resolveError: row.resolveError },
+    ]),
+  );
+}
+
+/** The active login of each requested id (a `firstOnly` read), as `byId` shows rows. */
+async function readActive(params: {
+  integrationIds: readonly string[];
+  methods?: readonly CredentialMethod[];
+}) {
+  return byId(
+    await readCredentialRows(params.integrationIds, { methods: params.methods, firstOnly: true }),
+  );
+}
 
 /** Three logins without an `active` flag, newest first: DeepSeek, OpenAI, Copilot. */
 const BASE_ROWS: CredentialDatabaseRow[] = [
@@ -86,7 +110,7 @@ beforeEach(() => {
 
 afterEach(() => {
   unbind();
-  clearReadAuthFileCacheForTests();
+  clearCredentialRowCacheForTests();
   vi.unstubAllEnvs();
   rmSync(root, { recursive: true, force: true });
 });
@@ -100,7 +124,7 @@ describe("the terminal command's database login reader", () => {
     );
 
     await expect(
-      readAuthFile({ integrationIds: ["github-copilot", "deepseek", "openai"] }),
+      readActive({ integrationIds: ["github-copilot", "deepseek", "openai"] }),
     ).resolves.toMatchObject({
       "github-copilot": { access: "copilot-access", enterpriseUrl: "example.ghe.com" },
       deepseek: { type: "api", key: "deepseek-key" },
@@ -136,8 +160,8 @@ describe("the terminal command's database login reader", () => {
     // Database order (most recently updated first), not request order.
     expect(await readIds(["github-copilot", "openai"])).toEqual(["openai", "copilot"]);
     await expect(readCredentialRows([])).resolves.toEqual([]);
-    await expect(readAuthFile({ integrationIds: ["xai"] })).resolves.toBeNull();
-    await expect(readAuthFile({ integrationIds: ["openai"] })).resolves.toEqual({
+    await expect(readActive({ integrationIds: ["xai"] })).resolves.toBeNull();
+    await expect(readActive({ integrationIds: ["openai"] })).resolves.toEqual({
       openai: { type: "oauth", access: "openai-access", refresh: "openai-refresh", expires: 20 },
     });
   });
@@ -195,7 +219,7 @@ describe("the terminal command's database login reader", () => {
       "openai",
       "deepseek",
     ]);
-    await expect(readAuthFile({ integrationIds: ["openai"] })).resolves.toMatchObject({
+    await expect(readActive({ integrationIds: ["openai"] })).resolves.toMatchObject({
       openai: { access: "openai-access" },
     });
   });
@@ -219,7 +243,7 @@ describe("the terminal command's database login reader", () => {
 
   it("returns no rows for a missing database, a non-database file or OPENCODE_DB=:memory:, and never creates the file", async () => {
     await expect(readCredentialRows(["openai"])).resolves.toEqual([]);
-    await expect(readAuthFile({ integrationIds: ["openai"] })).resolves.toBeNull();
+    await expect(readActive({ integrationIds: ["openai"] })).resolves.toBeNull();
     expect(existsSync(databasePath)).toBe(false);
 
     const notDatabasePath = join(dataDir, "not-a-database.db");
@@ -265,7 +289,7 @@ describe("the terminal command's database login reader", () => {
         value: { type: "oauth", access: "usable-access" },
       },
     ]);
-    await expect(readAuthFile({ integrationIds: ["openai"] })).resolves.toEqual({
+    await expect(readActive({ integrationIds: ["openai"] })).resolves.toEqual({
       openai: { type: "oauth", access: "usable-access" },
     });
   });
@@ -276,7 +300,7 @@ describe("the terminal command's database login reader", () => {
 
     await readCredentialRows(["github-copilot", "openai", "deepseek"]);
     await readCredentialRows(["openai"], { firstOnly: true, methods: ["oauth"] });
-    await readAuthFile({ integrationIds: ["deepseek"], methods: ["key"] });
+    await readActive({ integrationIds: ["deepseek"], methods: ["key"] });
 
     expect(sha256(databasePath)).toBe(before);
     expect(readdirSync(dataDir)).toEqual(["opencode.db"]);

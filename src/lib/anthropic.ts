@@ -16,15 +16,14 @@ import { join } from "path";
 
 import type { ErrorFacts } from "../core/errors.js";
 import { sanitizeDisplaySnippet, sanitizeDisplayText } from "./display-sanitize.js";
-import { failureFacts, parseRetryAfterMs, type RequestFailure, requestJson } from "./http.js";
+import { failureFacts, parseRetryAfterMs, requestJson } from "./http.js";
 import { asRecord, finiteNumber, nonEmptyString } from "./json-guards.js";
-import { type CredentialRow, credentialRowAuthData, readCredentialRows } from "./opencode-auth.js";
+import { type CredentialRow, readCredentialRows, readOAuthLogin } from "./opencode-auth.js";
 import {
   deriveResolvedAuthIdentity,
   loginListIdentity,
   type ResolvedAuthIdentity,
 } from "./resolved-auth-identity.js";
-import type { AuthData } from "./types.js";
 
 const DEFAULT_CLAUDE_BINARY = "claude";
 /** How `binaryPath` reads when the default `claude` ran from PATH. */
@@ -184,18 +183,17 @@ type ResolvedAnthropicOAuth =
   | { state: "expired"; expiresAt: number }
   | { state: "configured"; accessToken: string; expiresAt?: number };
 
+/** A Claude sign-in's state; `none` for a row that is not an OAuth login or has no token. */
 export function resolveAnthropicOAuth(
-  auth: AuthData | null | undefined,
+  row: CredentialRow,
   options: { nowMs?: number } = {},
 ): ResolvedAnthropicOAuth {
-  const entry = auth?.anthropic;
-  if (!entry || entry.type !== "oauth") return { state: "none" };
-  if (entry.resolveError !== undefined) return { state: "failed", error: entry.resolveError };
+  const login = readOAuthLogin(row);
+  if (!login) return { state: "none" };
+  if (login.state === "failed") return { state: "failed", error: login.error };
 
-  const accessToken = typeof entry.access === "string" ? entry.access.trim() : "";
+  const { accessToken, expiresAt } = login;
   if (!accessToken) return { state: "none" };
-
-  const expiresAt = typeof entry.expires === "number" ? entry.expires : undefined;
   if (expiresAt !== undefined && expiresAt <= (options.nowMs ?? Date.now())) {
     return { state: "expired", expiresAt };
   }
@@ -217,7 +215,7 @@ export type AnthropicLogin = {
 export async function readAnthropicLogins(): Promise<AnthropicLogin[]> {
   return (await readCredentialRows(["anthropic"], { methods: ["oauth"] })).flatMap((row) => {
     if (row.integrationId !== "anthropic") return [];
-    const auth = resolveAnthropicOAuth(credentialRowAuthData(row));
+    const auth = resolveAnthropicOAuth(row);
     return auth.state === "none" ? [] : [{ row, auth }];
   });
 }
@@ -584,17 +582,7 @@ async function performAnthropicOAuthUsageRequest(
       ? { state: "success", quota }
       : { state: "unavailable", detail: "Unexpected Anthropic quota response shape" };
   }
-  // A 401 or 403 rejects the token even when its body stalls, so the CLI fallback still runs.
-  const failure: RequestFailure =
-    (reply.failure.status === 401 || reply.failure.status === 403) &&
-    reply.failure.kind === "timeout"
-      ? {
-          ...reply.failure,
-          kind: "http",
-          code: reply.failure.status === 401 ? "login_expired" : "provider_error",
-          detail: "",
-        }
-      : reply.failure;
+  const { failure } = reply;
   // A 429 waits out the cooldown, which is at least its Retry-After.
   const facts =
     cooldownMs === undefined

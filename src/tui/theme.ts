@@ -53,7 +53,7 @@ function choiceFor(display: DisplaySettings, role: ColorRole): ColorChoice {
 
 /** The bar color for a percent left: plenty left, getting low, or almost out. */
 export function levelColor(theme: Theme, display: DisplaySettings, percent: number): RGBA {
-  const role = levelOf(percent, display.thresholds);
+  const role = levelOf(percent, display.colors);
   return fixedColor(theme, choiceFor(display, role), THEME_COLORS[role] as ColorName);
 }
 

@@ -1,5 +1,6 @@
 /**
- * The legacy provider data types: logins read from OpenCode and each provider's fetch result.
+ * The legacy provider data types: the integration ids logins live under, and each provider's fetch
+ * result.
  */
 
 import type { ErrorFacts } from "../core/errors.js";
@@ -12,45 +13,7 @@ export type GeminiCliAuthSourceKey =
   | "google";
 export type GoogleAgyAuthSourceKey = "google-agy" | "opencode-agy-auth" | "google-agy-auth";
 
-// =============================================================================
-// Auth Data Types (from ~/.local/share/opencode/opencode.db)
-// =============================================================================
-
-/** GitHub Copilot authentication data */
-export interface CopilotAuthData {
-  type: string;
-  refresh?: string;
-  access?: string;
-  expires?: number;
-  /** OpenCode-managed GitHub Enterprise Cloud hostname for this OAuth credential. */
-  enterpriseUrl?: string;
-  /** Set when OpenCode could not return this login; see `CredentialRow.resolveError`. */
-  resolveError?: string;
-}
-
 export type AlibabaCodingPlanTier = "lite" | "pro";
-
-/** An OAuth login as OpenCode stores it; providers read the fields they know. */
-interface OAuthAuthData {
-  type: string;
-  access?: string;
-  refresh?: string;
-  expires?: number;
-  /** Set when OpenCode could not return this login; see `CredentialRow.resolveError`. */
-  resolveError?: string;
-  [key: string]: unknown;
-}
-
-interface GeminiCliOAuthAuthData extends OAuthAuthData {
-  projectId?: string;
-  /** Legacy spelling used by some companion/runtime variants */
-  projectID?: string;
-  managedProjectId?: string;
-  quotaProjectId?: string;
-  email?: string;
-  accountEmail?: string;
-  login?: string;
-}
 
 /**
  * Copilot subscription tier.
@@ -99,32 +62,6 @@ export interface CopilotQuotaConfig {
   enterpriseUrl?: string;
   /** Copilot subscription tier and billing scope. */
   tier: CopilotTier;
-}
-
-/** Full opencode.db structure (partial - only what we need) */
-export interface AuthData {
-  anthropic?: OAuthAuthData;
-  "github-copilot"?: CopilotAuthData;
-  copilot?: CopilotAuthData;
-  "copilot-chat"?: CopilotAuthData;
-  "github-copilot-chat"?: CopilotAuthData;
-  // Provider id used by opencode-gemini-auth.
-  google?: GeminiCliOAuthAuthData;
-  // Canonical and compatibility keys for Gemini CLI auth snapshots.
-  "google-gemini-cli"?: GeminiCliOAuthAuthData;
-  "gemini-cli"?: GeminiCliOAuthAuthData;
-  "opencode-gemini-auth"?: GeminiCliOAuthAuthData;
-  gemini?: GeminiCliOAuthAuthData;
-  "google-agy"?: GeminiCliOAuthAuthData;
-  "opencode-agy-auth"?: GeminiCliOAuthAuthData;
-  "google-agy-auth"?: GeminiCliOAuthAuthData;
-  openai?: OAuthAuthData & { accountId?: string };
-  // Some OpenCode installs store ChatGPT auth under "codex".
-  codex?: OAuthAuthData & { accountId?: string };
-  // Some OpenCode installs store ChatGPT auth under "chatgpt".
-  chatgpt?: OAuthAuthData & { accountId?: string };
-  cursor?: OAuthAuthData & { key?: string };
-  xai?: OAuthAuthData;
 }
 
 // =============================================================================

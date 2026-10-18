@@ -7,13 +7,13 @@ import {
   loadProviderSource,
   type ProviderSourceHost,
   providerContext,
+  registeredProviders,
 } from "../core/provider-source.js";
 import { matchesQuotaProviderCurrentSelection } from "../core/selection.js";
 import { createQuotaStore } from "../core/store.js";
 import type { DebugDetail, ProviderSnapshot, QuotaSnapshot, SessionModel } from "../core/types.js";
 import { type UsageReport, usageReport } from "../core/usage.js";
 import { resolveOpenRouterApiKey } from "../providers/openrouter.js";
-import { getProviders } from "../providers/registry.js";
 import {
   apiKeyStatusDetails,
   simpleApiKeyStatusDetails,
@@ -44,11 +44,12 @@ import {
 } from "./quota-status.js";
 
 /** `opencode-quota show` lists every row of every provider. */
-const EVERY_ROW: SurfaceRows = { enabled: true, hidden: [], providerOrder: [], rowOrder: {} };
+const EVERY_ROW: SurfaceRows = { hidden: [], providerOrder: [], rowOrder: {} };
 const EVERY_ROW_SETTINGS: RowSettings = {
-  labels: {},
-  window: {},
-  surfaces: { sidebar: EVERY_ROW, collapsed: EVERY_ROW, statusLine: EVERY_ROW, toast: EVERY_ROW },
+  sidebar: EVERY_ROW,
+  collapsed: EVERY_ROW,
+  statusLine: EVERY_ROW,
+  toast: EVERY_ROW,
 };
 
 /**
@@ -177,7 +178,9 @@ async function checkKnownProviders(
   const sourceIds = new Set(source.providers.map((provider) => provider.id));
   const { enabledProviders } = ctx.config;
   const turnedOn = (id: string) => enabledProviders === "auto" || enabledProviders.includes(id);
-  const known = getProviders().filter((provider) => !providerId || provider.id === providerId);
+  const known = registeredProviders(host).filter(
+    (provider) => !providerId || provider.id === providerId,
+  );
   const checks = await Promise.all(
     known.map(async (provider): Promise<ProviderCheck> => {
       if (sourceIds.has(provider.id)) return { provider, enabled: true, available: true };

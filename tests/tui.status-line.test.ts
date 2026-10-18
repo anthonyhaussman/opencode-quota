@@ -9,7 +9,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 import { convertV5 } from "../src/settings/index.js";
-import { displaySettings } from "../src/tui/display.js";
+import { defaultSettings } from "../src/settings/schema.js";
 import type { SurfaceHost } from "../src/tui/sidebar.js";
 import { stubJsx } from "./helpers/fake-tui-host.js";
 import { findAll } from "./helpers/jsx-tree.js";
@@ -40,8 +40,8 @@ describe("HomeFooter", () => {
       }),
     );
     const conversion = await convertV5();
-    const display = () => displaySettings(conversion!.settings);
-    expect(display().surfaces.statusLine.enabled).toBe(false);
+    const display = () => conversion!.settings;
+    expect(display().statusLine.show).toBe(false);
 
     const { HomeFooter, StatusLine } = await import("../src/tui/status-line.tsx");
     const host = {
@@ -60,4 +60,36 @@ describe("HomeFooter", () => {
     );
     expect(shows.map((node) => node.props.when)).toEqual([true, true]);
   });
+});
+
+describe("statusLineShows", () => {
+  it.each([
+    { name: "with no sidebar panel on screen", shows: true },
+    { name: "never while it is off", change: { show: false }, shows: false },
+    { name: "not next to a sidebar panel", sidebar: true, shows: false },
+    {
+      name: "next to a panel with withSidebar",
+      sidebar: true,
+      change: { withSidebar: true },
+      shows: true,
+    },
+    { name: "next to a panel while its tab is open", sidebar: true, tab: true, shows: true },
+    { name: "next to a panel whose quota is off", sidebar: true, sidebarShow: false, shows: true },
+  ])(
+    "shows the session status line $name",
+    async ({ change, sidebar, tab, sidebarShow, shows }) => {
+      const { statusLineShows } = await import("../src/tui/status-line.tsx");
+      const settings = defaultSettings();
+      Object.assign(settings.statusLine, change);
+      settings.sidebar.show = sidebarShow ?? true;
+      const host = {
+        display: () => settings,
+        editing: {
+          sidebarOnScreen: () => sidebar === true,
+          tabOpen: (surface: string) => tab === true && surface === "statusLine",
+        },
+      } as unknown as SurfaceHost;
+      expect(statusLineShows(host)).toBe(shows);
+    },
+  );
 });
