@@ -14,16 +14,10 @@ import {
   watchSettings,
 } from "../src/settings/index.js";
 import { checkSetting } from "../src/settings/schema.js";
-import {
-  createFileDisplay,
-  displaySettings,
-  renameRow,
-  resetKeys,
-  setIn,
-} from "../src/tui/display.js";
+import { createFileDisplay, renameRow, resetKeys, setIn } from "../src/tui/display.js";
 import { createServerSettings, PROVIDERS_KEY } from "../src/tui/server-settings.js";
 import { limitsLines } from "../src/tui/window/limits.js";
-import { DEFAULT_WORDS } from "../src/view/format.js";
+import { DEFAULT_WORDS, levelOf } from "../src/view/format.js";
 import { pickRow, visibleGroups } from "../src/view/select.js";
 import { collapsedLines, lineText, statusLayout } from "../src/view/text.js";
 import { providerSnapshot, quotaRow } from "./helpers/fake-answers.js";
@@ -181,7 +175,7 @@ const snapshot = quotaSnapshot([providerSnapshot("anthropic", "Claude", rows)], 
 });
 
 it("uses Sidebar names on Sidebar, Collapsed, Status line and Limits, and Toast names on toasts", () => {
-  let display = renameRow(displaySettings(defaultSettings()), "sidebar", rows[0].id, "Session");
+  let display = renameRow(defaultSettings(), "sidebar", rows[0].id, "Session");
   display = renameRow(display, "toast", rows[0].id, "Reply quota");
   for (const surface of ["sidebar", "collapsed", "statusLine"] as const)
     expect(visibleGroups(snapshot, display, surface, DEFAULT_WORDS)[0]?.rows[0]?.label).toBe(
@@ -199,7 +193,7 @@ it("picks separate windows in the collapsed sidebar and the status line", () => 
   const settings = defaultSettings();
   settings.collapsed.window.anthropic = "five_hour";
   settings.statusLine.window.anthropic = "week";
-  const display = displaySettings(settings);
+  const display = settings;
   const groups = visibleGroups(snapshot, display, "collapsed", DEFAULT_WORDS);
   expect(groups.map((group) => pickRow(group, display.collapsed.window.anthropic)?.row.id)).toEqual(
     [rows[0].id],
@@ -492,16 +486,19 @@ it.each([
   expect(loaded.issues.length).toBeGreaterThan(0);
 });
 
-it("keeps the renderer's warning level at or above its low level", () => {
-  const settings = defaultSettings();
-  settings.colors.warningBelow = 10;
-  settings.colors.lowBelow = 30;
-  expect(displaySettings(settings).thresholds).toEqual({ warningBelow: 30, lowBelow: 30 });
+it("draws a 'getting low' level set below 'almost out' as 'almost out'", () => {
+  const colors = { warningBelow: 10, lowBelow: 30 };
+  expect([5, 20, 29, 30].map((percent) => levelOf(percent, colors))).toEqual([
+    "low",
+    "low",
+    "low",
+    "good",
+  ]);
 });
 
 it("a hand edit keeps the saved warning level at or above the low level", async () => {
   await file('{ "colors": { "warningBelow": 10, "lowBelow": 30 } }');
   const { server, display } = await connect();
   expect(server.value("colors.warningBelow")).toBe(30);
-  expect(display.shown().thresholds).toEqual({ warningBelow: 30, lowBelow: 30 });
+  expect(display.shown().colors).toMatchObject({ warningBelow: 30, lowBelow: 30 });
 });

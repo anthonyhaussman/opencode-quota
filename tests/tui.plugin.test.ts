@@ -83,11 +83,21 @@ function startToasts(answer: QuotaSnapshot | undefined, change: (d: DisplaySetti
     show,
     display: () => display,
     terminalWidth: () => 120,
-    quota: { refresh } as unknown as QuotaClient,
+    quota: { refresh, snapshot: () => answer } as unknown as QuotaClient,
     isChildSession: (sessionID) => sessionID === "child",
     now: () => NOW,
   });
   return { toasts, show, refresh };
+}
+
+/** Claude right after its limits reset, with the rows the reset notices name. */
+function claudeAfterReset(): ProviderSnapshot {
+  const claude = provider("Claude", 100);
+  const row = claude.rows[0]!;
+  // The weekly row is the "work" account's; the 5h row has no account.
+  const weekly = { ...row, account: "work" };
+  const fiveHour = { ...row, id: "claude.five_hour", label: "5h", window: "five_hour" as const };
+  return { ...claude, rows: [weekly, fiveHour] };
 }
 
 const OK = snapshot([provider("Claude", 80)]);
@@ -136,7 +146,7 @@ describe("quota toasts", () => {
       trigger: "compaction",
       answer: OK,
       change: (display) => {
-        display.surfaces.toast.enabled = false;
+        display.toast.show = false;
       },
       shown: false,
     },
@@ -195,6 +205,16 @@ describe("quota toasts", () => {
       // The ┃ takes the place of the bar's middle cell; the bar keeps its 20 cells.
       on: "Claude\n  7d ██████████┃█████░░░░  80% left  3.5d",
     });
+  });
+
+  it.each([true, false])("previews the toast a turn shows, with toasts on: %s", async (on) => {
+    const { toasts, show } = startToasts(OK, (display) => {
+      display.toast.show = on;
+    });
+    await toasts.afterTurn("compaction", "ses_1");
+    toasts.preview("ses_1");
+    const [turn] = show.mock.calls;
+    expect(show.mock.calls).toEqual(on ? [turn, turn] : []);
   });
 
   it("fits a toast's text in OpenCode's toast: 60 columns at most, 6 fewer than the terminal", () => {
@@ -276,11 +296,79 @@ describe("quota toasts", () => {
       const { toasts, show } = startToasts(undefined, (display) => {
         display.toast.resetNotice = setting;
       });
-      toasts.showResetNotices(snapshot([provider("Claude", 100)], notices));
-      toasts.showResetNotices(snapshot([provider("Claude", 100)], notices));
+      toasts.showResetNotices(snapshot([claudeAfterReset()], notices));
+      toasts.showResetNotices(snapshot([claudeAfterReset()], notices));
       expect(show.mock.calls.map(([toast]) => toast.message)).toEqual(expected);
     },
   );
+
+  it.each([
+    { percent: "used", words: "(3% used)" },
+    { percent: "remaining", words: "(97% remaining)" },
+    { percent: "bare", words: "(97%)" },
+  ] as const)("says a reset notice's percent in the $percent words", ({ percent, words }) => {
+    const notice: ResetNotice = {
+      id: "five-hour",
+      rowId: "claude.five_hour",
+      providerId: "claude",
+      label: "5h",
+      window: "five_hour",
+      percentRemaining: 96.6,
+      atMs: NOW,
+    };
+    const { toasts, show } = startToasts(undefined, (display) => {
+      display.toast.resetNotice = "all";
+      display.words.percent = percent;
+      display.toast.names["claude.five_hour"] = "Burst";
+    });
+    toasts.showResetNotices(snapshot([claudeAfterReset()], [notice]));
+    expect(show.mock.calls.map(([toast]) => toast.message)).toEqual([
+      `5h quota reset: Claude Burst is available again ${words}.`,
+    ]);
+  });
+
+  it("names a reset notice's row by its account when accounts share the row id", () => {
+    const copilot = provider("Copilot", 100);
+    const row = copilot.rows[0]!;
+    copilot.rows = [
+      { ...row, account: "work", label: "Business" },
+      { ...row, account: "home", label: "Pro" },
+    ];
+    const notice: ResetNotice = {
+      id: "home-weekly",
+      rowId: "copilot.weekly",
+      providerId: "copilot",
+      account: "home",
+      label: "Pro",
+      window: "week",
+      percentRemaining: 100,
+      atMs: NOW,
+    };
+    const { toasts, show } = startToasts(undefined, (display) => {
+      display.toast.resetNotice = "all";
+    });
+    toasts.showResetNotices(snapshot([copilot], [notice]));
+    expect(show.mock.calls.map(([toast]) => toast.message)).toEqual([
+      "Weekly quota reset: Copilot (home) Pro is available again (100% left).",
+    ]);
+  });
+
+  it("shows no reset notice for a row its provider no longer has", () => {
+    const notice: ResetNotice = {
+      id: "gone",
+      rowId: "claude.daily",
+      providerId: "claude",
+      label: "Daily",
+      window: "day",
+      percentRemaining: 100,
+      atMs: NOW,
+    };
+    const { toasts, show } = startToasts(undefined, (display) => {
+      display.toast.resetNotice = "all";
+    });
+    toasts.showResetNotices(snapshot([claudeAfterReset()], [notice]));
+    expect(show).not.toHaveBeenCalled();
+  });
 
   /** Reset notices turned on, and a compaction turn whose refresh the test answers. */
   function turnWaitingForQuota() {

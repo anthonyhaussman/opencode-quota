@@ -75,7 +75,7 @@ export function surfaceEditor(surface: Surface, snapshot?: QuotaSnapshot) {
   const windowsKey = surface === "statusLine" ? "statusLine" : "collapsed";
 
   function tree(settings: DisplaySettings): TreeProvider[] {
-    const { providerOrder, rowOrder } = settings.surfaces[surface];
+    const { providerOrder, rowOrder } = settings[surface];
     const providers = snapshot?.providers ?? [];
     return ordered(providers, (item) => item.providerId, providerOrder).map((provider) => {
       const firsts = provider.rows.filter(
@@ -116,7 +116,7 @@ export function surfaceEditor(surface: Surface, snapshot?: QuotaSnapshot) {
   return {
     /** The tree's lines, top to bottom: each provider, then its rows on a page that shows rows. */
     lines(settings: DisplaySettings, nowMs: number): TreeLine[] {
-      const shown = settings.surfaces[surface];
+      const shown = settings[surface];
       const names = settings[namesKey].names;
       const windows = settings[windowsKey].window;
       const words = settings.words;
@@ -127,7 +127,7 @@ export function surfaceEditor(surface: Surface, snapshot?: QuotaSnapshot) {
         const { value, reset } = rowFacts(item, { rows: [item] }, place);
         return reset ? `${value} · ${reset}` : value;
       };
-      const off = (id: string) => !shown.enabled || shown.hidden.includes(id);
+      const off = (id: string) => !shown.show || shown.hidden.includes(id);
       return tree(settings).flatMap(({ provider, rows }) => {
         const { providerId } = provider;
         const group = shownGroup(provider, shown.hidden);

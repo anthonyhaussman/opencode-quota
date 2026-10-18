@@ -158,7 +158,7 @@ function fakeHost(snapshot?: QuotaSnapshot, answers: Record<string, unknown> = {
       },
     }),
   );
-  const settings = createSettingsEditor(api as never, display, api.ui.toast.show);
+  const settings = createSettingsEditor(api as never, display, () => {});
   const surface = {
     theme: () => THEME,
     display: display.shown,

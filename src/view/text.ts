@@ -3,7 +3,7 @@
  * draws each segment in its color role; the Web and terminal `/quota` text print the plain
  * text.
  */
-import type { SessionModelInput, SessionTokens, Words } from "../core/types.js";
+import type { QuotaSnapshot, SessionModelInput, SessionTokens, Words } from "../core/types.js";
 import type { Settings } from "../settings/schema.js";
 import { columnsOf } from "./columns.js";
 import {
@@ -18,7 +18,14 @@ import {
   sessionTokensText,
 } from "./format.js";
 import { errorWords, type Place, type RowFacts, rowFacts } from "./row-facts.js";
-import { type Group, pickRow, type WindowChoice, windowFor } from "./select.js";
+import {
+  type Group,
+  pickRow,
+  type Surface,
+  visibleGroups,
+  type WindowChoice,
+  windowFor,
+} from "./select.js";
 
 /** Every colored thing quota draws; the TUI maps each to a theme color. */
 export type ColorRole =
@@ -294,12 +301,15 @@ export function sidebarLines(input: SidebarInput): Line[] {
     const labelText = `${" ".repeat(layout.indent)}${fit(row.name, nameWidth)} `;
     return {
       id: row.id,
-      segments: [
-        { text: labelText, role: "label", percent },
-        ...barSegments(layout.bar, percent, barWidth, row.evenLeft),
-        { text: row.value.padStart(5), role: "percent", percent },
-        { text: row.reset.padStart(resetWidth), role: "reset", percent },
-      ],
+      segments: clip(
+        [
+          { text: labelText, role: "label", percent },
+          ...barSegments(layout.bar, percent, barWidth, row.evenLeft),
+          { text: row.value.padStart(5), role: "percent", percent },
+          { text: row.reset.padStart(resetWidth), role: "reset", percent },
+        ],
+        width,
+      ),
     };
   };
 
@@ -782,4 +792,75 @@ export function toastLines(input: ToastInput): Line[] {
   const lines =
     input.toastLayout === "detailed" ? detailedToastLines(input) : groupedToastLines(input);
   return lines.map((line) => ({ ...line, segments: trimEnd(line.segments) }));
+}
+
+/** Where a surface draws: the time, and its columns (a toast's inside the toast, `toastRoom`). */
+export type SurfaceView = { nowMs: number; width: number };
+
+/** What every surface draws from: its rows, and its section's "runs out in …" switch. */
+function surfaceInput(
+  surface: Surface,
+  snapshot: QuotaSnapshot,
+  settings: Settings,
+  nowMs: number,
+) {
+  return {
+    groups: visibleGroups(snapshot, settings, surface, settings.words),
+    layout: settings.layout,
+    words: settings.words,
+    nowMs,
+    runsOut: settings[surface].runsOut,
+  };
+}
+
+/**
+ * §4.1 and §4.2: the Quota panel in the session sidebar, expanded (`open`) or collapsed: its
+ * title, then its lines. A collapsed panel that is off keeps its title; before the first
+ * snapshot there are no lines.
+ */
+export function sidebarPanel(
+  snapshot: QuotaSnapshot | undefined,
+  settings: Settings,
+  view: SurfaceView & { open: boolean },
+): { title: string; lines: Line[] } {
+  const { nowMs, width } = view;
+  if (!view.open) {
+    if (!snapshot) return { title: collapsedTitle([]), lines: [] };
+    const input = surfaceInput("collapsed", snapshot, settings, nowMs);
+    const lines = settings.collapsed.show
+      ? collapsedLines({ ...input, width, window: settings.collapsed.window })
+      : [];
+    return { title: collapsedTitle(input.groups), lines };
+  }
+  const title = sidebarTitle(settings.words);
+  if (!snapshot) return { title, lines: [] };
+  const sessionTokens = settings.sidebar.sessionTokens ? snapshot.sessionTokens : undefined;
+  const input = surfaceInput("sidebar", snapshot, settings, nowMs);
+  return { title, lines: sidebarLines({ ...input, width, sessionTokens }) };
+}
+
+/** §4.3: what the status line lays out (`statusLayout`, `bigStatusLine`). */
+export function statusLineInput(
+  snapshot: QuotaSnapshot,
+  settings: Settings,
+  nowMs: number,
+): StatusInput {
+  return {
+    ...surfaceInput("statusLine", snapshot, settings, nowMs),
+    window: settings.statusLine.window,
+  };
+}
+
+/** §4.4: what a quota toast lays out (`toastLines`): its rows, then the tokens when it shows them. */
+export function toastInput(
+  snapshot: QuotaSnapshot,
+  settings: Settings,
+  view: SurfaceView,
+): ToastInput {
+  return {
+    ...surfaceInput("toast", snapshot, settings, view.nowMs),
+    toastLayout: settings.toast.layout,
+    room: view.width,
+    sessionTokens: settings.toast.sessionTokens ? snapshot.sessionTokens : undefined,
+  };
 }

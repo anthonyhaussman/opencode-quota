@@ -46,7 +46,7 @@ import { KEY_LAYERS } from "../key-layers.js";
 import { foundProviderIds, isTicked, PROVIDERS_KEY, withTick } from "../server-settings.js";
 import type { SurfaceHost } from "../sidebar.js";
 import { namedColor, roleColor } from "../theme.js";
-import { plainMessage, quotaToastLines, type ToastHost } from "../toasts.js";
+import type { Toasts } from "../toasts.js";
 import { Rail, railRoom } from "./rail.js";
 import type { WindowHost, WindowTheme } from "./shell.js";
 import {
@@ -364,7 +364,7 @@ export type SettingsEditor = ReturnType<typeof createSettingsEditor>;
 export function createSettingsEditor(
   api: WindowHost,
   display: DisplayStore,
-  showToast: ToastHost["show"],
+  previewToast: Toasts["preview"],
 ) {
   const [tab, setTabNow] = createSignal<SettingsTab>();
   const [selected, setSelected] = createSignal("");
@@ -669,17 +669,6 @@ export function createSettingsEditor(
     );
   }
 
-  function previewToast(host: SurfaceHost, sessionID: string): void {
-    const settings = shown();
-    const snapshot = host.quota.snapshot(sessionID);
-    if (!snapshot || !settings.surfaces.toast.enabled) return;
-    const lines = quotaToastLines(snapshot, settings, Date.now(), api.renderer.width);
-    const message = plainMessage(lines);
-    if (!message) return;
-    const duration = settings.toast.seconds * 1000;
-    showToast({ variant: "info", message, duration }, lines);
-  }
-
   /**
    * Layout's pages, left of the body (`rail.tsx`). A click shows a page and gives the list the
    * keyboard.
@@ -714,7 +703,7 @@ export function createSettingsEditor(
     const surface = () => (isSurfaceTab(props.tab) ? props.tab : undefined);
     const surfaceOn = () => {
       const current = surface();
-      return current === undefined || shown().surfaces[current].enabled;
+      return current === undefined || shown()[current].show;
     };
     const sidebarHidden = () => info().watchesSidebar && sidebars() === 0;
     const active = () => selected() === SWITCH_ID;
@@ -923,7 +912,7 @@ export function createSettingsEditor(
           return props.tab === "toast" && JSON.stringify(shown().toast);
         },
         (key) => {
-          if (key) previewToast(props.host, props.sessionID);
+          if (key) previewToast(props.sessionID);
         },
       ),
     );
@@ -1193,8 +1182,8 @@ export function createSettingsEditor(
               <Button label={resetLabel(current())} run={() => resetTabLines(current())} />
             )}
           </Show>
-          <Show when={settingsTab() === "toast" && shown().surfaces.toast.enabled}>
-            <Button label="Show toast" run={() => previewToast(props.host, props.sessionID)} />
+          <Show when={settingsTab() === "toast" && shown().toast.show}>
+            <Button label="Show toast" run={() => previewToast(props.sessionID)} />
           </Show>
           <Cell fg={warning()}>{dirty() ? " unsaved changes" : ""}</Cell>
         </Show>
@@ -1218,12 +1207,8 @@ export function createSettingsEditor(
       setSidebars((count) => count + 1);
       return () => setSidebars((count) => count - 1);
     },
-    statusLineShown(): boolean {
-      const settings = shown();
-      if (!settings.surfaces.statusLine.enabled) return false;
-      const sidebarQuota = sidebars() > 0 && settings.surfaces.sidebar.enabled;
-      return tab() === "statusLine" || settings.statusLine.withSidebar || !sidebarQuota;
-    },
+    sidebarOnScreen: (): boolean => sidebars() > 0,
+    tabOpen: (surface: Surface): boolean => tab() === surface,
     /** A line takes typing, so the window's own keys rest. */
     typing: () => typing() !== undefined,
     /** A Plugin switch's saved value (`system.exportFile`); undefined until the server answers. */

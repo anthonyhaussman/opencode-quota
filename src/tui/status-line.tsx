@@ -8,16 +8,27 @@
 import type { BoxRenderable, MouseEvent } from "@opentui/core";
 import type { JSX } from "@opentui/solid";
 import { createEffect, createSignal, onCleanup, Show } from "solid-js";
-import { visibleGroups } from "../view/select.js";
 import {
   bigStatusLine,
   type Line,
   type StatusInput,
   type StatusLayout,
   statusLayout,
+  statusLineInput,
 } from "../view/text.js";
 import { LineText, type SurfaceHost } from "./sidebar.js";
 import { roleColor } from "./theme.js";
+
+/**
+ * The status line shows under a session's message box: it is on, and its Settings tab is open,
+ * it shows next to the sidebar, or no sidebar panel with quota is on screen.
+ */
+export function statusLineShows(host: SurfaceHost): boolean {
+  const settings = host.display();
+  if (!settings.statusLine.show) return false;
+  const sidebarQuota = host.editing.sidebarOnScreen() && settings.sidebar.show;
+  return host.editing.tabOpen("statusLine") || settings.statusLine.withSidebar || !sidebarQuota;
+}
 
 export function StatusLine(props: { host: SurfaceHost; sessionID?: string }): JSX.Element {
   const host = props.host;
@@ -31,16 +42,7 @@ export function StatusLine(props: { host: SurfaceHost; sessionID?: string }): JS
   const display = () => host.display();
   const input = (): StatusInput | undefined => {
     const snapshot = host.quota.snapshot(props.sessionID);
-    if (!snapshot) return undefined;
-    const words = display().words;
-    return {
-      groups: visibleGroups(snapshot, display(), "statusLine", words),
-      layout: display().layout,
-      words,
-      nowMs: nowMs(),
-      window: display().statusLine.window,
-      runsOut: display().runsOut.statusLine,
-    };
+    return snapshot && statusLineInput(snapshot, display(), nowMs());
   };
   const big = () => display().statusLine.detail === "one";
   const layout = () => {

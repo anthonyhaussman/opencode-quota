@@ -11,7 +11,7 @@ import type {
 } from "../src/core/types.js";
 import { ALL_PROVIDERS } from "../src/core/windows.js";
 import { loadSettings, saveSettings } from "../src/settings/index.js";
-import { defaultDisplaySettings, displaySettings } from "../src/tui/display.js";
+import { defaultDisplaySettings } from "../src/tui/display.js";
 import { columnsOf } from "../src/view/columns.js";
 import {
   amountText,
@@ -270,10 +270,10 @@ describe("view select", () => {
     {
       name: "your order, names and hidden ids",
       settings: settings((value) => {
-        value.surfaces.sidebar.providerOrder = ["openrouter"];
-        value.surfaces.sidebar.rowOrder = { anthropic: ["anthropic.weekly"] };
-        value.surfaces.sidebar.hidden = ["opencode", "anthropic.five_hour"];
-        value.surfaces.sidebar.names = { "anthropic.weekly": "Week" };
+        value.sidebar.providerOrder = ["openrouter"];
+        value.sidebar.rowOrder = { anthropic: ["anthropic.weekly"] };
+        value.sidebar.hidden = ["opencode", "anthropic.five_hour"];
+        value.sidebar.names = { "anthropic.weekly": "Week" };
       }),
       words: words(),
       expected: [
@@ -284,11 +284,7 @@ describe("view select", () => {
     {
       name: "a provider whose every row is hidden, unless it has an error",
       settings: settings((value) => {
-        value.surfaces.sidebar.hidden = [
-          "opencode.balance",
-          "anthropic.five_hour",
-          "anthropic.weekly",
-        ];
+        value.sidebar.hidden = ["opencode.balance", "anthropic.five_hour", "anthropic.weekly"];
       }),
       words: words(),
       expected: [["OpenRouter", []]],
@@ -458,6 +454,22 @@ describe("view text", () => {
   });
 
   it.each([
+    { width: 4, row: " 5h " },
+    { width: 8, row: " 5h   5…" },
+    { width: 12, row: " 5h   58% 2…" },
+    { width: 15, row: " 5h   58% 2h 1…" },
+  ])("cuts every sidebar line to $width columns, rows with a bar too", ({ width, row }) => {
+    const lines = sidebarLines({
+      groups: groups("sidebar", [CLAUDE, ZEN]),
+      ...drawn,
+      layout: { ...display.layout, barWidth: 8 },
+      width,
+    }).map(lineText);
+    for (const line of lines) expect(columnsOf(line)).toBeLessThanOrEqual(width);
+    expect(lines[1]).toBe(row);
+  });
+
+  it.each([
     { percent: "left", title: "▼ Quota left" },
     { percent: "remaining", title: "▼ Quota remaining" },
     { percent: "used", title: "▼ Quota used" },
@@ -573,7 +585,7 @@ describe("view text", () => {
       try {
         expect((await saveSettings(patch)).ok).toBe(true);
         const { settings } = await loadSettings();
-        const { layout } = displaySettings(settings);
+        const { layout } = settings;
         const status: StatusInput = {
           ...statusInput([PACED]),
           layout,
