@@ -282,15 +282,6 @@ async function fetchWithApiKey(
   return {
     attempted: true,
     accounts: [{ name: LABEL, rows: goRows(result, windows), errors: [] }],
-    debug: [
-      ...debug,
-      ...OPENCODE_GO_WINDOW_ORDER.map((window) => {
-        const usage = result[window];
-        return {
-          key: `${window}_usage`,
-          value: `status=${usage.status} percent_used=${usage.usagePercent} percent_remaining=${usage.percentRemaining} reset_at=${usage.resetTimeIso}`,
-        };
-      }),
-    ],
+    debug,
   };
 }

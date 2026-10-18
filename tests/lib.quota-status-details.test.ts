@@ -85,8 +85,8 @@ function recordKeys(text: string): string[] {
 
 /**
  * The debug keys a file writes: `{ key: "…", value }` details, `detail("…", …)` and the
- * properties of `statusDetailsFromRecord` records. A key built in a template keeps its text
- * with each `${…}` part as `${…}`.
+ * properties of `statusDetailsFromRecord` records, on one line or spread over several. A key
+ * built in a template keeps its text with each `${…}` part as `${…}`.
  */
 function writtenKeys(text: string): string[] {
   const computed = [...text.matchAll(/\{\s*key: (?!["`])([^,]+),\s*value:/gu)];
@@ -95,11 +95,11 @@ function writtenKeys(text: string): string[] {
     "a debug key is a literal or a template",
   ).toEqual([]);
   return [
-    ...[...text.matchAll(/\{ key: "([^"]+)", value:/gu)].map((match) => match[1] ?? ""),
-    ...[...text.matchAll(/\{ key: `([^`]+)`, value:/gu)].map((match) =>
+    ...[...text.matchAll(/\{\s*key: "([^"]+)",\s*value:/gu)].map((match) => match[1] ?? ""),
+    ...[...text.matchAll(/\{\s*key: `([^`]+)`,\s*value:/gu)].map((match) =>
       (match[1] ?? "").replace(/\$\{[^}]*\}/gu, "${…}"),
     ),
-    ...[...text.matchAll(/\bdetail\("([^"]+)"/gu)].map((match) => match[1] ?? ""),
+    ...[...text.matchAll(/\bdetail\(\s*"([^"]+)"/gu)].map((match) => match[1] ?? ""),
     ...recordKeys(text),
   ];
 }

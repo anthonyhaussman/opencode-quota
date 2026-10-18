@@ -118,7 +118,6 @@ export interface CopilotQuotaAuthDiagnostics {
   deployment: "github.com" | "ghe.com" | "invalid" | "none";
   apiHost: string | null;
   enterpriseHostSource: "pat" | "oauth" | "none";
-  enterpriseHostError?: string;
   effectiveSource: "pat" | "oauth" | "none";
   override: "pat_overrides_oauth" | "none";
   quotaApi:
@@ -137,8 +136,6 @@ export interface CopilotQuotaAuthDiagnostics {
     | "reported_by_copilot_internal_user"
     | "unavailable";
   queryPeriod?: BillingPeriodQuery;
-  usernameFilter?: string;
-  tokenCompatibilityError?: string;
   billingModel?: CopilotBillingModel;
   budgetApi: "organization_budgets" | "enterprise_budgets" | "not_available";
   oauthAccountingState:
@@ -525,7 +522,6 @@ export function getCopilotQuotaAuthDiagnostics(logins: CopilotLogins): CopilotQu
         ? new URL(getApiBaseUrl(effectiveEnterpriseHost)).hostname
         : null,
     enterpriseHostSource: effectiveEnterpriseHost ? effectiveSource : "none",
-    enterpriseHostError,
     effectiveSource,
     override: patBlocksOAuth && auth ? "pat_overrides_oauth" : "none",
     quotaApi: target
@@ -557,8 +553,6 @@ export function getCopilotQuotaAuthDiagnostics(logins: CopilotLogins): CopilotQu
               ? "available"
               : "value_only_without_denominator",
     queryPeriod: target?.billingPeriod,
-    usernameFilter: pat.config?.username,
-    tokenCompatibilityError: compatibilityError ?? undefined,
     billingModel,
     budgetApi:
       billingScope === "organization"
