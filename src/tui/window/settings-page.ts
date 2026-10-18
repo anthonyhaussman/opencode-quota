@@ -4,7 +4,6 @@
  * provider tree, the order ↑↓ select them in, and what ←/→ (`step`), space or enter (`activate`)
  * and Reset do. Every edit goes to the window's draft (`DisplayStore`); Save writes it.
  */
-import type { RGBA } from "@opentui/core";
 import type { QuotaSnapshot, QuotaWindow } from "../../core/types.js";
 import { ALL_PROVIDERS, WINDOWS } from "../../core/windows.js";
 import type { CustomProviderSwitch } from "../../settings/index.js";
@@ -37,35 +36,9 @@ import {
   withTick,
 } from "../server-settings.js";
 import { namedColor, roleColor } from "../theme.js";
+import { activateLine, type OptionLine, stepLine, type Typed } from "./option-line.js";
 import type { WindowHost } from "./shell.js";
 import { surfaceEditor, type TreeLine } from "./surface-editor.js";
-
-/** A line ↑↓ select: ‹ value › steps through values, value ▸ runs a button; some take typing. */
-export type OptionLine = {
-  id: string;
-  /** A heading above the line, which starts a group. */
-  group?: string;
-  /** A blank line above the line, between blocks of one group. */
-  gap?: boolean;
-  title: string;
-  value: () => string;
-  cycle?: (delta: number) => void;
-  run?: () => void;
-  typed?: Typed;
-  note?: () => string;
-  /** The note in the warning color. */
-  warning?: boolean;
-  /** A second muted line under the value. */
-  detail?: string;
-  /** Nesting under the line above: 1 for a provider's settings under its tick. */
-  depth?: number;
-  /** A tick box ([x] or [ ] in its title): no ‹ ›, a click on the title flips it too. */
-  tick?: boolean;
-  swatches?: () => RGBA[];
-};
-
-/** What a line takes when you type into it (e, or a double-click). */
-export type Typed = { placeholder: string; hint: string; apply: (text: string) => void };
 
 /** The id of a surface page's switch line. */
 export const SWITCH_ID = "surface";
@@ -356,7 +329,7 @@ export function settingsPage(input: {
     step(id: string, delta: number): void {
       const option = optionById(id);
       const line = treeId(id);
-      if (option) option.cycle?.(delta);
+      if (option) stepLine(option, delta);
       else if (editor && line !== undefined) draft.edit(editor.cycleWindow(line, delta));
     },
     /**
@@ -367,9 +340,7 @@ export function settingsPage(input: {
       const option = optionById(id);
       const line = treeId(id);
       if (id === SWITCH_ID && editor) draft.edit(editor.toggleSurface());
-      else if (option?.run) option.run();
-      else if (option?.cycle) option.cycle(1);
-      else if (option) return "type";
+      else if (option) return activateLine(option);
       else if (editor && line !== undefined) draft.edit(editor.toggleHidden(line));
       return undefined;
     },

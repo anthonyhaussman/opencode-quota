@@ -52,6 +52,7 @@ import {
 } from "../../view/usage.js";
 import { errorToast, quotaCallOptions, rpcErrorMessage } from "../client.js";
 import { KEY_LAYERS } from "../key-layers.js";
+import { stepSelection } from "./option-line.js";
 import { Rail, railRoom } from "./rail.js";
 import type { KeyHint, WindowHost, WindowKey, WindowTheme } from "./shell.js";
 
@@ -494,8 +495,8 @@ export function createUsageTab(
     }
     const current = litModel();
     if (current === undefined) return false;
-    const next = current + delta;
-    if (next < 0 || next >= modelRows().length) return false;
+    const next = stepSelection(modelRows().length, current, delta);
+    if (next === undefined) return false;
     setModelFocus(next);
     scroll()?.scrollChildIntoView(modelRowId(next));
   }

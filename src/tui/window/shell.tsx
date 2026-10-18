@@ -12,64 +12,42 @@
  * tabs have Save and Discard above it. While the window is focused (it is after opening; click
  * it to give it the keyboard again) its keys work: ↑↓ select or scroll,
  * space/enter use a line, ←/→ change it, c on Limits copies its limits as text, tab switches
- * tabs, esc closes. Closing gives the keyboard back to whatever had it before. Plugin shows the
- * maintainer notices, the switches
- * for other tools and the status report, each under its own title.
+ * tabs, esc closes (the line rules are `option-line.ts`'s). Closing gives the keyboard back to
+ * whatever had it before. Plugin shows the maintainer notices, the switches for other tools and
+ * the status report (`plugin-tab.tsx`).
  */
 import type { Plugin } from "@opencode/plugin/tui";
 import type { BoxRenderable, Renderable, RGBA, ScrollBoxRenderable } from "@opentui/core";
 import type { JSX } from "@opentui/solid";
 import { createSignal, onCleanup, onMount, Show } from "solid-js";
 import { DEFAULT_USAGE_RANGE } from "../../core/usage-ranges.js";
-import { sanitizeDisplayText } from "../../lib/display-sanitize.js";
 import { quotaLimitsText } from "../../lib/quota-report-message.js";
 import { getPackageVersion } from "../../lib/version.js";
-import { QuotaRpc } from "../../rpc.js";
 import { columnsOf } from "../../view/columns.js";
-import { type ClientHost, errorToast, quotaCallOptions, rpcErrorMessage } from "../client.js";
+import type { ClientHost } from "../client.js";
 import type { SettingsTab } from "../display.js";
 import { KEY_LAYERS } from "../key-layers.js";
 import type { SurfaceHost } from "../sidebar.js";
 import type { Theme } from "../theme.js";
-import {
-  isSettingsTab,
-  type OptionLine,
-  OptionRow,
-  pagesRoom,
-  SETTINGS_GROUPS,
-  type SettingsEditor,
-} from "./settings.js";
+import { type CopyWithToast, createPluginTab } from "./plugin-tab.js";
+import { isSettingsTab, pagesRoom, SETTINGS_GROUPS, type SettingsEditor } from "./settings.js";
 import { Choice, createUsageTab, USAGE_RAIL_WIDTH, type UsageChoice } from "./usage.js";
-import {
-  LimitsView,
-  type NoticeReport,
-  NoticesView,
-  type StatusReport,
-  StatusView,
-} from "./views.js";
+import { LimitsView } from "./views.js";
 
-type SystemSwitch = { key: string; group: string; title: string; note?: string };
-
-/** Plugin's switches (`system`), under their group's title; each saves straight away. */
-const SYSTEM_SWITCHES: ReadonlyArray<SystemSwitch> = [
-  {
-    key: "system.oldCommands",
-    group: "Commands",
-    title: "Old command names",
-    note: "the 4.x and 5.x /tokens_* names; the / list changes after a restart",
-  },
-  {
-    key: "system.exportFile",
-    group: "For other tools",
-    title: "Quota file (JSON)",
-    note: "for status bars and scripts; the opencode-quota CLI works either way",
-  },
-  { key: "system.telemetry", group: "For other tools", title: "OpenTelemetry metrics" },
-];
 /** Columns inside the window until it knows its real width. */
 const DEFAULT_WIDTH = 120;
 
 export type WindowTab = "limits" | "usage" | "system" | SettingsTab;
+
+/** A tab whose lines the window's own keys use (`option-line.ts` rules). */
+type TabLines = {
+  /** ↑↓: false past the first or last line, where the window scrolls. */
+  select(delta: number): boolean;
+  /** Space or enter. */
+  activate(): void;
+  /** ←/→. */
+  step(delta: number): void;
+};
 
 /** A tab of the tab bar and the window tabs it shows: Layout shows one of its pages. */
 type BarTab = { title: string; pages: readonly WindowTab[] };
@@ -227,11 +205,8 @@ export function createQuotaWindow(
   settings: SettingsEditor,
 ): QuotaWindow {
   const [tab, setTab] = createSignal<WindowTab>();
-  const [selected, setSelected] = createSignal("");
   /** The page each tab of the tab bar showed last, by its title: Layout goes back to it. */
   const lastPages = new Map<string, WindowTab>();
-  const [notices, setNotices] = createSignal<NoticeReport>({ state: "loading" });
-  const [status, setStatus] = createSignal<StatusReport>({ state: "loading" });
   let windowBox: BoxRenderable | undefined;
   let scroll: ScrollBoxRenderable | undefined;
   /** What had the keyboard before the window opened (the message box), so closing gives it back. */
@@ -250,58 +225,13 @@ export function createQuotaWindow(
       resizedThisTurn = false;
     }, 0);
   };
-  /** Numbers the notice and status requests; only the newest one's answer shows. */
-  let noticeRequest = 0;
-  let statusRequest = 0;
-  /** Plugin switches whose save is not back yet; another flip of the same one is ignored. */
-  const savingSwitches = new Set<string>();
-
-  // The RPC client is made per call, so nothing reaches OpenCode during plugin setup.
-  const rpc = () => api.client.rpc(QuotaRpc);
-  const options = () => quotaCallOptions(api);
   const usage = createUsageTab(api, () => scroll);
-  const showError = (error: unknown) => api.ui.toast.show(errorToast(error));
+  const plugin = createPluginTab(api, settings, copyWithToast);
   /** The installed plugin's version from its package.json, like "v5.0.2", after the title. */
   const [version, setVersion] = createSignal("");
   void getPackageVersion().then((found) => {
     if (found) setVersion(`v${found}`);
   });
-
-  async function loadNotices(): Promise<void> {
-    const request = ++noticeRequest;
-    setNotices({ state: "loading" });
-    try {
-      const board = await rpc().noticeList({}, options());
-      if (request === noticeRequest) setNotices({ state: "ready", board });
-    } catch (error) {
-      if (request !== noticeRequest) return;
-      setNotices({ state: "failed", message: sanitizeDisplayText(rpcErrorMessage(error)) });
-    }
-  }
-
-  async function flipSwitch(key: string, on: boolean): Promise<void> {
-    if (savingSwitches.has(key)) return;
-    savingSwitches.add(key);
-    try {
-      await settings.saveSwitch(key, on);
-    } catch (error) {
-      showError(error);
-    } finally {
-      savingSwitches.delete(key);
-    }
-  }
-
-  async function loadStatus(sessionID: string | undefined): Promise<void> {
-    const request = ++statusRequest;
-    setStatus({ state: "loading" });
-    try {
-      const output = await rpc().status(sessionID ? { sessionID } : {}, options());
-      if (request === statusRequest) setStatus({ state: "ready", text: output.text });
-    } catch (error) {
-      if (request !== statusRequest) return;
-      setStatus({ state: "failed", message: sanitizeDisplayText(rpcErrorMessage(error)) });
-    }
-  }
 
   /** The tab bar's tab that shows `shown`. */
   function barTabOf(shown: WindowTab | undefined): BarTab | undefined {
@@ -326,40 +256,20 @@ export function createQuotaWindow(
     windowBox?.focus();
     const sessionID = routeSessionID(api);
     if (next === "limits") void host.quota.refresh("manual", sessionID);
-    if (next === "system") {
-      void loadNotices();
-      void loadStatus(sessionID);
-      // Snapshots bring the saved settings too, so the switches show even if this read fails.
-      settings.loadSaved().catch(() => {});
-    }
+    if (next === "system") plugin.show(sessionID);
     if (next === "usage") usage.choose(choice);
     if (next === "usage" && sessionID) usage.show(sessionID);
-    // Plugin picks Copy, so enter copies the report as soon as the tab opens.
-    setSelected(next === "system" ? "copy" : "");
     scroll?.scrollTo(0);
   }
 
   /** Copies `text` and says in a toast titled `title` whether the terminal let it. */
-  function copyWithToast(
-    text: string,
-    title: string,
-    messages: { copied: string; failed: string },
-  ): void {
+  function copyWithToast(...[text, title, messages]: Parameters<CopyWithToast>): void {
     const copied = api.renderer.copyToClipboardOSC52(text);
     api.ui.toast.show({
       variant: copied ? "success" : "warning",
       title,
       message: copied ? messages.copied : messages.failed,
       duration: 4_000,
-    });
-  }
-
-  function copyReport(): void {
-    const report = status();
-    if (report.state !== "ready") return;
-    copyWithToast(report.text, "Status report", {
-      copied: "Copied. Paste it into a GitHub issue.",
-      failed: "This terminal doesn't allow copying; select the text instead.",
     });
   }
 
@@ -380,37 +290,6 @@ export function createQuotaWindow(
       copied: "Copied the limits report",
       failed: "This terminal doesn't allow copying.",
     });
-  }
-
-  /**
-   * The lines that ↑↓ can select, under the notices: Plugin's switches (‹ on ›)
-   * once the saved settings arrived, then Copy (▸) above the status report.
-   */
-  function tabOptions(): OptionLine[] {
-    if (tab() !== "system") return [];
-    const copy: OptionLine = {
-      id: "copy",
-      group: "Status report",
-      title: "Copy the report",
-      value: () => "copy",
-      run: copyReport,
-      note: () => "then paste it into a GitHub issue",
-    };
-    const switches = SYSTEM_SWITCHES.flatMap(({ key, group, title, note }, index): OptionLine[] => {
-      const on = settings.savedSwitch(key);
-      if (on === undefined) return [];
-      return [
-        {
-          id: key,
-          ...(group !== SYSTEM_SWITCHES[index - 1]?.group ? { group } : {}),
-          title,
-          value: () => (on ? "on" : "off"),
-          cycle: () => void flipSwitch(key, !on),
-          ...(note ? { note: () => note } : {}),
-        },
-      ];
-    });
-    return [...switches, copy];
   }
 
   /** Opens the window on `next`; on Usage, on `choice` (else the default range). */
@@ -434,9 +313,6 @@ export function createQuotaWindow(
     if (settings.askBeforeClose()) return;
     settings.setTab(undefined);
     setTab(undefined);
-    // Answers still on their way belong to the closed window.
-    noticeRequest += 1;
-    statusRequest += 1;
     keyboardWanted = false;
     if (focusBefore && !focusBefore.isDestroyed) focusBefore.focus();
     focusBefore = null;
@@ -447,24 +323,16 @@ export function createQuotaWindow(
     showTab(pageOf(BAR_TABS[(index + delta + BAR_TABS.length) % BAR_TABS.length]));
   }
 
-  /** ↑↓ select the next line; past the first or last one (or with none) they scroll. */
-  function select(delta: number): void {
-    const ids = tabOptions().map((option) => option.id);
-    const next = ids.indexOf(selected()) + delta;
-    if (ids.length === 0 || next < 0 || next >= ids.length) scroll?.scrollBy(delta);
-    else setSelected(ids[next]);
-  }
+  /**
+   * The lines the window's own ↑↓, space, enter and ←/→ use: Plugin's. Usage and the Settings
+   * tabs take those keys in their own layer; Limits has no lines.
+   */
+  const tabLines = (): TabLines | undefined => (tab() === "system" ? plugin : undefined);
 
-  /** Space or enter use any line; ←/→ only flip a switch. */
-  function useLine(option: OptionLine | undefined, anyKind: boolean): void {
-    if (option?.cycle) option.cycle(1);
-    else if (anyKind) option?.run?.();
+  /** ↑↓ select the tab's next line; past the first or last one (or without lines) they scroll. */
+  function select(delta: number): void {
+    if (!tabLines()?.select(delta)) scroll?.scrollBy(delta);
   }
-  const useSelected = (anyKind: boolean) =>
-    useLine(
-      tabOptions().find((item) => item.id === selected()),
-      anyKind,
-    );
 
   function Window(props: { sessionID: string }): JSX.Element {
     const theme = () => api.theme;
@@ -540,10 +408,10 @@ export function createQuotaWindow(
           group: KEYS,
           run: () => scroll?.scrollBy(scroll.height || 1),
         },
-        { bind: "space", title: "Use the line", group: KEYS, run: () => useSelected(true) },
-        { bind: "return", title: "Use the line", group: KEYS, run: () => useSelected(true) },
-        { bind: "left", title: "Change the line", group: KEYS, run: () => useSelected(false) },
-        { bind: "right", title: "Change the line", group: KEYS, run: () => useSelected(false) },
+        { bind: "space", title: "Use the line", group: KEYS, run: () => tabLines()?.activate() },
+        { bind: "return", title: "Use the line", group: KEYS, run: () => tabLines()?.activate() },
+        { bind: "left", title: "Change the line", group: KEYS, run: () => tabLines()?.step(-1) },
+        { bind: "right", title: "Change the line", group: KEYS, run: () => tabLines()?.step(1) },
         {
           bind: "c",
           title: "Copy the limits report",
@@ -742,20 +610,8 @@ export function createQuotaWindow(
               minHeight={0}
             >
               <Show when={tab() === "system"}>
-                <NoticesView theme={theme()} report={notices()} />
+                <plugin.View width={bodyWidth()} />
               </Show>
-              {tabOptions().map((option) => (
-                <OptionRow
-                  line={option}
-                  theme={theme()}
-                  active={selected() === option.id}
-                  click={settings.click}
-                  press={() => setSelected(option.id)}
-                  use={() => useLine(option, true)}
-                  valueWidth={option.cycle ? 3 : 9}
-                  width={bodyWidth()}
-                />
-              ))}
               <Show when={tab() === "limits"}>
                 <LimitsView
                   host={host}
@@ -766,9 +622,6 @@ export function createQuotaWindow(
               </Show>
               <Show when={tab() === "usage"}>
                 <usage.View width={bodyWidth() - USAGE_RAIL_WIDTH} keyTarget={() => windowBox} />
-              </Show>
-              <Show when={tab() === "system"}>
-                <StatusView theme={theme()} report={status()} width={bodyWidth()} />
               </Show>
               <Show when={settingsTab()}>
                 {(shown: () => SettingsTab) => (

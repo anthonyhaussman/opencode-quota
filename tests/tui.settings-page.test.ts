@@ -3,6 +3,12 @@ import type { QuotaSnapshot } from "../src/core/types.js";
 import type { QuotaRpcSettingsOutput } from "../src/rpc.js";
 import { createFileDisplay, type SettingsTab } from "../src/tui/display.js";
 import { createServerSettings, PROVIDERS_KEY } from "../src/tui/server-settings.js";
+import {
+  activateLine,
+  type OptionLine,
+  stepLine,
+  stepSelection,
+} from "../src/tui/window/option-line.js";
 import { resetPage, settingsPage, SWITCH_ID } from "../src/tui/window/settings-page.js";
 import { providerSnapshot, quotaRow } from "./helpers/fake-answers.js";
 import { THEME } from "./helpers/jsx-tree.js";
@@ -153,5 +159,37 @@ describe("Reset tab and Reset page (resetPage)", () => {
       [],
       ["openai"],
     ]);
+  });
+});
+
+describe("the window's line rules (Settings, Plugin, Usage's model rows)", () => {
+  it.each([
+    { count: 3, index: -1, delta: 1, next: 0 },
+    { count: 3, index: -1, delta: -1, next: undefined },
+    { count: 3, index: 1, delta: 1, next: 2 },
+    { count: 3, index: 2, delta: 1, next: undefined },
+    { count: 3, index: 0, delta: -1, next: undefined },
+    { count: 0, index: -1, delta: 1, next: undefined },
+  ])("↑↓ from $index of $count by $delta selects $next (undefined scrolls)", (input) => {
+    expect(stepSelection(input.count, input.index, input.delta)).toBe(input.next);
+  });
+
+  it("uses a line: its button before its value, ‹ steps back, typing when it has neither", () => {
+    const cycle = vi.fn();
+    const run = vi.fn();
+    const line = (fields: Partial<OptionLine>): OptionLine => ({
+      id: "x",
+      title: "X",
+      value: () => "",
+      ...fields,
+    });
+
+    expect(activateLine(line({ run, cycle }))).toBeUndefined();
+    expect([run.mock.calls.length, cycle.mock.calls.length]).toEqual([1, 0]);
+    activateLine(line({ cycle }));
+    stepLine(line({ cycle }), -1);
+    stepLine(line({ run }), 1);
+    expect([cycle.mock.calls, run.mock.calls.length]).toEqual([[[1], [-1]], 1]);
+    expect(activateLine(line({}))).toBe("type");
   });
 });

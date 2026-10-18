@@ -24,15 +24,14 @@ import { type DisplayStore, isSurfaceTab, type SettingsTab } from "../display.js
 import { KEY_LAYERS } from "../key-layers.js";
 import type { SurfaceHost } from "../sidebar.js";
 import { plainMessage, quotaToastLines, type ToastHost } from "../toasts.js";
+import { type OptionLine, stepSelection, type Typed } from "./option-line.js";
 import { Rail, railRoom } from "./rail.js";
 import {
   lineKey,
-  type OptionLine,
   resetPage,
   type SettingsPage,
   SWITCH_ID,
   settingsPage,
-  type Typed,
   windowTitle,
 } from "./settings-page.js";
 import type { WindowHost, WindowTheme } from "./shell.js";
@@ -44,7 +43,7 @@ import {
   type TreeLine,
 } from "./surface-editor.js";
 
-export type { OptionLine } from "./settings-page.js";
+export type { OptionLine } from "./option-line.js";
 
 export const SETTINGS_TABS: ReadonlyArray<{
   tab: SettingsTab;
@@ -535,8 +534,8 @@ export function createSettingsEditor(
         return;
       }
       const ids = [...(pagesOf(props.tab) ? [PAGES_ID] : []), ...page().ids(lines())];
-      const next = ids.indexOf(selected()) + delta;
-      if (next < 0 || next >= ids.length) props.scroll()?.scrollBy(delta);
+      const next = stepSelection(ids.length, ids.indexOf(selected()), delta);
+      if (next === undefined) props.scroll()?.scrollBy(delta);
       else setSelected(ids[next] as string);
     }
 
