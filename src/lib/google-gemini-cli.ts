@@ -1,5 +1,6 @@
 import { geminiCliCompanion } from "./google-companion-credentials.js";
 import type { GoogleAccount, GoogleQuotaFlavor } from "./google-oauth-quota.js";
+import { createGoogleTokenCache } from "./google-token-cache.js";
 import { nonEmptyString } from "./json-guards.js";
 import type { GeminiCliAuthSourceKey, GeminiCliQuotaBucket } from "./types.js";
 
@@ -41,6 +42,7 @@ export const GEMINI_CLI_FLAVOR: GoogleQuotaFlavor<
   quotaHeaders: () => ({
     "User-Agent": `GeminiCLI/opencode-quota (${process.platform}; ${process.arch})`,
   }),
+  tokenCache: createGoogleTokenCache(),
   toBuckets: toGeminiCliBuckets,
 };
 

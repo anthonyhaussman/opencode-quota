@@ -1,6 +1,7 @@
 import crypto from "node:crypto";
 import { agyCompanion } from "./google-companion-credentials.js";
 import type { GoogleAccount, GoogleQuotaFlavor } from "./google-oauth-quota.js";
+import { createGoogleTokenCache } from "./google-token-cache.js";
 import { nonEmptyString } from "./json-guards.js";
 import type {
   GoogleAgyAuthSourceKey,
@@ -35,6 +36,7 @@ export const AGY_FLAVOR: GoogleQuotaFlavor<
     "User-Agent": "antigravity/cli/1.3.5 darwin/amd64",
     "x-activity-request-id": crypto.randomUUID(),
   }),
+  tokenCache: createGoogleTokenCache(),
   toBuckets: toAgyBuckets,
 };
 

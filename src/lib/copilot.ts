@@ -10,7 +10,7 @@ import { existsSync, readFileSync } from "fs";
 import { join } from "path";
 import type { ErrorFacts } from "../core/errors.js";
 import { sanitizeDisplaySnippet, sanitizeSingleLineDisplaySnippet } from "./display-sanitize.js";
-import { failureFacts, RequestFailedError, requestJson, thrownFacts } from "./http.js";
+import { errorWords, failureFacts, RequestFailedError, requestJson, thrownFacts } from "./http.js";
 import { finiteNumber } from "./json-guards.js";
 import {
   activeCredentialRows,
@@ -613,7 +613,7 @@ async function fetchGitHubJson<T>(params: {
         ? " (GitHub API rate limit exhausted)"
         : "";
     throw new RequestFailedError(
-      `${apiName} error ${failure.status}: ${gitHubErrorMessage(failure.detail)}${rateLimit}`,
+      `${apiName} error ${failure.status}${errorWords(gitHubErrorMessage(failure.detail))}${rateLimit}`,
       failureFacts(failure, rateLimit ? "rate_limited" : failure.code),
     );
   }

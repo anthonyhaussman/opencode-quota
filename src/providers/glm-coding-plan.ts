@@ -7,7 +7,7 @@ import { API_KEY_VENDORS, type ApiKeyLoginSpec, readVendorKeys } from "../lib/ap
 import { sanitizeDisplaySnippet, sanitizeDisplayText } from "../lib/display-sanitize.js";
 import type { QuotaProvider, QuotaProviderContext } from "../lib/entries.js";
 import { clampPercent } from "../lib/format-utils.js";
-import { failureFacts, requestJson } from "../lib/http.js";
+import { errorWords, failureFacts, requestJson } from "../lib/http.js";
 import type { QuotaError } from "../lib/types.js";
 import { vendorKeysPolicy } from "./cache-policies.js";
 import {
@@ -135,7 +135,7 @@ async function queryGlmRows(
       success: false,
       error:
         failure.kind === "http"
-          ? `${apiError} ${failure.status}: ${sanitizeDisplaySnippet(failure.detail, 120)}`
+          ? `${apiError} ${failure.status}${errorWords(sanitizeDisplaySnippet(failure.detail, 120))}`
           : failure.detail,
       facts: failureFacts(failure),
     };

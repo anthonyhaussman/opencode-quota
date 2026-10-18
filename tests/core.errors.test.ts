@@ -430,7 +430,7 @@ describe("providerError", () => {
   it.each([
     {
       from: "src/lib/copilot.ts",
-      text: " error ${failure.status}: ",
+      text: " error ${failure.status}${errorWords(",
       message:
         "GitHub API error 403: You have exceeded a secondary rate limit. Please wait a few minutes before you try again.",
       facts: { code: "provider_error", status: 403, retryAtMs: NOW_MS + 60_000 },
@@ -438,35 +438,35 @@ describe("providerError", () => {
     },
     {
       from: "src/providers/kimi-code.ts",
-      text: "Kimi API error ${failure.status}: ",
+      text: "Kimi API error ${failure.status}${errorWords(",
       message: "Kimi API error 403: not subscribed to the coding plan",
       facts: { code: "provider_error", status: 403 },
       expected: { code: "no_plan", status: 403 },
     },
     {
       from: "src/providers/deepseek.ts",
-      text: "DeepSeek API error ${failure.status}: ",
+      text: "DeepSeek API error ${failure.status}${errorWords(",
       message: "DeepSeek API error 400: token expired",
       facts: { code: "provider_error", status: 400 },
       expected: { code: "login_expired", status: 400 },
     },
     {
       from: "src/providers/xai.ts",
-      text: "xAI API error ${failure.status}: ",
+      text: "xAI API error ${failure.status}${errorWords(",
       message: "xAI API error 400: rate limit reached for this team",
       facts: { code: "provider_error", status: 400 },
       expected: { code: "rate_limited", status: 400 },
     },
     {
       from: "src/providers/kimi-code.ts",
-      text: "Kimi API error ${failure.status}: ",
+      text: "Kimi API error ${failure.status}${errorWords(",
       message: "Kimi API error 504: Gateway Timeout",
       facts: { code: "provider_error", status: 504 },
       expected: { code: "timeout", status: 504 },
     },
     {
       from: "src/providers/glm-coding-plan.ts",
-      text: "${apiError} ${failure.status}: ",
+      text: "${apiError} ${failure.status}${errorWords(",
       message: "Z.ai API error 500: invalid config on the server",
       facts: { code: "provider_error", status: 500 },
       expected: { code: "provider_error", status: 500 },

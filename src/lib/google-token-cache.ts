@@ -1,9 +1,9 @@
 /**
- * Process-local access-token cache shared by the Google quota providers.
+ * Process-local access-token caches for the Google quota providers, one per provider.
  *
  * Access tokens and account correlation material are intentionally never
  * persisted. The legacy v1 disk cache contained account PII and an unkeyed
- * refresh-token verifier, so it is ignored and removed on first use.
+ * refresh-token verifier, so it is never read and is removed before every get and set.
  */
 
 import { createHmac, randomBytes } from "node:crypto";
@@ -17,9 +17,13 @@ type GoogleAccessTokenCacheEntry = {
   expiresAt: number;
 };
 
+export type GoogleTokenCache = {
+  /** The entry of `key`, unless it expires within `skewMs`. */
+  get(params: { key: string; skewMs: number }): Promise<GoogleAccessTokenCacheEntry | null>;
+  set(params: { key: string; entry: GoogleAccessTokenCacheEntry }): Promise<void>;
+};
+
 const PROCESS_CACHE_KEY = randomBytes(32);
-const memoryTokens = new Map<string, GoogleAccessTokenCacheEntry>();
-let operationQueue: Promise<void> = Promise.resolve();
 
 export function makeAccountCacheKey(params: { refreshToken: string; projectId: string }): string {
   return `gat1_${createHmac("sha256", PROCESS_CACHE_KEY)
@@ -28,15 +32,6 @@ export function makeAccountCacheKey(params: { refreshToken: string; projectId: s
     .update("\0")
     .update(params.projectId)
     .digest("base64url")}`;
-}
-
-function enqueue<T>(operation: () => Promise<T>): Promise<T> {
-  const result = operationQueue.then(operation, operation);
-  operationQueue = result.then(
-    () => undefined,
-    () => undefined,
-  );
-  return result;
 }
 
 async function removeLegacyCache(): Promise<void> {
@@ -48,28 +43,36 @@ async function removeLegacyCache(): Promise<void> {
   await rm(legacyPath, { force: true }).catch(() => undefined);
 }
 
-export async function getCachedAccessToken(params: {
-  key: string;
-  skewMs: number;
-}): Promise<GoogleAccessTokenCacheEntry | null> {
-  return enqueue(async () => {
-    await removeLegacyCache();
-    const entry = memoryTokens.get(params.key);
-    if (!entry) return null;
-    if (entry.expiresAt <= Date.now() + params.skewMs) {
-      memoryTokens.delete(params.key);
-      return null;
-    }
-    return { ...entry };
-  });
-}
+/** An empty cache; its operations run one at a time, each after removing the legacy file. */
+export function createGoogleTokenCache(): GoogleTokenCache {
+  const memoryTokens = new Map<string, GoogleAccessTokenCacheEntry>();
+  let operationQueue: Promise<void> = Promise.resolve();
 
-export async function setCachedAccessToken(params: {
-  key: string;
-  entry: GoogleAccessTokenCacheEntry;
-}): Promise<void> {
-  return enqueue(async () => {
-    await removeLegacyCache();
-    memoryTokens.set(params.key, { ...params.entry });
-  });
+  function enqueue<T>(operation: () => Promise<T>): Promise<T> {
+    const result = operationQueue.then(operation, operation);
+    operationQueue = result.then(
+      () => undefined,
+      () => undefined,
+    );
+    return result;
+  }
+
+  return {
+    get: (params) =>
+      enqueue(async () => {
+        await removeLegacyCache();
+        const entry = memoryTokens.get(params.key);
+        if (!entry) return null;
+        if (entry.expiresAt <= Date.now() + params.skewMs) {
+          memoryTokens.delete(params.key);
+          return null;
+        }
+        return { ...entry };
+      }),
+    set: (params) =>
+      enqueue(async () => {
+        await removeLegacyCache();
+        memoryTokens.set(params.key, { ...params.entry });
+      }),
+  };
 }

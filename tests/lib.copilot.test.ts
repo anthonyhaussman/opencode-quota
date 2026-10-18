@@ -1,6 +1,10 @@
-import { join } from "node:path";
+/**
+ * The Copilot query, diagnostics and cache identity as one module: the PAT config file in the
+ * temp config folder, OpenCode logins in a temp `opencode.db` (or a fake integration for a login
+ * OpenCode could not return), and GitHub's replies through fake HTTP.
+ */
 
-import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
+import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from "vite-plus/test";
 
 import {
   copilotLoginsIdentity,
@@ -8,61 +12,44 @@ import {
   queryCopilotQuota,
   readCopilotLogins,
 } from "../src/lib/copilot.js";
-import type { CredentialRow } from "../src/lib/opencode-auth.js";
+import {
+  bindCredentialSource,
+  createIntegrationCredentialSource,
+  notifyCredentialsChanged,
+} from "../src/lib/opencode-auth.js";
+import {
+  __resetResolvedAuthIdentityForTests,
+  deriveResolvedAuthIdentity,
+  loginListIdentity,
+} from "../src/lib/resolved-auth-identity.js";
 import type { CopilotResult } from "../src/lib/types.js";
-import { useOpencodeFolders } from "./helpers/opencode-folders.js";
+import { createFakeIntegration } from "./helpers/fake-integration.js";
+import { useProviderWorld } from "./helpers/provider-fetch.js";
 
-const mocks = vi.hoisted(() => ({
-  existsSync: vi.fn((_path: string) => false),
-  readFileSync: vi.fn(),
-  readCredentialRows: vi.fn(async (): Promise<CredentialRow[]> => []),
-  deriveResolvedAuthIdentity: vi.fn(async (_params: unknown) => `rai1_${"c".repeat(43)}`),
-}));
+const world = useProviderWorld();
+const POSIX_IDENTITY_STORAGE = process.platform !== "win32" && typeof process.getuid === "function";
 
-vi.mock("fs", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("fs")>()),
-  existsSync: mocks.existsSync,
-  readFileSync: mocks.readFileSync,
-}));
-vi.mock("../src/lib/opencode-auth.js", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("../src/lib/opencode-auth.js")>()),
-  readCredentialRows: mocks.readCredentialRows,
-}));
-vi.mock("../src/lib/resolved-auth-identity.js", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("../src/lib/resolved-auth-identity.js")>()),
-  deriveResolvedAuthIdentity: mocks.deriveResolvedAuthIdentity,
-}));
-
-// The state folder keeps the key the login list identity uses.
-const folders = useOpencodeFolders();
-const patPath = join(folders.configDir, "copilot-quota-token.json");
-
+/** Writes `copilot-quota-token.json`, the PAT config Copilot prefers over OAuth. */
 function configure(value: Record<string, unknown>): void {
-  mocks.existsSync.mockImplementation((path) => path === patPath);
-  mocks.readFileSync.mockReturnValue(JSON.stringify(value));
-}
-
-function oauthLogin(value: Record<string, unknown>, resolveError?: string): CredentialRow {
-  return {
-    id: "login-1",
-    integrationId: "github-copilot",
-    label: "",
-    active: true,
-    value,
-    resolveError,
-  };
+  world.writeConfigFile("copilot-quota-token.json", JSON.stringify(value));
 }
 
 /** One stored Copilot OAuth login. */
 function signIn(entry: Record<string, unknown> = {}): void {
-  mocks.readCredentialRows.mockResolvedValue([
-    oauthLogin({ type: "oauth", access: "oauth-token", ...entry }),
+  world.storeLogins([
+    {
+      id: "login-1",
+      integrationId: "github-copilot",
+      active: 1,
+      updated: 1,
+      value: { type: "oauth", access: "oauth-token", ...entry },
+    },
   ]);
 }
 
 /** The Copilot query of the first stored login, as the provider asks it. */
 async function query(options: { requestTimeoutMs?: number } = {}): Promise<CopilotResult> {
-  const [login] = await mocks.readCredentialRows();
+  const [login] = (await readCopilotLogins()).oauth;
   return queryCopilotQuota({
     ...options,
     ...(login ? { login } : {}),
@@ -182,10 +169,12 @@ const overLimit = {
 beforeEach(() => {
   vi.useFakeTimers();
   vi.setSystemTime(new Date("2026-01-15T12:00:00.000Z"));
-  mocks.existsSync.mockReset().mockReturnValue(false);
-  mocks.readFileSync.mockReset();
-  mocks.readCredentialRows.mockReset().mockResolvedValue([]);
   stubFetch();
+});
+
+afterEach(() => {
+  vi.useRealTimers();
+  __resetResolvedAuthIdentityForTests();
 });
 
 describe("Copilot credential sources", () => {
@@ -195,49 +184,72 @@ describe("Copilot credential sources", () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
-  it("derives OAuth cache identity from the login's token and API host", async () => {
-    signIn({ access: "copilot-oauth-secret", enterpriseUrl: "example.ghe.com" });
+  it.runIf(POSIX_IDENTITY_STORAGE)(
+    "derives OAuth cache identity from the login's token and API host",
+    async () => {
+      signIn({ access: "copilot-oauth-secret", enterpriseUrl: "example.ghe.com" });
+      const [row] = (await readCopilotLogins()).oauth;
+      if (!row) throw new Error("expected a stored login");
 
-    const resolved = await identity();
+      const resolved = await identity();
 
-    expect(mocks.deriveResolvedAuthIdentity).toHaveBeenCalledWith({
-      providerId: "copilot:oauth",
-      principal: { kind: "credential", value: "copilot-oauth-secret" },
-      qualifiers: ["api=https://api.example.ghe.com"],
-    });
-    expect(JSON.stringify(resolved)).not.toContain("copilot-oauth-secret");
-  });
+      const login = await deriveResolvedAuthIdentity({
+        providerId: "copilot:oauth",
+        principal: { kind: "credential", value: "copilot-oauth-secret" },
+        qualifiers: ["api=https://api.example.ghe.com"],
+      });
+      expect(resolved).toBe(await loginListIdentity("copilot", [{ row, identity: login }]));
+      expect(resolved).toMatch(/^rai1_/u);
+      expect(JSON.stringify(resolved)).not.toContain("copilot-oauth-secret");
+    },
+  );
 
-  it("scopes PAT cache identity to the resolved billing target and UTC period", async () => {
-    configure({
-      token: "copilot-pat-secret",
-      tier: "business",
-      organization: "example-org",
-      username: "alice",
-    });
+  it.runIf(POSIX_IDENTITY_STORAGE)(
+    "scopes PAT cache identity to the resolved billing target and UTC period",
+    async () => {
+      configure({
+        token: "copilot-pat-secret",
+        tier: "business",
+        organization: "example-org",
+        username: "alice",
+      });
 
-    await identity();
+      const resolved = await identity();
 
-    expect(mocks.deriveResolvedAuthIdentity).toHaveBeenCalledWith({
-      providerId: "copilot:pat",
-      principal: { kind: "credential", value: "copilot-pat-secret" },
-      qualifiers: [
-        "api=https://api.github.com",
-        "billingModel=ai_credits",
-        "tier=business",
-        "scope=organization",
-        "username=alice",
-        "organization=example-org",
-        "enterprise=",
-        "period=2026-01",
-      ],
-    });
-  });
+      expect(resolved).toMatch(/^rai1_/u);
+      expect(resolved).toBe(
+        await deriveResolvedAuthIdentity({
+          providerId: "copilot:pat",
+          principal: { kind: "credential", value: "copilot-pat-secret" },
+          qualifiers: [
+            "api=https://api.github.com",
+            "billingModel=ai_credits",
+            "tier=business",
+            "scope=organization",
+            "username=alice",
+            "organization=example-org",
+            "enterprise=",
+            "period=2026-01",
+          ],
+        }),
+      );
+    },
+  );
 
   it("shows a login OpenCode could not read as an error, present but without identity", async () => {
-    mocks.readCredentialRows.mockResolvedValue([
-      oauthLogin({ type: "oauth" }, "refresh_failed: HTTP 401"),
+    const integration = createFakeIntegration([
+      {
+        integrationId: "github-copilot",
+        id: "login-1",
+        label: "",
+        registered: true,
+        method: "oauth",
+        value: { type: "oauth" },
+        resolveError: "HTTP 401",
+      },
     ]);
+    onTestFinished(bindCredentialSource(createIntegrationCredentialSource(integration as never)));
+    notifyCredentialsChanged();
     const fetchMock = stubFetch();
 
     await expect(query()).resolves.toEqual({
@@ -248,7 +260,6 @@ describe("Copilot credential sources", () => {
     const logins = await readCopilotLogins();
     expect(getCopilotQuotaAuthDiagnostics(logins).billingApiAccessLikely).toBe(true);
     await expect(identity()).resolves.toBeNull();
-    expect(mocks.deriveResolvedAuthIdentity).not.toHaveBeenCalled();
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
@@ -814,7 +825,7 @@ describe("Copilot HTTP failures", () => {
     ["an OAuth internal-user body", "oauth-timeout-canary", 200, "Request timeout after 1s"],
     ["a PAT billing body", "github_pat_timeout_canary", 200, "Request timeout after 1s"],
     // A stalled error body still has its status.
-    ["a PAT error body", "github_pat_timeout_canary", 503, "GitHub API error 503: "],
+    ["a PAT error body", "github_pat_timeout_canary", 503, "GitHub API error 503"],
   ])("times out %s without exposing its token", async (_name, token, status, expected) => {
     if (token.startsWith("github_pat_")) configure({ token, tier: "pro", username: "alice" });
     else signIn({ access: token });

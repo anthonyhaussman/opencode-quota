@@ -14,7 +14,7 @@ import type {
   QuotaProviderMatchContext,
 } from "../lib/entries.js";
 import { clampPercent } from "../lib/format-utils.js";
-import { failureFacts, requestJson } from "../lib/http.js";
+import { errorWords, failureFacts, requestJson } from "../lib/http.js";
 import { isRecord, nonEmptyString } from "../lib/json-guards.js";
 import { type CredentialRow, readCredentialRows, readOAuthLogin } from "../lib/opencode-auth.js";
 import { modelProviderMatchesRuntimeId } from "../lib/provider-model-matching.js";
@@ -231,7 +231,7 @@ async function queryXaiLogin(
     const { failure } = reply;
     return failedLogin(
       failure.kind === "http"
-        ? `xAI API error ${failure.status}: ${safeErrorText(failure.detail)}`
+        ? `xAI API error ${failure.status}${errorWords(safeErrorText(failure.detail))}`
         : safeErrorText(failure.detail),
       failureFacts(failure),
     );
