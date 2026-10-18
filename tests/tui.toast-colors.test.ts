@@ -8,10 +8,10 @@ import type { ProviderSnapshot, QuotaRow } from "../src/core/types.js";
 import { defaultDisplaySettings } from "../src/tui/display.js";
 import type { Theme } from "../src/tui/theme.js";
 import { coloredMessage, createToastShow } from "../src/tui/toast-colors.js";
-import { plainMessage, type ToastOptions } from "../src/tui/toasts.js";
+import type { ToastOptions } from "../src/tui/toasts.js";
 import { DEFAULT_WORDS } from "../src/view/format.js";
 import { visibleGroups } from "../src/view/select.js";
-import { toastLines } from "../src/view/text.js";
+import { type Line, lineText, toastLines } from "../src/view/text.js";
 import { providerSnapshot, quotaRow } from "./helpers/fake-answers.js";
 import { stubJsx } from "./helpers/fake-tui-host.js";
 import { type Node, THEME } from "./helpers/jsx-tree.js";
@@ -56,6 +56,9 @@ function lines() {
     runsOut: true,
   });
 }
+
+/** A toast's lines as its plain message. */
+const plainMessage = (toast: Line[]) => toast.map(lineText).join("\n");
 
 /** The text of the spans, "\n" included, like OpenCode's <text> draws it. */
 function spansText(spans: unknown): string {

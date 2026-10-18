@@ -120,7 +120,6 @@ const plugin = Plugin.define({
       display: display.shown,
       owner: () => appOwner,
     });
-    const settings = createSettingsEditor(api, display, showToast);
     const toasts = createToasts({
       show: showToast,
       display: display.shown,
@@ -128,6 +127,7 @@ const plugin = Plugin.define({
       quota,
       isChildSession,
     });
+    const settings = createSettingsEditor(api, display, toasts.preview);
     const host: SurfaceHost = {
       theme: () => api.theme,
       display: display.shown,
