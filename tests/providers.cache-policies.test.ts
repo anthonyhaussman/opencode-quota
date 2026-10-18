@@ -192,4 +192,54 @@ describe("provider cache policies", () => {
       expect(cachePolicyMocks.deriveIdentity).not.toHaveBeenCalled();
     },
   );
+
+  it.each([
+    { state: "none" },
+    { state: "expired", credential: { accessToken: "st_secret-token", orgId: "wrk_shared" } },
+  ])(
+    "keeps OpenCode Go's key identity without a usable Console sign-in (%j)",
+    async (resolution) => {
+      const policy = PROVIDER_CACHE_POLICIES["opencode-go"];
+      if (policy?.kind !== "resolved-auth") throw new Error("Expected a resolved-auth policy");
+      vi.stubEnv("OPENCODE_API_KEY", "go-key");
+      cachePolicyMocks.resolveConsoleAuth.mockResolvedValue(resolution);
+
+      await expect(policy.resolveIdentity({ config: {} } as never, {} as never)).resolves.toBe(
+        JSON.stringify({
+          providerId: "opencode-go",
+          principal: { kind: "credential", value: "go-key" },
+          qualifiers: ["env:OPENCODE_API_KEY"],
+        }),
+      );
+    },
+  );
+
+  it.runIf(process.platform !== "win32" && typeof process.getuid === "function")(
+    "gives OpenCode Go one identity per Console account, stable for the same account",
+    async () => {
+      const policy = PROVIDER_CACHE_POLICIES["opencode-go"];
+      if (policy?.kind !== "resolved-auth") throw new Error("Expected a resolved-auth policy");
+      vi.stubEnv("OPENCODE_API_KEY", "go-key");
+      const identityOf = async (accountId: string, accessToken: string) => {
+        cachePolicyMocks.resolveConsoleAuth.mockResolvedValue({
+          state: "configured",
+          credential: { accessToken, orgId: "wrk_shared", accountId },
+        });
+        return await policy.resolveIdentity({ config: {} } as never, {} as never);
+      };
+
+      const first = await identityOf("acc_a", "token-1");
+      const refreshed = await identityOf("acc_a", "token-2");
+      const other = await identityOf("acc_b", "token-3");
+
+      expect(first).not.toBeNull();
+      expect(refreshed).toBe(first);
+      expect(other).not.toBe(first);
+      expect(cachePolicyMocks.deriveIdentity).toHaveBeenCalledWith({
+        providerId: "opencode-go",
+        principal: { kind: "stable-id", value: JSON.stringify(["wrk_shared", "acc_b"]) },
+        qualifiers: ["https://opencode.ai/console"],
+      });
+    },
+  );
 });

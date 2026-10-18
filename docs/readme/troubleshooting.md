@@ -233,7 +233,7 @@ Check the `opencode-go` section:
 | --------------------------------- | --- |
 | Provider not detected             | Run `opencode auth login opencode`, or set an API key ([order](providers.md#opencode-go)). Then rerun `/quota_status`; once Go is detected, `auth_state`, `api_key_source`, and `api_key_checked_paths` show which key it uses. |
 | `auth_state` is `invalid`         | Run `opencode auth login opencode-go`. A broken `opencode-go` login blocks the legacy `opencode` fallback. |
-| Console sign-in failed            | `console_auth_state` is not `configured`; shown only when no API key is set. Run `opencode auth login opencode`, or set an API key. |
+| Console sign-in failed or expired | `console_auth_state` is not `configured` (an expired one shows `Sign in again`); shown only when no API key is set. Run `opencode auth login opencode`, or set an API key. |
 | No Go quota, `console_error` set  | The Console request failed and no API key is set (`Not configured` in manual mode). Retry, or set an API key. |
 | API returns 401 or 403            | The usage API rejected the key. Update the source shown by `api_key_source`, wait briefly for the credential cache to expire, and rerun `/quota_status`. |
 | Invalid API response              | `state` shows `Unexpected reply (bad_response)`. 5h, Weekly, and Monthly must all be valid; one bad window rejects the whole response. |

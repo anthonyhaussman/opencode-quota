@@ -11,9 +11,14 @@
  * The login is read through OpenCode's plugin API, which refreshes a token that
  * is about to expire (and saves the new one) before returning it. A failed
  * refresh is reported as `invalid`.
+ *
+ * OpenCode Zen and OpenCode Go share this one login: the same identity rule and
+ * the same words for a login that can't be used.
  */
 
+import { safeErrorText } from "../core/redact.js";
 import { readCredentialRows } from "./opencode-auth.js";
+import { deriveResolvedAuthIdentity, type ResolvedAuthIdentity } from "./resolved-auth-identity.js";
 
 const OPENCODE_CONSOLE_BASE_URL = "https://opencode.ai/console";
 const OPENCODE_CONSOLE_INTEGRATION_ID = "opencode";
@@ -29,7 +34,7 @@ export interface OpenCodeConsoleCredential {
   server?: string;
 }
 
-type OpenCodeConsoleAuthState =
+export type OpenCodeConsoleAuthState =
   | { state: "none"; reason?: "not_oauth" }
   | { state: "configured"; credential: OpenCodeConsoleCredential }
   | { state: "expired"; credential: OpenCodeConsoleCredential }
@@ -72,6 +77,43 @@ export async function resolveOpenCodeConsoleAuth(params?: {
   }
 
   return { state: "configured", credential };
+}
+
+const CONSOLE_LOGIN_HINT = "Run `opencode auth login opencode`.";
+
+/**
+ * Why an expired or failed Console login can't be used (`detail`), and the error both Zen and Go
+ * show for it, which reads as "Sign in again".
+ */
+export function consoleSignInFailure(
+  auth: Extract<OpenCodeConsoleAuthState, { state: "expired" | "invalid" }>,
+): { detail: string; message: string } {
+  const detail = auth.state === "expired" ? "the sign-in expired" : safeErrorText(auth.error);
+  return { detail, message: `OpenCode Console sign-in failed: ${detail}. ${CONSOLE_LOGIN_HINT}` };
+}
+
+/**
+ * Who the Console login is, for `providerId`'s cache: org + account (member budgets are per
+ * account), else the account, else the token. The Console URL qualifies it because org ids can
+ * collide across self-hosted Console URLs.
+ */
+export async function consoleLoginIdentity(
+  providerId: string,
+  credential: OpenCodeConsoleCredential,
+): Promise<ResolvedAuthIdentity | null> {
+  const { orgId, accountId } = credential;
+  return await deriveResolvedAuthIdentity({
+    providerId,
+    principal:
+      orgId || accountId
+        ? {
+            kind: "stable-id",
+            value:
+              orgId && accountId ? JSON.stringify([orgId, accountId]) : (orgId ?? accountId ?? ""),
+          }
+        : { kind: "credential", value: credential.accessToken },
+    qualifiers: [consoleBaseUrl(credential)],
+  });
 }
 
 /** The Console server the login belongs to. */

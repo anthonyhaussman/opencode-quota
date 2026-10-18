@@ -549,7 +549,7 @@ API key order:
 4. An `opencode-go` API-key login saved in OpenCode 2 (`opencode.db`). `opencode auth login opencode-go` creates it.
 5. A legacy `opencode` API-key login as the final fallback.
 
-- Without an API key: a sign-in OpenCode cannot return shows as an error, and a failed Console call (including HTTP 403) shows no Go quota.
+- Without an API key: an expired sign-in shows `Sign in again` (as it does for Zen), a sign-in OpenCode cannot return shows as an error, and a failed Console call (including HTTP 403) shows no Go quota.
 - If the Console reports no Go subscription (for example HTTP 404), no Go rows appear.
 - A window with API status `rate-limited` is shown as used up (0% left) with its reset time. Other windows stay visible.
 - Go shows **Five-hour**, **Weekly**, and **Monthly**. The collapsed sidebar shows the window with the least left.
