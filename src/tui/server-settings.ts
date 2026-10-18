@@ -267,6 +267,15 @@ export function createServerSettings(rpc: ServerSettingsRpc) {
       setSwitches((current) => changed(current, id, on, savedCustom(id)?.enabled));
     },
     changedSinceReview: (id: string): boolean => changedIds().includes(id),
+    /**
+     * Every custom provider switch back to its saved state: the flips not saved yet are dropped,
+     * also one made while Save waits. settings.jsonc is not touched.
+     */
+    discardSwitches(): void {
+      for (const id of Object.keys(switches())) reviewedFingerprints.delete(id);
+      savingSwitches?.clear();
+      setSwitches({});
+    },
     dirty,
     async load(): Promise<void> {
       await readSaved();

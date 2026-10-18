@@ -145,6 +145,27 @@ describe("Reset tab and Reset page (resetPage)", () => {
     expect(titles(page())).toContainEqual(["Slow provider: give up", "each provider's own"]);
   });
 
+  it("drops unsaved custom provider flips on Providers, so nothing waits for Save", async () => {
+    const { server, page } = await pageOn("providers", {
+      ...SAVED,
+      values: {},
+      fromFile: [],
+      custom: [
+        ...SAVED.custom,
+        { id: "on", label: "Always on", enabled: true, request: null, fingerprint: "fp-b" },
+      ],
+    });
+    page().activate("custom.gw");
+    server.set("providers.checking.minIntervalMs", 60_000);
+    expect(server.customOn("gw")).toBe(true);
+
+    page().reset();
+
+    // Back to the saved switches: gw off again, a provider saved as on stays on.
+    expect([server.customOn("gw"), server.customOn("on")]).toEqual([false, true]);
+    expect(server.dirty()).toBe(false);
+  });
+
   it("resets only the page's own lines on a Layout page", async () => {
     const { server, draft } = await pageOn("collapsed");
     draft.edit((settings) => ({

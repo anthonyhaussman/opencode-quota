@@ -50,11 +50,14 @@ export function lineKey(id: string): string {
 
 /**
  * Reset tab or Reset page: every line of `tab` back to its default in the draft, so Save
- * removes them from settings.jsonc. On Providers the switched-off providers too.
+ * removes them from settings.jsonc. On Providers the switched-off providers too, and each
+ * custom provider switch goes back to its saved state.
  */
 export function resetPage(server: ServerSettings, tab: SettingsTab): void {
   for (const key of resetKeys(tab)) server.reset(key);
-  if (tab === "providers") server.reset(PROVIDERS_KEY);
+  if (tab !== "providers") return;
+  server.reset(PROVIDERS_KEY);
+  server.discardSwitches();
 }
 
 /** What a page needs from OpenCode's TUI: its theme, its light/dark mode and its commands. */
