@@ -108,6 +108,14 @@ const OPEN_MARK = " ▸";
 const CACHE_HEADER = "Cache";
 /** A model's Cache cell without input tokens or cache numbers. */
 const NO_CACHE_HIT = "—";
+
+/**
+ * A model's cache hit as the Usage tab writes it, in the breakdown's Cache column and in the
+ * model's details alike: "49.9%", or "—" without one.
+ */
+function cacheHitText(cache: CacheHit | undefined): string {
+  return cache ? formatShare(cache.share) : NO_CACHE_HIT;
+}
 /** The model breakdown drops its Cache column before its names get narrower than this. */
 const CACHE_NAME_MIN_WIDTH = 8;
 
@@ -677,7 +685,7 @@ function cacheColumn(shown: BreakdownEntry[]): {
   width: number;
   spans: (entry: BreakdownEntry | undefined) => UsageLine;
 } {
-  const texts = shown.map((entry) => entry.cache?.text ?? NO_CACHE_HIT);
+  const texts = shown.map((entry) => cacheHitText(entry.cache));
   const percentWidth = Math.max(columnsOf(CACHE_HEADER), ...texts.map(columnsOf));
   const lowAfter = ` ${LOW_CACHE_MARK}`;
   const hang = shown.some((entry) => entry.cache?.low) ? columnsOf(lowAfter) : 0;
@@ -689,7 +697,7 @@ function cacheColumn(shown: BreakdownEntry[]): {
     const { cache } = entry;
     let role: UsageRole = "muted";
     if (cache?.judged) role = cache.low ? "warning" : "good";
-    const cell = span(`  ${padStartColumns(cache?.text ?? NO_CACHE_HIT, percentWidth)}`, role);
+    const cell = span(`  ${padStartColumns(cacheHitText(cache), percentWidth)}`, role);
     if (hang === 0) return [cell];
     return [cell, cache?.low ? span(lowAfter, "warning") : span(" ".repeat(hang), "muted")];
   };
@@ -895,8 +903,6 @@ export function modelDetailView(
     mode === "cost"
       ? `${formatShare(model.costShare)} of cost`
       : `${formatShare(model.tokenShare)} of tokens`;
-  const { input, cacheRead, cacheWrite } = model.tokensByType;
-  const allInput = input + cacheRead + cacheWrite;
   let perMillion = "—";
   if (!model.priced) perMillion = "no price";
   else if (model.tokens > 0) perMillion = formatUsd((model.costUsd / model.tokens) * 1_000_000);
@@ -910,7 +916,7 @@ export function modelDetailView(
         ["Cost", costText(model)],
         ["Tokens", formatTokens(model.tokens)],
         ["Per 1M tokens", perMillion],
-        ["Cache hit", allInput > 0 ? formatShare(cacheRead / allInput) : "—"],
+        ["Cache hit", cacheHitText(cacheHit(model.tokensByType))],
       ],
       layoutWidth,
     ),

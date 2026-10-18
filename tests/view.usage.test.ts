@@ -822,11 +822,11 @@ describe("usageView", () => {
     const cacheCells = lines.slice(2).map((line) => line.slice(-3, -1));
     expect(cacheCells).toEqual([
       [
-        { text: "    91%", role: "good" },
+        { text: "  91.0%", role: "good" },
         { text: "  ", role: "muted" },
       ],
       [
-        { text: "    35%", role: "warning" },
+        { text: "  35.0%", role: "warning" },
         { text: " ⚠", role: "warning" },
       ],
       // No cache numbers.
@@ -836,12 +836,12 @@ describe("usageView", () => {
       ],
       // Under 200K input tokens: too few to call it good or low.
       [
-        { text: "    13%", role: "muted" },
+        { text: "  13.3%", role: "muted" },
         { text: "  ", role: "muted" },
       ],
       // Half of the input cached.
       [
-        { text: "    50%", role: "good" },
+        { text: "  50.0%", role: "good" },
         { text: "  ", role: "muted" },
       ],
       // No input tokens.
@@ -850,6 +850,21 @@ describe("usageView", () => {
         { text: "  ", role: "muted" },
       ],
     ]);
+  });
+
+  it("writes a model's cache hit the same in the Cache column and in its details", () => {
+    const report = cacheReport();
+    const sonnet = report.models[1] as UsageModelRow;
+    sonnet.tokensByType = { ...sonnet.tokensByType, input: 501_000, cacheRead: 499_000 };
+    const column = section(
+      usageView(report, { mode: "cost", breakdown: "model", width: 80 }),
+      "Breakdown",
+    ).map(textOf);
+    const detail = modelDetailView(report, sonnet, { mode: "cost", width: 80 }).map(textOf);
+
+    expect(column.find((text) => text.includes("claude-sonnet-5"))).toMatch(/ {2}49\.9% ⚠ ▸$/);
+    const grid = detail.findIndex((text) => text.includes("Cache hit"));
+    expect(detail[grid + 1]?.trim()).toMatch(/ 49\.9%$/);
   });
 
   it.each([
@@ -989,7 +1004,7 @@ describe("modelDetailView", () => {
       model: "exo-free",
       mode: "cost" as const,
       share: "OpenCode Zen · 0% of cost",
-      numbers: ["no price", "970K", "no price", "0%"],
+      numbers: ["no price", "970K", "no price", "—"],
       headings: ["Tokens by type"],
     },
     {
