@@ -477,6 +477,44 @@ describe("quota window shell", () => {
     view.dispose();
   });
 
+  it("counts the Settings tree's reset times down with the window's clock", () => {
+    const resetMs = Date.UTC(2026, 9, 18, 12);
+    const snapshot: QuotaSnapshot = {
+      version: 6,
+      generatedAtMs: resetMs - 4 * 3_600_000,
+      resetNotices: [],
+      providers: [
+        providerSnapshot("openai", "OpenAI", [
+          quotaRow("openai.five_hour", {
+            label: "5h",
+            window: "five_hour",
+            percentRemaining: 65,
+            resetsAt: new Date(resetMs).toISOString(),
+          }),
+        ]),
+      ],
+    };
+    const { settings } = fakeHost(snapshot);
+    const body = (nowMs: number) =>
+      createRoot(() =>
+        textLines(
+          settings.Body({
+            tab: "sidebar",
+            showPage: () => {},
+            host: { quota: { snapshot: () => snapshot } } as never,
+            sessionID: "ses_1",
+            box: () => undefined,
+            scroll: () => undefined,
+            width: 80,
+            nowMs,
+          }),
+        ).join("\n"),
+      );
+
+    expect(body(resetMs - 3 * 3_600_000)).toContain("65% left · 3h");
+    expect(body(resetMs - 3_600_000)).toContain("65% left · 1h");
+  });
+
   it("copies the limits on Limits as Web /quota writes them", () => {
     const nowMs = Date.now();
     const snapshot: QuotaSnapshot = {

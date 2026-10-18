@@ -780,6 +780,7 @@ export function createQuotaWindow(
                     box={() => windowBox}
                     scroll={() => scroll}
                     width={bodyWidth() - pagesRoom(shown())}
+                    nowMs={nowMs()}
                   />
                 )}
               </Show>

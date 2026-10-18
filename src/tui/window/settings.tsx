@@ -778,6 +778,8 @@ export function createSettingsEditor(
     scroll: () => ScrollBoxRenderable | undefined;
     /** The body's room: the scrollbar's column and a gap before it stay free. */
     width: number;
+    /** The window's clock, so the tree's reset times count down. */
+    nowMs: number;
   }): JSX.Element {
     /** The box with only the tree lines, so the drag math counts lines from its top. */
     let list: BoxRenderable | undefined;
@@ -792,7 +794,7 @@ export function createSettingsEditor(
       const current = surface();
       return current && surfaceEditor(current, snapshot());
     };
-    const lines = createMemo(() => editor()?.lines(shown(), Date.now()) ?? []);
+    const lines = createMemo(() => editor()?.lines(shown(), props.nowMs) ?? []);
     const selectedOption = () => options().find((line) => line.id === selected());
     const selectedLine = () => lines().find((line) => lineKey(line.id) === selected());
 
