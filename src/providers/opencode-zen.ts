@@ -1,11 +1,8 @@
-import type { DebugDetail } from "../core/types.js";
 import type { QuotaProvider, QuotaProviderContext } from "../lib/entries.js";
 import {
-  consoleBaseUrl,
   consoleLoginIdentity,
   consoleSignInFailure,
   type OpenCodeConsoleAuthState,
-  type OpenCodeConsoleCredential,
   resolveOpenCodeConsoleAuth,
 } from "../lib/opencode-console-auth.js";
 import {
@@ -38,15 +35,6 @@ function signInFailed(
     accounts: [failedAccount(OPENCODE_ZEN_GROUP, consoleSignInFailure(auth).message)],
     debug: [{ key: "console_auth_state", value: auth.state }],
   };
-}
-
-/** Never includes the token. */
-function consoleStatusDetails(credential: OpenCodeConsoleCredential): DebugDetail[] {
-  return statusDetailsFromRecord({
-    console_auth_state: "configured",
-    console_server: consoleBaseUrl(credential),
-    console_org: credential.orgName ?? credential.orgId ?? "(none)",
-  });
 }
 
 function zenUsdDecimal(value: number): string {
@@ -110,7 +98,8 @@ export const opencodeZenProvider: QuotaProvider = {
     }
 
     const { credential } = consoleAuth;
-    const statusDetails = consoleStatusDetails(credential);
+    // Never the token, the Console server or the organization.
+    const consoleDetail = { key: "console_auth_state", value: "configured" };
 
     const result = await queryOpenCodeZenQuota(credential, {
       requestTimeoutMs: ctx.config?.requestTimeoutMsConfigured
@@ -122,7 +111,7 @@ export const opencodeZenProvider: QuotaProvider = {
       return {
         attempted: true,
         accounts: [failedAccount(OPENCODE_ZEN_GROUP, result.error, result.facts)],
-        debug: [...statusDetails, { key: "live_fetch_error", value: result.error }],
+        debug: [consoleDetail, { key: "live_fetch_error", value: result.error }],
       };
     }
 
@@ -184,7 +173,6 @@ export const opencodeZenProvider: QuotaProvider = {
       });
     }
 
-    const usdText = (value: number) => `USD ${zenUsdDecimal(value)}`;
     return {
       attempted: true,
       accounts: [
@@ -195,17 +183,11 @@ export const opencodeZenProvider: QuotaProvider = {
         },
       ],
       debug: [
-        ...statusDetails,
+        consoleDetail,
         ...statusDetailsFromRecord({
-          balance_usd: usdText(balanceUsd),
-          monthly_limit_usd: data.monthlyLimit === null ? "(none)" : usdText(data.monthlyLimit),
-          monthly_usage_usd: monthlyUsageUsd === null ? "(unknown)" : usdText(monthlyUsageUsd),
           budget_source: data.budgetSource,
           member_budget_note: data.memberBudgetsSkipped ? MEMBER_BUDGET_NOTE : undefined,
           auto_reload: data.reload === null ? "(unknown)" : String(data.reload),
-          auto_reload_amount_raw: data.reloadAmount === null ? "(none)" : String(data.reloadAmount),
-          auto_reload_trigger_raw:
-            data.reloadTrigger === null ? "(none)" : String(data.reloadTrigger),
           live_fetch_error: result.errors.length > 0 ? result.errors.join(" | ") : undefined,
         }),
       ],

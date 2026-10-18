@@ -20,7 +20,7 @@ import {
   windowRows,
 } from "./contract.js";
 import { fetchStoredKeys, isKeyVendorAvailable } from "./key-vendor.js";
-import { statusDetailsFromRecord, vendorKeyDetails } from "./result-helpers.js";
+import { vendorKeyDetails } from "./result-helpers.js";
 
 /** One GLM coding plan endpoint: Z.ai (global) or Zhipu (China). */
 type GlmEndpoint = {
@@ -164,12 +164,6 @@ async function queryGlmRows(
   }
 }
 
-/** The debug line of a window row: `80% reset_at=…`. */
-function formatWindow(rows: readonly ProviderRow[], key: string): string | undefined {
-  const row = rows.find((candidate) => candidate.key === key);
-  return row ? `${row.percentRemaining}% reset_at=${row.resetsAt ?? "(none)"}` : undefined;
-}
-
 async function fetchGlmQuota(
   endpoint: GlmEndpoint,
   ctx: QuotaProviderContext,
@@ -192,28 +186,18 @@ async function fetchGlmQuota(
   }
 
   const result = await queryGlmRows(endpoint, keys.envOrConfig.key, requestTimeoutMs);
-  const rows = result.success ? result.rows : [];
-  const debug = [
-    ...authDetails,
-    ...statusDetailsFromRecord({
-      live_fetch_error: result.success ? undefined : result.error,
-      five_hour_remaining: formatWindow(rows, FIVE_HOUR.key),
-      weekly_remaining: formatWindow(rows, WEEKLY.key),
-      mcp_remaining: formatWindow(rows, MCP.key),
-      live_state:
-        result.success && rows.length === 0
-          ? `no reportable ${endpoint.label} quota windows`
-          : undefined,
-    }),
-  ];
   if (!result.success) {
     return {
       attempted: true,
       accounts: [failedAccount(endpoint.label, result.error, result.facts)],
-      debug,
+      debug: [...authDetails, { key: "live_fetch_error", value: result.error }],
     };
   }
-  return { attempted: true, accounts: [{ name: endpoint.label, rows, errors: [] }], debug };
+  return {
+    attempted: true,
+    accounts: [{ name: endpoint.label, rows: result.rows, errors: [] }],
+    debug: authDetails,
+  };
 }
 
 function glmProvider(

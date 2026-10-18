@@ -238,9 +238,6 @@ function resultWarnings(result: CopilotSuccessResult): string[] {
 }
 
 function copilotStatusDetails(diagnostics: CopilotQuotaAuthDiagnostics) {
-  const managedBilling =
-    diagnostics.billingMode === "organization_usage" ||
-    diagnostics.billingMode === "enterprise_usage";
   return statusDetailsFromRecord({
     pat_state: diagnostics.pat.state,
     pat_path: diagnostics.pat.selectedPath,
@@ -252,7 +249,6 @@ function copilotStatusDetails(diagnostics: CopilotQuotaAuthDiagnostics) {
     deployment: diagnostics.deployment,
     api_host: diagnostics.apiHost ?? "(none)",
     enterprise_host_source: diagnostics.enterpriseHostSource,
-    enterprise_host_error: diagnostics.enterpriseHostError,
     billing_mode: diagnostics.billingMode,
     billing_scope: diagnostics.billingScope,
     quota_api: diagnostics.quotaApi,
@@ -262,15 +258,6 @@ function copilotStatusDetails(diagnostics: CopilotQuotaAuthDiagnostics) {
     billing_period: diagnostics.queryPeriod
       ? formatBillingPeriod(diagnostics.queryPeriod)
       : undefined,
-    username_filter: diagnostics.usernameFilter,
-    billing_usage_note: managedBilling
-      ? `${diagnostics.billingMode === "organization_usage" ? "organization" : "enterprise"} AI Credit usage for the current UTC calendar month`
-      : undefined,
-    remaining_quota_note: managedBilling
-      ? "the usage report exposes included-pool consumption and billed usage, but no included-pool denominator; percentages require a real budget"
-      : undefined,
-    token_compatibility_error: diagnostics.tokenCompatibilityError,
-    pat_error: diagnostics.pat.error,
     pat_checked_paths: diagnostics.pat.checkedPaths.join(" | ") || "(none)",
     oauth_configured: `${diagnostics.oauth.configured ? "true" : "false"} key=${diagnostics.oauth.keyName ?? "(none)"} refresh=${diagnostics.oauth.hasRefreshToken ? "true" : "false"} access=${diagnostics.oauth.hasAccessToken ? "true" : "false"} enterprise_host=${diagnostics.oauth.hasEnterpriseUrl ? "true" : "false"}`,
     effective_source: diagnostics.effectiveSource,

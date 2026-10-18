@@ -10,7 +10,6 @@ import {
 import type { QuotaProvider, QuotaProviderContext } from "../lib/entries.js";
 import { selectConnectionCredentialRows } from "../lib/opencode-auth.js";
 import {
-  consoleBaseUrl,
   consoleLoginIdentity,
   consoleSignInFailure,
   resolveOpenCodeConsoleAuth,
@@ -155,7 +154,6 @@ export const opencodeGoProvider: QuotaProvider = {
           ],
           debug: [
             { key: "console_auth_state", value: "configured" },
-            { key: "console_server", value: consoleBaseUrl(consoleAuth.credential) },
             { key: "go_source", value: "console" },
             selectedWindowsDetail,
           ],

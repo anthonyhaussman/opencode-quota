@@ -85,10 +85,6 @@ describe.each(VENDORS)("$label coding plan", (vendor) => {
       [`${vendor.id}.mcp`, null, "MCP", "mcp", 90, null],
     ]);
     expect(fetched.error).toBeUndefined();
-    expect(fetched.debug).toContainEqual({
-      key: "five_hour_remaining",
-      value: `80% reset_at=${FIVE_HOUR_RESET}`,
-    });
     expect(http.mock.calls.map(([url]) => String(url))).toEqual([vendor.url]);
     const [, init] = http.mock.calls[0] ?? [];
     expect(requestHeader(init, "Authorization")).toBe("secret-key");

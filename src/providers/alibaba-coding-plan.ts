@@ -151,7 +151,6 @@ export const alibabaCodingPlanProvider: QuotaProvider = {
 
   async fetch(ctx: QuotaProviderContext): Promise<ProviderFetchResult> {
     const plan = await getAlibabaCodingPlanAuthDiagnostics();
-    const authError = plan.state === "invalid" ? plan.error : undefined;
     const debug = statusDetailsFromRecord({
       "alibaba auth configured": plan.state === "none" ? "false" : "true",
       alibaba_api_key_source: plan.source ?? "(none)",
@@ -160,8 +159,6 @@ export const alibabaCodingPlanProvider: QuotaProvider = {
         plan.credentialDatabasePaths.join(" | ") || "(none)",
       alibaba_coding_plan:
         plan.state === "configured" ? plan.tier : plan.state === "invalid" ? "invalid" : "(none)",
-      alibaba_auth_error: authError,
-      "alibaba coding plan error": authError,
     });
     if (plan.state === "none") return { attempted: false, accounts: [], debug };
     if (plan.state === "invalid") {

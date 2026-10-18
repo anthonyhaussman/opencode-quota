@@ -1207,6 +1207,21 @@ function customCheckKey(key: string, customs: ReadonlyMap<string, number>): stri
   return number === undefined ? undefined : `custom ${number} check`;
 }
 
+function keyEnvNames(providerId: string): readonly string[] {
+  return Object.hasOwn(KEY_VENDORS, providerId) ? (KEY_VENDORS[providerId]?.envVars ?? []) : [];
+}
+
+/**
+ * The rules of a provider's debug details: `shared` are the setup details every section has and,
+ * for a provider that reads an API key, its key details; `own` are the provider's own.
+ */
+export function debugDetailRules(providerId: string): { shared: DebugRules; own: DebugRules } {
+  return {
+    shared: { ...SETUP_DETAILS, ...(keyEnvNames(providerId).length > 0 ? API_KEY_DETAILS : {}) },
+    own: PROVIDER_IDS.has(providerId) ? DEBUG_DETAILS[providerId as CanonicalQuotaProviderId] : {},
+  };
+}
+
 /** The debug details the provider's allow list has, and a count of the others. */
 function debugRows(
   provider: ProviderSnapshot,
@@ -1214,13 +1229,9 @@ function debugRows(
   homeDir: string,
 ): ReportKvRow[] {
   const id = provider.providerId;
-  const envNames = Object.hasOwn(KEY_VENDORS, id) ? (KEY_VENDORS[id]?.envVars ?? []) : [];
-  const rules: DebugRules = {
-    ...SETUP_DETAILS,
-    ...(envNames.length > 0 ? API_KEY_DETAILS : {}),
-    ...(PROVIDER_IDS.has(id) ? DEBUG_DETAILS[id as CanonicalQuotaProviderId] : {}),
-  };
-  const context: DetailContext = { homeDir, envNames };
+  const { shared, own } = debugDetailRules(id);
+  const rules: DebugRules = { ...shared, ...own };
+  const context: DetailContext = { homeDir, envNames: keyEnvNames(id) };
   const rows: ReportKvRow[] = [];
   let hidden = 0;
   for (const item of provider.debug ?? []) {

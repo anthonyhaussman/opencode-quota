@@ -205,15 +205,10 @@ function parseOllamaCloudBalance(payload: unknown): KeyFetch {
     errors: errors.map((message) => ({ message })),
     debug: [
       ...statusDetailsFromRecord({
-        included_balance_usd: credits?.balanceUsd.toString(),
-        included_allowance_usd: credits?.allowanceUsd.toString(),
         included_period_from: credits?.periodStartIso,
         included_period_until: credits?.resetTimeIso,
-        session_remaining_percent: session?.percentRemaining.toString(),
         session_resets_at: session?.resetTimeIso,
-        weekly_remaining_percent: weekly?.percentRemaining.toString(),
         weekly_resets_at: weekly?.resetTimeIso,
-        purchased_balance_usd: purchasedUsd?.toString(),
       }),
       ...rowErrors.map((message, index) => ({ key: `live_error_${index + 1}`, value: message })),
     ],

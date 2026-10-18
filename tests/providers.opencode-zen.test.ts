@@ -248,12 +248,8 @@ describe("OpenCode Zen provider", () => {
       expect(requestHeader(init, "Authorization")).toBe("Bearer st_secret-token");
       expect(requestHeader(init, "x-org-id")).toBe("wrk_abc");
     }
-    expect(fetched.debug).toEqual(
-      expect.arrayContaining([
-        { key: "console_server", value: "https://console.example.test" },
-        { key: "console_org", value: "wrk_abc" },
-      ]),
-    );
+    expect(fetched.debug).toContainEqual({ key: "console_auth_state", value: "configured" });
+    expect(JSON.stringify(fetched.debug)).not.toMatch(/console\.example\.test|wrk_abc/u);
   });
 
   it.each([

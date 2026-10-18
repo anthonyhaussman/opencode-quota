@@ -195,10 +195,6 @@ describe.each(PROVIDERS)("$name provider", (flavor) => {
       { key: "companion_package_state", value: "invalid" },
       { key: "companion_package_path", value: companionPath },
       { key: "auth_error", value: `${name} OAuth auth is missing a refresh token or project id` },
-      {
-        key: "companion_error",
-        value: `Installed ${flavor.companion.packageName} package is incompatible`,
-      },
     ]);
   });
 

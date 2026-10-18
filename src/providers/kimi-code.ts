@@ -239,7 +239,7 @@ async function fetchKimiQuota(
   const keys = await readVendorKeys(spec.auth);
   const authDetails = [
     ...vendorKeyDetails(spec.auth, keys),
-    ...statusDetailsFromRecord({ api_endpoint: spec.endpoint, api_base_url: spec.apiBaseUrl }),
+    ...statusDetailsFromRecord({ api_endpoint: spec.endpoint }),
   ];
   const query = (apiKey: string) => queryKimiWindows(spec, apiKey, ctx.config?.requestTimeoutMs);
 
@@ -269,13 +269,7 @@ async function fetchKimiQuota(
   return {
     attempted: true,
     accounts: [{ name: spec.label, rows: kimiRows(result.windows), errors: [] }],
-    debug: [
-      ...authDetails,
-      ...result.windows.map((window) => ({
-        key: window.label.toLowerCase().replace(/\s+/g, "_"),
-        value: `used=${window.used}/${window.limit} percent_remaining=${window.percentRemaining} reset_at=${window.resetTimeIso ?? "(none)"}`,
-      })),
-    ],
+    debug: authDetails,
   };
 }
 

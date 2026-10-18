@@ -312,13 +312,7 @@ export const xiaomiProvider: QuotaProvider = {
   },
 
   async fetch(ctx: QuotaProviderContext): Promise<ProviderFetchResult> {
-    const diagnostics = await getMimoConfigDiagnostics();
-    const debug = configStatusDetails({
-      ...diagnostics,
-      error: diagnostics.error
-        ? sanitizeSingleLineDisplaySnippet(diagnostics.error, 120)
-        : undefined,
-    });
+    const debug = configStatusDetails(await getMimoConfigDiagnostics());
     const config = await resolveMimoConfigCached();
 
     if (config.state === "none") return { attempted: false, accounts: [], debug };

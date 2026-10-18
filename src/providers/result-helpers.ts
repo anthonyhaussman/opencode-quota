@@ -19,14 +19,10 @@ export function configStatusDetails(diagnostics: {
   state: string;
   source: string | null;
   checkedPaths: readonly string[];
-  missing?: string | null;
-  error?: string | null;
 }): DebugDetail[] {
   return statusDetailsFromRecord({
     config_state: diagnostics.state,
     config_source: diagnostics.source ?? "(none)",
-    config_missing: diagnostics.missing ?? undefined,
-    config_error: diagnostics.error ?? undefined,
     config_checked_paths: diagnostics.checkedPaths.join(" | ") || "(none)",
   });
 }
