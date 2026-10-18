@@ -1,11 +1,14 @@
 import { existsSync, readFileSync } from "node:fs";
-import { dirname, relative, resolve } from "node:path";
+import { dirname, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vite-plus/test";
 
 const distDir = fileURLToPath(new URL("../dist/", import.meta.url));
 
-/** Every dist file that `entry` loads through relative `import` and `export ... from`. */
+/**
+ * Every dist file that `entry` loads through relative `import` and `export ... from`, as a
+ * dist-relative path with forward slashes on every platform.
+ */
 function reachableFrom(entry: string): string[] {
   const reached = new Set<string>();
   const pending = [entry];
@@ -19,7 +22,7 @@ function reachableFrom(entry: string): string[] {
       pending.push(resolve(dirname(file), match[1]));
     }
   }
-  return [...reached].map((file) => relative(distDir, file)).sort();
+  return [...reached].map((file) => relative(distDir, file).split(sep).join("/")).sort();
 }
 
 /** The reached files whose source queries OpenCode's credential table. */
