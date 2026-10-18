@@ -8,21 +8,11 @@ type MockFunction = ReturnType<typeof vi.fn>;
 interface PluginBootstrapMocks {
   getProviders?: MockFunction;
   sessionUsage?: MockFunction;
-  resolveAlibabaCodingPlanAuthCached?: MockFunction;
 }
 
 /** core/usage.js as it is, with `sessionUsage` replaced. */
 export function createSessionUsageModuleMock(actual: object, sessionUsage: MockFunction) {
   return { ...actual, sessionUsage };
-}
-
-export function createAlibabaAuthModuleMock(resolveAlibabaCodingPlanAuthCached: MockFunction) {
-  return {
-    isAlibabaModelId: (model?: string) =>
-      typeof model === "string" &&
-      (model.toLowerCase().startsWith("alibaba/") || model.toLowerCase().startsWith("alibaba-cn/")),
-    resolveAlibabaCodingPlanAuthCached,
-  };
 }
 
 export function createPluginRuntimePathsMockModule(root: string) {
@@ -59,7 +49,6 @@ export function seedDefaultPluginBootstrapMocks(
 
   mocks.getProviders?.mockReturnValue([]);
   mocks.sessionUsage?.mockResolvedValue(undefined);
-  mocks.resolveAlibabaCodingPlanAuthCached?.mockResolvedValue({ state: "none" });
 }
 
 export type ServerTool = {

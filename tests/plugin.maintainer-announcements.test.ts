@@ -13,7 +13,6 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test"
 import { answer, percentRow } from "./helpers/fake-answers.js";
 import { createFakeTuiHost, stubJsx } from "./helpers/fake-tui-host.js";
 import {
-  createAlibabaAuthModuleMock,
   createPluginRuntimePathsMockModule,
   createServerContext,
   seedDefaultPluginBootstrapMocks,
@@ -35,16 +34,12 @@ const TEST_ANNOUNCEMENT = vi.hoisted(() => ({
 
 const mocks = vi.hoisted(() => ({
   getProviders: vi.fn(),
-  resolveAlibabaCodingPlanAuthCached: vi.fn(),
 }));
 
 const announcementMocks = vi.hoisted(() => ({
   getMaintainerAnnouncementsSummary: vi.fn(),
 }));
 
-vi.mock("../src/lib/alibaba-auth.js", () =>
-  createAlibabaAuthModuleMock(mocks.resolveAlibabaCodingPlanAuthCached),
-);
 vi.mock("../src/lib/opencode-runtime-paths.js", () =>
   createPluginRuntimePathsMockModule(TEST_RUNTIME_ROOT),
 );

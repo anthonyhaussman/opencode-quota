@@ -14,7 +14,6 @@ import type { QuotaSnapshot } from "../src/core/types.js";
 import type { UsageReport } from "../src/core/usage.js";
 import { answer, NOT_SET_UP, percentRow } from "./helpers/fake-answers.js";
 import {
-  createAlibabaAuthModuleMock,
   createPluginRuntimePathsMockModule,
   createServerContext,
   createSessionUsageModuleMock,
@@ -28,16 +27,12 @@ const TEST_RUNTIME_ROOT = mkdtempSync(join(tmpdir(), "opencode-quota-plugin-rpc-
 
 const mocks = vi.hoisted(() => ({
   getProviders: vi.fn(),
-  resolveAlibabaCodingPlanAuthCached: vi.fn(),
   sessionUsage: vi.fn(),
   reconcileDetectedProvidersInGlobalConfig: vi.fn(),
 }));
 
 vi.mock("../src/core/usage.js", async (importOriginal) =>
   createSessionUsageModuleMock(await importOriginal(), mocks.sessionUsage),
-);
-vi.mock("../src/lib/alibaba-auth.js", () =>
-  createAlibabaAuthModuleMock(mocks.resolveAlibabaCodingPlanAuthCached),
 );
 vi.mock("../src/lib/opencode-runtime-paths.js", () =>
   createPluginRuntimePathsMockModule(TEST_RUNTIME_ROOT),
@@ -1072,11 +1067,6 @@ describe("server quota RPC", () => {
     ])("counts $id usage again on every /quota", async ({ id, entry }) => {
       const fetch = vi.fn().mockResolvedValueOnce(entry(70)).mockResolvedValueOnce(entry(60));
       mocks.getProviders.mockReturnValue([provider(id, fetch)]);
-      mocks.resolveAlibabaCodingPlanAuthCached.mockResolvedValue({
-        state: "configured",
-        apiKey: "dashscope-key",
-        tier: "lite",
-      });
       const { quota } = await setupServer();
 
       await quota();

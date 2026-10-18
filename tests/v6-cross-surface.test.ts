@@ -35,7 +35,6 @@ import {
   words,
 } from "./helpers/jsx-tree.js";
 import {
-  createAlibabaAuthModuleMock,
   createSessionUsageModuleMock,
   seedDefaultPluginBootstrapMocks,
   writePluginTestSettings,
@@ -54,7 +53,6 @@ const mocks = vi.hoisted(() => ({
   root: "",
   terminal: { width: 120, height: 40 },
   getProviders: vi.fn(),
-  resolveAlibabaCodingPlanAuthCached: vi.fn(),
   sessionUsage: vi.fn(),
 }));
 
@@ -63,9 +61,6 @@ vi.mock("@opentui/solid", () => ({
 }));
 vi.mock("../src/core/usage.js", async (importOriginal) =>
   createSessionUsageModuleMock(await importOriginal(), mocks.sessionUsage),
-);
-vi.mock("../src/lib/alibaba-auth.js", () =>
-  createAlibabaAuthModuleMock(mocks.resolveAlibabaCodingPlanAuthCached),
 );
 vi.mock("../src/lib/opencode-runtime-paths.js", () => ({
   getOpencodeRuntimeDirs: () => ({
