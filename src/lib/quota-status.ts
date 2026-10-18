@@ -1223,7 +1223,7 @@ function debugRows(
   const context: DetailContext = { homeDir, envNames };
   const rows: ReportKvRow[] = [];
   let hidden = 0;
-  for (const item of provider.debug) {
+  for (const item of provider.debug ?? []) {
     // A failed login's own words: its `error_kind` detail, made with it, shows its kind.
     if (item.key === "error") continue;
     const customKey = customCheckKey(item.key, customs);

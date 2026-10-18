@@ -304,6 +304,14 @@ describe("server quota RPC", () => {
     expect(emit).toHaveBeenCalledWith("changed", {
       snapshot: expect.objectContaining({ version: 6 }),
     });
+    // Clients get no server-only provider facts.
+    const events = emit.mock.calls.map(([, event]) => event as { snapshot: QuotaSnapshot });
+    for (const snapshot of [refreshed.snapshot, ...events.map((event) => event.snapshot)]) {
+      for (const provider of snapshot.providers) {
+        expect(provider).not.toHaveProperty("debug");
+        expect(provider).not.toHaveProperty("exportPart");
+      }
+    }
 
     const saved = JSON.parse(await readFile(SNAPSHOT_FILE, "utf8")) as {
       entries: Record<string, { rows: Array<{ login: string; row: unknown }> }>;

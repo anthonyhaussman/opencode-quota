@@ -22,7 +22,7 @@
  * - When a quota window resets between two checks, a reset notice is recorded once.
  * - A fetch may bring how to write its provider's part of the export file. The store writes it
  *   from the check's rows as shown (numbered like the snapshot) and the error it records, and
- *   keeps the last check's part in memory only, never in the file.
+ *   keeps the last check's part in memory only, never in the file, like its debug details.
  * - Subscribers hear of every change: a fetch, the rows read from the file at the start, and a
  *   change in which providers are on.
  * - Reads from OpenCode and provider fetches have time limits, so `dispose` always ends.
@@ -146,7 +146,12 @@ export type QuotaStore = {
   dispose(): Promise<void>;
 };
 
-type Entry = SavedEntry & { persist: boolean; exportPart?: QuotaExportProvider };
+/** A saved entry and what this process keeps of it in memory only (see `ProviderSnapshot`). */
+type Entry = SavedEntry & {
+  persist: boolean;
+  debug: DebugDetail[];
+  exportPart?: QuotaExportProvider;
+};
 
 /** Where a provider's rows live for its current identity. */
 type ResolvedKey = { key: string; persist: boolean };
@@ -382,7 +387,7 @@ export function createQuotaStore(deps: QuotaStoreDeps): QuotaStore {
     for (const [key, entry] of saved.entries) {
       const ours = entries.get(key);
       if (!ours || (ours.checkedAtMs ?? 0) < (entry.checkedAtMs ?? 0)) {
-        entries.set(key, { ...entry, persist: true });
+        entries.set(key, { ...entry, persist: true, debug: [] });
       } else {
         ours.notices = joinNotices(ours.notices, entry.notices);
       }
@@ -396,7 +401,10 @@ export function createQuotaStore(deps: QuotaStoreDeps): QuotaStore {
 
   async function writeFile(file: string): Promise<void> {
     const saved = new Map<string, SavedEntry>();
-    for (const [key, { persist: keep, exportPart: _memoryOnly, ...entry }] of entries) {
+    for (const [
+      key,
+      { persist: keep, debug: _memoryOnly, exportPart: _alsoMemoryOnly, ...entry },
+    ] of entries) {
       if (keep) saved.set(key, entry);
     }
     try {

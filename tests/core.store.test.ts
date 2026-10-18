@@ -139,7 +139,8 @@ describe("quota store", () => {
       okAtMs: START_MS,
       checkedAtMs: START_MS,
       refreshing: true,
-      debug: [{ key: "source", value: "test" }],
+      // Debug details stay in the memory of the process that checked.
+      debug: [],
     });
     // The poll it started is still running; the answer did not wait for it.
     expect(second.fetch).toHaveBeenCalledOnce();
@@ -502,6 +503,32 @@ describe("quota store", () => {
     await writeFile(file, "{ not json");
     const fresh = only(await makeStore([copilot.provider], HOUR).snapshot());
     expect(fresh.rows).toEqual([]);
+  });
+
+  it("reads a file that still holds debug details and leaves them out of the next write", async () => {
+    const copilot = fakeProvider();
+    await makeStore([copilot.provider]).refresh({ reason: "manual" });
+    const saved = await savedFile();
+    const [key] = Object.keys(saved.entries);
+    if (!key) throw new Error("nothing saved");
+    expect(saved.entries[key]).not.toHaveProperty("debug");
+    // As an older plugin wrote it.
+    await writeFile(
+      file,
+      JSON.stringify({
+        ...saved,
+        entries: { [key]: { ...saved.entries[key], debug: [{ key: "source", value: "old" }] } },
+      }),
+    );
+
+    const restarted = makeStore([copilot.provider], HOUR);
+    expect(only(await restarted.snapshot())).toMatchObject({
+      rows: [row("allowance", 50)],
+      debug: [],
+    });
+    clock += 2 * HOUR;
+    await restarted.refresh({ reason: "manual" });
+    expect((await savedFile()).entries[key]).not.toHaveProperty("debug");
   });
 
   it("keeps a failing login's last rows and backs off when another login answers", async () => {

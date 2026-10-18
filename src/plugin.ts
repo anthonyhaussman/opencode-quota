@@ -178,15 +178,16 @@ export const QuotaToastPlugin = Plugin.define({
       return sessionTokens ? { ...snapshot, sessionTokens } : snapshot;
     };
     // Every snapshot a client gets carries the server's words, the OpenCode provider of each
-    // custom definition, and the settings, and none of the export parts the
-    // server keeps for the export file.
+    // custom definition, and the settings, and none of the server-only provider facts.
     const forClients = (snapshot: QuotaSnapshot): QuotaSnapshot => {
       const loaded = liveSettings.current();
       const { settings } = loaded;
       const custom = settings.providers.custom;
       return {
         ...snapshot,
-        providers: snapshot.providers.map(({ exportPart: _serverOnly, ...provider }) => provider),
+        providers: snapshot.providers.map(
+          ({ debug: _serverOnly, exportPart: _alsoServerOnly, ...provider }) => provider,
+        ),
         words: settings.words,
         ...(custom.length > 0
           ? {
