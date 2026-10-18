@@ -575,8 +575,8 @@ export function bigStatusLine(input: StatusInput, width?: number): Line | undefi
 const PLAIN_NAME_WIDTH = 19;
 
 /**
- * §4.4: plain text, one line per visible row, then a line per provider error. The Web and
- * terminal `/quota` text print these.
+ * §4.4: plain text: per provider, one line per visible row, then a line for its error or
+ * "not checked yet". The terminal command `opencode-quota show` prints these.
  */
 export function plainLines(params: {
   groups: Group[];

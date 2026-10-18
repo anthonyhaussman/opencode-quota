@@ -17,8 +17,8 @@ function line(message: string): string {
 }
 
 /**
- * `show`: live quota rows as text, a line per row with its reset, then one line per provider
- * problem. Exit 1 when no provider returned a row.
+ * `show`: live quota rows as text: per provider, a line per row with its reset, then a line for
+ * its error. Exit 1 when no provider returned a row.
  */
 export async function buildCliShowText(host: ProviderSourceHost): Promise<CliReport> {
   const snapshot = await checkProviders(host);

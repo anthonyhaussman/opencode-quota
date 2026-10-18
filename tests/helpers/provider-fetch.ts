@@ -123,7 +123,7 @@ export async function fetchRows(
   config: Record<string, unknown> = {},
 ) {
   const result = await provider.fetch({
-    config: { requestTimeoutMs: 5_000, enabledProviders: "auto", ...config },
+    config: { requestTimeoutMs: 5_000, enabledProviders: [], ...config },
   } as never);
   const fetched = rowsFromProviderResult(provider.id, result, Date.now());
   for (const row of fetched.rows) {

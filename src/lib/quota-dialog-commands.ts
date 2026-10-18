@@ -170,7 +170,7 @@ async function checkKnownProviders(
   const source = await loadProviderSource(host);
   const sourceIds = new Set(source.providers.map((provider) => provider.id));
   const { enabledProviders } = ctx.config;
-  const turnedOn = (id: string) => enabledProviders === "auto" || enabledProviders.includes(id);
+  const turnedOn = (id: string) => enabledProviders.includes(id);
   const known = registeredProviders(host).filter(
     (provider) => !providerId || provider.id === providerId,
   );

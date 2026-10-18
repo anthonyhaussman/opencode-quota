@@ -110,7 +110,7 @@ function context(
     config: {
       anthropicBinaryPath: "claude",
       cursorPlan: "none",
-      enabledProviders: "auto",
+      enabledProviders: [],
       quotaProviders: definitions,
       ...overrides,
     },
