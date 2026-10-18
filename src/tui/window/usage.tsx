@@ -47,6 +47,7 @@ import {
   type UsageLine,
   type UsageMode,
   type UsageRole,
+  type UsageViewLines,
   usageView,
 } from "../../view/usage.js";
 import { errorToast, quotaCallOptions, rpcErrorMessage } from "../client.js";
@@ -101,10 +102,6 @@ const RANGE_ITEMS = USAGE_RANGES.map((item) => ({
 /** A model row's element id, to scroll it into view. */
 function modelRowId(index: number): string {
   return `quota-usage-model-${index}`;
-}
-
-function isBreakdownHeading(line: UsageLine): boolean {
-  return line.length === 1 && line[0].role === "heading" && line[0].text === "Breakdown";
 }
 
 /** `from` moved `share` of the way to `to`. */
@@ -631,16 +628,11 @@ export function createUsageTab(
       })),
     }));
 
-    const lines = () => {
+    const view = (): UsageViewLines => {
       const report = readyReport();
       return report
         ? usageView(report, { mode: mode(), breakdown: breakdown(), width: props.width })
-        : [];
-    };
-    /** The model rows follow the Breakdown heading and its column names (see `breakdownModels`). */
-    const firstModelLine = () => {
-      if (modelRows().length === 0) return Number.POSITIVE_INFINITY;
-      return lines().findIndex(isBreakdownHeading) + 2;
+        : { lines: [], modelLines: [] };
     };
     const dateBox = (field: DateField) => (
       <input
@@ -733,8 +725,8 @@ export function createUsageTab(
               {`Couldn't load the usage: ${failure()}`}
             </text>
           </Show>
-          {lines().map((line, index) => {
-            if (isBreakdownHeading(line)) {
+          {view().lines.map((line, index) => {
+            if (index === view().breakdownAt) {
               return (
                 <box flexDirection="row">
                   <UsageLineText line={line} theme={theme()} />
@@ -756,8 +748,8 @@ export function createUsageTab(
                 </box>
               );
             }
-            const model = index - firstModelLine();
-            if (model < 0 || model >= modelRows().length) {
+            const model = view().modelLines.indexOf(index);
+            if (model < 0) {
               return <UsageLineText line={line} theme={theme()} />;
             }
             return (
