@@ -16,7 +16,6 @@ import { answer, NOT_SET_UP, percentRow } from "./helpers/fake-answers.js";
 import {
   createAlibabaAuthModuleMock,
   createPluginRuntimePathsMockModule,
-  createProvidersRegistryModuleMock,
   createServerContext,
   createSessionUsageModuleMock,
   seedDefaultPluginBootstrapMocks,
@@ -34,9 +33,6 @@ const mocks = vi.hoisted(() => ({
   reconcileDetectedProvidersInGlobalConfig: vi.fn(),
 }));
 
-vi.mock("../src/providers/registry.js", () =>
-  createProvidersRegistryModuleMock(mocks.getProviders),
-);
 vi.mock("../src/core/usage.js", async (importOriginal) =>
   createSessionUsageModuleMock(await importOriginal(), mocks.sessionUsage),
 );
@@ -95,7 +91,8 @@ const cleanups: Array<() => unknown> = [];
  * `quota` runs /quota and returns the report it posts into the chat.
  */
 async function setupServer(options: Parameters<typeof createServerContext>[0] = {}) {
-  const { default: server } = await import("../src/plugin.js");
+  const { createQuotaServerPlugin } = await import("../src/plugin.js");
+  const server = createQuotaServerPlugin({ providers: mocks.getProviders });
   const fake = createServerContext({ openCodeProviders: ["copilot"], ...options });
   const cleanup = await server.setup(fake.ctx as never);
   if (typeof cleanup === "function") cleanups.push(cleanup);

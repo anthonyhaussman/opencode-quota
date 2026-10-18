@@ -15,9 +15,8 @@ import { defaultSettings } from "../src/settings/index.js";
 import { answer, percentRow, quotaRow } from "./helpers/fake-answers.js";
 
 const runtime = vi.hoisted(() => ({ root: "" }));
-const registry = vi.hoisted(() => ({ providers: [] as unknown[] }));
-
-vi.mock("../src/providers/registry.js", () => ({ getProviders: () => registry.providers }));
+/** The registered providers every host below names. */
+const registry = { providers: [] as QuotaProvider[] };
 
 vi.mock("../src/lib/opencode-runtime-paths.js", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../src/lib/opencode-runtime-paths.js")>()),
@@ -52,7 +51,12 @@ function storeFor(provider: QuotaProvider) {
     fromFile: [],
     notRead: [],
   };
-  const host = { client: {} as never, workspaceRoot: runtime.root, settings: () => loaded };
+  const host = {
+    client: {} as never,
+    workspaceRoot: runtime.root,
+    settings: () => loaded,
+    providers: () => registry.providers,
+  };
   return createQuotaStore({
     source: () => loadProviderSource(host),
     file: join(runtime.root, "state", "snapshot-v6.json"),
@@ -92,7 +96,12 @@ describe("provider source logins", () => {
       fromFile: [],
       notRead: [],
     };
-    const host = { client: {} as never, workspaceRoot: runtime.root, settings: () => loaded };
+    const host = {
+      client: {} as never,
+      workspaceRoot: runtime.root,
+      settings: () => loaded,
+      providers: () => registry.providers,
+    };
     expect((await loadProviderSource(host)).providers.map(({ id }) => id)).toEqual(["copilot"]);
     loaded.settings.providers.off = ["copilot"];
     registry.providers = [first, later];
@@ -124,6 +133,7 @@ describe("provider source logins", () => {
         },
         workspaceRoot: runtime.root,
         settings: () => loaded,
+        providers: () => registry.providers,
       };
 
       const source = await loadProviderSource(host);

@@ -15,7 +15,6 @@ import { createFakeTuiHost, stubJsx } from "./helpers/fake-tui-host.js";
 import {
   createAlibabaAuthModuleMock,
   createPluginRuntimePathsMockModule,
-  createProvidersRegistryModuleMock,
   createServerContext,
   seedDefaultPluginBootstrapMocks,
   writePluginTestSettings,
@@ -43,9 +42,6 @@ const announcementMocks = vi.hoisted(() => ({
   getMaintainerAnnouncementsSummary: vi.fn(),
 }));
 
-vi.mock("../src/providers/registry.js", () =>
-  createProvidersRegistryModuleMock(mocks.getProviders),
-);
 vi.mock("../src/lib/alibaba-auth.js", () =>
   createAlibabaAuthModuleMock(mocks.resolveAlibabaCodingPlanAuthCached),
 );
@@ -115,7 +111,8 @@ function configureQuestionQuotaToast(): void {
 /** Starts the server plugin and the TUI plugin, joined by the quota RPC. */
 async function startCli() {
   stubJsx();
-  const { default: server } = await import("../src/plugin.js");
+  const { createQuotaServerPlugin } = await import("../src/plugin.js");
+  const server = createQuotaServerPlugin({ providers: mocks.getProviders });
   const { ctx } = createServerContext({ openCodeProviders: ["copilot"] });
   const disposeServer = await server.setup(ctx as never);
   const [, serverHandlers] = ctx.rpc.register.mock.calls[0] as unknown as [

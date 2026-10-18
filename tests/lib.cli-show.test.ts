@@ -42,10 +42,6 @@ vi.mock("../src/lib/api-key-resolver.js", async (importOriginal) => {
   };
 });
 
-vi.mock("../src/providers/registry.js", () => ({
-  getProviders: () => mockProviders,
-}));
-
 vi.mock("../src/lib/opencode-runtime-paths.js", () => ({
   getOpencodeRuntimeDirs: () => runtimeDirs.value,
 }));
@@ -96,6 +92,7 @@ async function run(command: "show" | "status", argv: string[]) {
     cwd: workspaceDir,
     stdout: capture("stdout"),
     stderr: capture("stderr"),
+    providers: () => mockProviders,
   });
   return { code, ...output };
 }
@@ -375,6 +372,7 @@ describe("runCliShowCommand", () => {
           client: { config: { providers: async () => ({ data: { providers: [] } }) } },
           workspaceRoot: workspaceDir,
           settings: () => loaded,
+          providers: () => mockProviders,
         }),
       file: snapshotFilePath(),
     });

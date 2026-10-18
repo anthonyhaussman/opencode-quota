@@ -8,10 +8,7 @@ import type { QuotaRetryEvent } from "../src/lib/quota-retry-wait.js";
 import type { ProviderRow } from "../src/providers/contract.js";
 import type { LoadedSettings, Settings } from "../src/settings/index.js";
 import { answer, percentRow, quotaRow } from "./helpers/fake-answers.js";
-import {
-  createPluginRuntimePathsMockModule,
-  createProvidersRegistryModuleMock,
-} from "./helpers/plugin-test-harness.js";
+import { createPluginRuntimePathsMockModule } from "./helpers/plugin-test-harness.js";
 
 // A fresh folder per run, so test runs in sibling checkouts never share it.
 const TEST_RUNTIME_ROOT = mkdtempSync(join(tmpdir(), "opencode-quota-retry-wait-"));
@@ -22,9 +19,6 @@ const mocks = vi.hoisted(() => ({
   getProviders: vi.fn(),
 }));
 
-vi.mock("../src/providers/registry.js", () =>
-  createProvidersRegistryModuleMock(mocks.getProviders),
-);
 vi.mock("../src/lib/opencode-runtime-paths.js", () =>
   createPluginRuntimePathsMockModule(TEST_RUNTIME_ROOT),
 );
@@ -163,6 +157,7 @@ describe("resolveQuotaResetRetryDelayMs", () => {
     },
     workspaceRoot: process.cwd(),
     settings: readSettings,
+    providers: mocks.getProviders,
   };
 
   /** The plugin's retry host: a store over today's providers and settings, in memory. */

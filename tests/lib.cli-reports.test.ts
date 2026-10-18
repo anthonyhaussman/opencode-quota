@@ -17,10 +17,6 @@ const { mockProviders, runtimeDirs } = vi.hoisted(() => ({
   },
 }));
 
-vi.mock("../src/providers/registry.js", () => ({
-  getProviders: () => mockProviders,
-}));
-
 vi.mock("../src/lib/opencode-runtime-paths.js", () => ({
   getOpencodeRuntimeDirs: () => runtimeDirs.value,
 }));
@@ -60,6 +56,7 @@ describe("CLI reports", () => {
       },
       workspaceRoot: workspaceDir,
       settings: () => loaded,
+      providers: () => mockProviders,
     };
   }
 

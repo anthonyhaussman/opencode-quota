@@ -11,10 +11,6 @@ interface PluginBootstrapMocks {
   resolveAlibabaCodingPlanAuthCached?: MockFunction;
 }
 
-export function createProvidersRegistryModuleMock(getProviders: MockFunction) {
-  return { getProviders };
-}
-
 /** core/usage.js as it is, with `sessionUsage` replaced. */
 export function createSessionUsageModuleMock(actual: object, sessionUsage: MockFunction) {
   return { ...actual, sessionUsage };

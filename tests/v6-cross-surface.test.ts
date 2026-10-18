@@ -36,7 +36,6 @@ import {
 } from "./helpers/jsx-tree.js";
 import {
   createAlibabaAuthModuleMock,
-  createProvidersRegistryModuleMock,
   createSessionUsageModuleMock,
   seedDefaultPluginBootstrapMocks,
   writePluginTestSettings,
@@ -62,9 +61,6 @@ const mocks = vi.hoisted(() => ({
 vi.mock("@opentui/solid", () => ({
   useTerminalDimensions: () => () => mocks.terminal,
 }));
-vi.mock("../src/providers/registry.js", () =>
-  createProvidersRegistryModuleMock(mocks.getProviders),
-);
 vi.mock("../src/core/usage.js", async (importOriginal) =>
   createSessionUsageModuleMock(await importOriginal(), mocks.sessionUsage),
 );
@@ -151,7 +147,8 @@ function expectNoCanary(...outputs: unknown[]): void {
 }
 
 async function startHosts() {
-  const { default: serverPlugin } = await import("../src/plugin.js");
+  const { createQuotaServerPlugin } = await import("../src/plugin.js");
+  const serverPlugin = createQuotaServerPlugin({ providers: mocks.getProviders });
   const events = createQuotaRpcEvents();
   const register = vi.fn(async () => ({ dispose: async () => {}, events: { emit: events.emit } }));
   // The server's slash commands, and the messages they post (Web, Desktop, the TUI chat form).
@@ -1023,7 +1020,8 @@ type ChangedEvent = { snapshot: { providers: Array<{ providerId: string }> } };
 
 /** The real server plugin alone: its agent tools, a manual refresh, and its `changed` events. */
 async function startServer() {
-  const { default: serverPlugin } = await import("../src/plugin.js");
+  const { createQuotaServerPlugin } = await import("../src/plugin.js");
+  const serverPlugin = createQuotaServerPlugin({ providers: mocks.getProviders });
   const changed: ChangedEvent[] = [];
   const register = vi.fn(async () => ({
     dispose: async () => {},
