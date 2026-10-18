@@ -62,7 +62,13 @@ function customRows(
 ) {
   return contractRows("quota-providers", {
     attempted: true,
-    accounts: [customAccount(definition, rows, errors)],
+    accounts: [
+      customAccount(
+        definition,
+        rows,
+        errors.map((message) => ({ message })),
+      ),
+    ],
     debug,
   });
 }

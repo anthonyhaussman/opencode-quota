@@ -10,7 +10,6 @@ import {
   queryGoogleQuota,
   readGoogleLogins,
 } from "../lib/google-oauth-quota.js";
-import { credentialRowAuthData } from "../lib/opencode-auth.js";
 import {
   fetchEachLogin,
   fetchError,
@@ -100,7 +99,7 @@ export async function fetchGoogleProviderQuota<Key extends GoogleAuthSourceKey, 
           ? { success: false as const, error: flavor.failedLoginError(row.resolveError) }
           : await queryGoogleQuota(quota, {
               requestTimeoutMs,
-              authData: credentialRowAuthData(row),
+              login: row,
             });
       if (!result) return null;
       if (!result.success) return { rows: [], errors: [fetchError(result.error, result.facts)] };

@@ -75,7 +75,7 @@ Run `/quota_status` first and check that provider's section. Every known provide
 | Config is rejected                         | Keep definitions in `providers.custom` in `settings.jsonc` ([where](configuration.md#where-settings-live)). Remove unknown fields, duplicate IDs/request identities, or overlapping model coverage. |
 | Definition is `unavailable`                | Confirm OpenCode reports the exact `providerId`. With `words.onlyCurrentModel`, the model id (without provider prefix) must match `modelIds`, or omit `modelIds`. |
 | `Not set up` (`missing_credential`)       | Set the `apiKeyEnv` variable, trusted global `provider.<providerId>.options.apiKey`, or an API-key login saved in OpenCode 2 for that provider id. |
-| `HTTP <code>`, timeout, or response error  | Check the endpoint and its response format. `/quota_status` intentionally hides URLs, request/response contents, raw errors, and secret material. |
+| `Provider error <code>`, `Timed out`, `Can't reach …`, or `Unexpected reply` | Check the endpoint and its response format; the `custom 1 check` outcome says which step failed. `/quota_status` intentionally hides URLs, request/response contents, raw errors, and secret material. |
 | One definition fails but others show       | Expected. Working definitions stay visible; the failed one stays an error row. |
 | CLI/export looks stale                     | `show --json` is cache-only, and the export file changes only when the server's quota does. Open a TUI session first. `/quota_status` is the live check. |
 
@@ -233,7 +233,7 @@ Check the `opencode-go` section:
 | --------------------------------- | --- |
 | Provider not detected             | Run `opencode auth login opencode`, or set an API key ([order](providers.md#opencode-go)). Then rerun `/quota_status`; once Go is detected, `auth_state`, `api_key_source`, and `api_key_checked_paths` show which key it uses. |
 | `auth_state` is `invalid`         | Run `opencode auth login opencode-go`. A broken `opencode-go` login blocks the legacy `opencode` fallback. |
-| Console sign-in failed            | `console_auth_state` is not `configured`; shown only when no API key is set. Run `opencode auth login opencode`, or set an API key. |
+| Console sign-in failed or expired | `console_auth_state` is not `configured` (an expired one shows `Sign in again`); shown only when no API key is set. Run `opencode auth login opencode`, or set an API key. |
 | No Go quota, `console_error` set  | The Console request failed and no API key is set (`Not configured` in manual mode). Retry, or set an API key. |
 | API returns 401 or 403            | The usage API rejected the key. Update the source shown by `api_key_source`, wait briefly for the credential cache to expire, and rerun `/quota_status`. |
 | Invalid API response              | `state` shows `Unexpected reply (bad_response)`. 5h, Weekly, and Monthly must all be valid; one bad window rejects the whole response. |

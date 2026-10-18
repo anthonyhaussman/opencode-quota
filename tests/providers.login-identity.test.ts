@@ -250,3 +250,53 @@ it("checks again when a config key is removed and a stored login holds the same 
 
   expect([accounts(fromConfig), accounts(fromLogin)]).toEqual([[undefined], ["work"]]);
 });
+
+const POSIX_IDENTITY_STORAGE = process.platform !== "win32" && typeof process.getuid === "function";
+
+it.runIf(POSIX_IDENTITY_STORAGE).each([
+  { keys: "an API key stays", envKey: "go-key", keyRows: [] },
+  { keys: "an empty key row stays", keyRows: [keyLogin("empty", "opencode-go", "")] },
+])(
+  "checks OpenCode Go again when the Console sign-in switches accounts and $keys",
+  async ({ envKey, keyRows }) => {
+    // The keys alone would let the old account's rows be saved under the new account.
+    if (envKey) process.env.OPENCODE_API_KEY = envKey;
+    const consoleLogin = (orgID: string, access: string): CredentialDatabaseRow => ({
+      id: "console",
+      integrationId: "opencode",
+      active: 1,
+      updated: 1,
+      value: {
+        type: "oauth",
+        access,
+        refresh: `${access}-refresh`,
+        expires: Date.now() + 3_600_000,
+        metadata: { orgID, accountID: "acc", server: "https://console.example.test" },
+      },
+    });
+    /** Each org's 5h meter: work has used 10%, home 60%. */
+    const used: Record<string, number> = { org_work: 100, org_home: 600 };
+    fakeHttp((_url, init) => {
+      const meter = {
+        limitMicroCents: 1000,
+        usedMicroCents: used[requestHeader(init, "x-org-id")!],
+        resetsAt: "2099-01-01T00:00:00Z",
+      };
+      return { access: { meters: { fiveHour: meter, week: meter, month: meter } } };
+    });
+    const fiveHourLeft = (snapshot: QuotaSnapshot) =>
+      snapshot.providers[0]?.rows.find((row) => row.id === "opencode-go.five_hour")
+        ?.percentRemaining;
+
+    world.storeLogins([consoleLogin("org_work", "token-work"), ...keyRows]);
+    const store = storeFor("opencode-go");
+    const work = await store.refresh({ reason: "manual" });
+
+    // No login-change event: only the identity read at the next check sees the switch.
+    world.storeLogins([consoleLogin("org_home", "token-home"), ...keyRows]);
+    const home = await store.refresh({ reason: "poll" });
+    await store.dispose();
+
+    expect([fiveHourLeft(work), fiveHourLeft(home)]).toEqual([90, 40]);
+  },
+);

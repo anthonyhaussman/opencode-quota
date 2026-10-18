@@ -144,6 +144,19 @@ describe("OpenCode Go with the Console sign-in", () => {
       detail: { key: "console_auth_state", value: "expired" },
     },
     {
+      name: "an expired sign-in without an API key says sign in again, as Zen does",
+      login: consoleLogin({ expires: 1 }),
+      consoleStatus: 500,
+      apiKey: false,
+      rows: [],
+      errorCode: "login_expired",
+      detail: {
+        key: "error",
+        value:
+          "OpenCode Go: OpenCode Console sign-in failed: the sign-in expired. Run `opencode auth login opencode`.",
+      },
+    },
+    {
       name: "a sign-in without a token is Go's error when there is no API key",
       login: consoleLogin({ access: "" }),
       consoleStatus: 500,

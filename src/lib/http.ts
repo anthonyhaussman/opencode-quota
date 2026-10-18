@@ -75,8 +75,8 @@ const DEFAULT_MAX_BYTES = 8 * 1024 * 1024;
 
 /**
  * Why a request gave no JSON. `http`: a reply that is not 2xx (a redirect too, with
- * `redirect: "manual"`); `timeout`; `network`: no reply; `too_large`: a reply over `maxBytes`;
- * `invalid_json`: a 2xx reply that is not JSON.
+ * `redirect: "manual"`), whatever happened to its body; `timeout`; `network`: no reply;
+ * `too_large`: a 2xx reply over `maxBytes`; `invalid_json`: a 2xx reply that is not JSON.
  */
 export type RequestFailure = {
   kind: "http" | "timeout" | "network" | "too_large" | "invalid_json";
@@ -214,8 +214,10 @@ async function readBoundedText(response: Response, maxBytes: number): Promise<st
 }
 
 /**
- * One JSON request: the parsed 2xx reply, or why there is none. Never throws. A reply whose
- * body stalls past the deadline is a `timeout` that still has its status and headers.
+ * One JSON request: the parsed 2xx reply, or why there is none. Never throws. A non-2xx reply is
+ * always `http` with its status and Retry-After; its body is the detail only when it was read
+ * (not too large, not stalled past the deadline). A 2xx reply whose body stalls past the
+ * deadline is a `timeout` that still has its status and headers.
  */
 export async function requestJson(
   url: string,
@@ -239,7 +241,7 @@ export async function requestJson(
     };
   };
   const maxBytes = options.maxBytes ?? DEFAULT_MAX_BYTES;
-  let reply: { status: number; headers: Headers } | undefined;
+  let reply: { ok: boolean; status: number; headers: Headers } | undefined;
 
   try {
     return await fetchWithTimeout<JsonReply>(url, {
@@ -252,17 +254,8 @@ export async function requestJson(
       timeoutMs: options.timeoutMs,
       consume: async (response) => {
         const received = { status: response.status, headers: response.headers };
-        reply = received;
-        let text: string;
-        try {
-          text = await readBoundedText(response, maxBytes);
-        } catch (error) {
-          if (error instanceof TooLargeError) {
-            return fail({ kind: "too_large", ...received, detail: error.message });
-          }
-          if (!response.ok) return fail({ kind: "http", ...received, detail: "" });
-          throw error;
-        }
+        reply = { ok: response.ok, ...received };
+        const text = await readBoundedText(response, maxBytes);
         if (!response.ok) return fail({ kind: "http", ...received, detail: clean(text) });
         if (options.blankAsNull && text.trim() === "") return { ok: true, ...received, json: null };
         try {
@@ -273,8 +266,12 @@ export async function requestJson(
       },
     });
   } catch (error) {
-    const kind = error instanceof RequestTimeoutError ? "timeout" : "network";
     const received = reply ? { status: reply.status, headers: reply.headers } : {};
+    if (reply && !reply.ok) return fail({ kind: "http", ...received, detail: "" });
+    if (error instanceof TooLargeError) {
+      return fail({ kind: "too_large", ...received, detail: error.message });
+    }
+    const kind = error instanceof RequestTimeoutError ? "timeout" : "network";
     return fail({ kind, ...received, detail: clean(errorText(error)) });
   }
 }

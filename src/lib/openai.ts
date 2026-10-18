@@ -11,17 +11,18 @@ import { clampPercent } from "./format-utils.js";
 import { failureFacts, requestJson } from "./http.js";
 import { finiteNumber, isRecord } from "./json-guards.js";
 import {
+  activeCredentialRows,
   type CredentialRow,
-  credentialRowAuthData,
-  readAuthFileCached,
+  readActiveCredentialRowsCached,
   readCredentialRows,
+  readOAuthLogin,
 } from "./opencode-auth.js";
 import {
   deriveResolvedAuthIdentity,
   loginListIdentity,
   type ResolvedAuthIdentity,
 } from "./resolved-auth-identity.js";
-import type { AuthData, QuotaError } from "./types.js";
+import type { QuotaError } from "./types.js";
 
 interface OpenAIUsageResponse {
   plan_type: string;
@@ -150,40 +151,46 @@ export type OpenAIOAuthLogin =
 
 type ResolvedOpenAIOAuth = { state: "none" } | OpenAIOAuthLogin;
 
-/** The first OAuth login under `openai`, `codex`, `chatgpt` with a token or a resolve error. */
-export function resolveOpenAIOAuth(auth: AuthData | null | undefined): ResolvedOpenAIOAuth {
-  for (const sourceKey of OPENAI_AUTH_SOURCE_KEYS) {
-    const entry = auth?.[sourceKey];
-    if (entry?.type !== "oauth") continue;
-    if (entry.resolveError !== undefined) {
-      return { state: "failed", sourceKey, error: entry.resolveError };
-    }
-    const accessToken = typeof entry.access === "string" ? entry.access.trim() : "";
-    if (!accessToken) continue;
+/** One row's OpenAI sign-in: `none` for a row that is not an OAuth login or has no token. */
+export function resolveOpenAIOAuth(row: CredentialRow): ResolvedOpenAIOAuth {
+  const sourceKey = OPENAI_AUTH_SOURCE_KEYS.find((key) => key === row.integrationId);
+  const login = sourceKey ? readOAuthLogin(row) : null;
+  if (!sourceKey || !login) return { state: "none" };
+  if (login.state === "failed") return { state: "failed", sourceKey, error: login.error };
+  const { accessToken } = login;
+  if (!accessToken) return { state: "none" };
 
-    const jwt = parseJwtPayload(accessToken);
-    return {
-      state: "configured",
-      sourceKey,
-      accessToken,
-      refreshToken:
-        typeof entry.refresh === "string" && entry.refresh.trim() ? entry.refresh : undefined,
-      expiresAt: typeof entry.expires === "number" ? entry.expires : undefined,
-      accountId:
-        jwt?.["https://api.openai.com/auth"]?.chatgpt_account_id ?? entry.accountId ?? undefined,
-    };
-  }
-  return { state: "none" };
+  const jwt = parseJwtPayload(accessToken);
+  const storedAccountId = login.fields.accountId;
+  return {
+    state: "configured",
+    sourceKey,
+    accessToken,
+    refreshToken: login.refreshToken,
+    expiresAt: login.expiresAt,
+    accountId:
+      jwt?.["https://api.openai.com/auth"]?.chatgpt_account_id ??
+      (typeof storedAccountId === "string" ? storedAccountId : undefined),
+  };
 }
 
-/** The login OpenCode reports as active for `openai`, `codex`, or `chatgpt` (cached briefly). */
+/**
+ * The login OpenCode reports as active, the first of `openai`, `codex`, `chatgpt` with a token
+ * or a resolve error (cached briefly).
+ */
 export async function readOpenAIAuthCached(): Promise<ResolvedOpenAIOAuth> {
-  return resolveOpenAIOAuth(
-    await readAuthFileCached({
+  const rows = activeCredentialRows(
+    await readActiveCredentialRowsCached({
       maxAgeMs: OPENAI_AUTH_CACHE_MAX_AGE_MS,
       integrationIds: OPENAI_AUTH_SOURCE_KEYS,
     }),
   );
+  for (const sourceKey of OPENAI_AUTH_SOURCE_KEYS) {
+    const row = rows.find((active) => active.integrationId === sourceKey);
+    const oauth = row ? resolveOpenAIOAuth(row) : { state: "none" as const };
+    if (oauth.state !== "none") return oauth;
+  }
+  return { state: "none" };
 }
 
 /** A stored OpenAI login (OAuth or API key) with its OAuth sign-in, when it has one. */
@@ -194,7 +201,7 @@ export async function readOpenAILogins(): Promise<OpenAILogin[]> {
   const rows = await readCredentialRows(OPENAI_AUTH_SOURCE_KEYS, { methods: ["oauth", "key"] });
   return rows.map((row) => {
     if (row.value.type === "api") return { row };
-    const oauth = resolveOpenAIOAuth(credentialRowAuthData(row));
+    const oauth = resolveOpenAIOAuth(row);
     return oauth.state === "none" ? { row } : { row, oauth };
   });
 }

@@ -1,6 +1,5 @@
 import { createHash } from "node:crypto";
 
-import { safeErrorText } from "../core/redact.js";
 import type { DebugDetail } from "../core/types.js";
 import {
   API_KEY_VENDORS,
@@ -10,11 +9,17 @@ import {
 } from "../lib/api-key-resolver.js";
 import type { QuotaProvider, QuotaProviderContext } from "../lib/entries.js";
 import { selectConnectionCredentialRows } from "../lib/opencode-auth.js";
-import { consoleBaseUrl, resolveOpenCodeConsoleAuth } from "../lib/opencode-console-auth.js";
+import {
+  consoleBaseUrl,
+  consoleLoginIdentity,
+  consoleSignInFailure,
+  resolveOpenCodeConsoleAuth,
+} from "../lib/opencode-console-auth.js";
 import { queryOpenCodeGoConsoleStatus, queryOpenCodeGoQuota } from "../lib/opencode-go.js";
 import { normalizeQuotaProviderId } from "../lib/provider-metadata.js";
+import { composeResolvedAuthIdentities } from "../lib/resolved-auth-identity.js";
 import type { OpenCodeGoResult, OpenCodeGoWindowKey } from "../lib/types.js";
-import { vendorKeysPolicy } from "./cache-policies.js";
+import { vendorKeysIdentity } from "./cache-policies.js";
 import {
   type FetchError,
   FIVE_HOUR,
@@ -31,7 +36,6 @@ import { vendorKeyDetails, vendorKeyState } from "./result-helpers.js";
 
 const LABEL = "OpenCode Go";
 const OPENCODE_GO_AUTH = API_KEY_VENDORS["opencode-go"];
-const CONSOLE_LOGIN_HINT = "Run `opencode auth login opencode`.";
 const OPENCODE_GO_WINDOW_ORDER: OpenCodeGoWindowKey[] = ["rolling", "weekly", "monthly"];
 const OPENCODE_GO_SLOTS = { rolling: FIVE_HOUR, weekly: WEEKLY, monthly: MONTHLY } as const;
 const NOT_SUBSCRIBED_DETAIL = { key: "opencode_go_state", value: "not_subscribed" };
@@ -86,7 +90,29 @@ function goRows(
 
 export const opencodeGoProvider: QuotaProvider = {
   id: "opencode-go",
-  cachePolicy: vendorKeysPolicy("opencode-go"),
+  cachePolicy: {
+    kind: "resolved-auth",
+    /**
+     * The keys' identity; with a usable Console login, that login and its usable keys together,
+     * since Go reads the Console first and falls back to the keys. A key login that is empty or
+     * not an API key is left out, so it never hides a Console account switch.
+     */
+    async resolveIdentity() {
+      const keys = await readVendorKeys(OPENCODE_GO_AUTH);
+      const consoleAuth = await resolveOpenCodeConsoleAuth();
+      if (consoleAuth.state !== "configured") return await vendorKeysIdentity("opencode-go", keys);
+      const consoleIdentity = await consoleLoginIdentity("opencode-go", consoleAuth.credential);
+      if (!consoleIdentity) return null;
+      const usableKeysIdentity = await vendorKeysIdentity("opencode-go", {
+        ...keys,
+        logins: keys.logins.filter((login) => login.auth.state === "configured"),
+      });
+      return await composeResolvedAuthIdentities({
+        providerId: "opencode-go",
+        identities: usableKeysIdentity ? [consoleIdentity, usableKeysIdentity] : [consoleIdentity],
+      });
+    },
+  },
 
   async isAvailable(_ctx: QuotaProviderContext): Promise<boolean> {
     // Any Console sign-in counts, even a failed one, so fetch() can show its error when there
@@ -112,15 +138,6 @@ export const opencodeGoProvider: QuotaProvider = {
       return await fetchWithApiKey(ctx, keys, [
         ...vendorKeyDetails(OPENCODE_GO_AUTH, keys),
         selectedWindowsDetail,
-      ]);
-    }
-
-    if (consoleAuth.state === "expired") {
-      // OpenCode refreshes the console token when it is read, so this is rare;
-      // fall back to the API-key path, which also still accepts workspace API keys.
-      return await fetchWithApiKey(ctx, await readGoKeys(), [
-        { key: "console_auth_state", value: "expired" },
-        { key: "go_source", value: "legacy_key" },
       ]);
     }
 
@@ -158,14 +175,15 @@ export const opencodeGoProvider: QuotaProvider = {
       consoleError = consoleResult.error;
       consoleFailure = fetchError(consoleError, consoleResult.facts);
     } else {
-      consoleError = safeErrorText(consoleAuth.error);
-      consoleFailure = {
-        message: `OpenCode Console sign-in failed: ${consoleError}. ${CONSOLE_LOGIN_HINT}`,
-      };
+      // OpenCode refreshes the Console token when it is read, so an expired one is rare.
+      const failure = consoleSignInFailure(consoleAuth);
+      consoleError = failure.detail;
+      consoleFailure = { message: failure.message };
     }
 
-    // The Console request or sign-in failed: fall back to the API-key path and surface the
-    // console error in diagnostics. Without an API key the failure is Go's one error row.
+    // The Console request or sign-in failed, or the sign-in expired: fall back to the API-key
+    // path and surface the console error in diagnostics. Without an API key the failure is Go's
+    // one error row.
     const keys = await readGoKeys();
     return await fetchWithApiKey(
       ctx,

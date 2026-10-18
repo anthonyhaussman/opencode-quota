@@ -44,7 +44,7 @@ import {
 } from "../src/lib/cli-show.js";
 import { describePriceList } from "../src/lib/modelsdev-pricing.js";
 import {
-  clearReadAuthFileCacheForTests,
+  clearCredentialRowCacheForTests,
   getCredentialSourceDiagnostics,
   readCredentialRows,
 } from "../src/lib/opencode-auth.js";
@@ -121,7 +121,7 @@ afterEach(() => {
   if (savedConfigDir !== undefined) process.env.OPENCODE_CONFIG_DIR = savedConfigDir;
   else delete process.env.OPENCODE_CONFIG_DIR;
   mockProviders.length = 0;
-  clearReadAuthFileCacheForTests();
+  clearCredentialRowCacheForTests();
   rmSync(tempDir, { recursive: true, force: true });
 });
 

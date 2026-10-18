@@ -14,12 +14,10 @@ import type { Plugin } from "@opencode/plugin";
 import { safeErrorText } from "../core/redact.js";
 import { getOpenCodeDbPath } from "./opencode-db-path.js";
 
-import type { AuthData } from "./types.js";
-
-type AuthCacheEntry = {
+type RowCacheEntry = {
   timestamp: number;
-  value: AuthData | null;
-  inFlight?: Promise<AuthData | null>;
+  value: CredentialRow[];
+  inFlight?: Promise<CredentialRow[]>;
 };
 
 export type CredentialRow = {
@@ -171,10 +169,10 @@ export function formatCredentialDisplayNames(
   });
 }
 
-/** Cached auth maps keyed by the sorted integration id list and the method filter. */
-const authCache = new Map<string, AuthCacheEntry>();
+/** Cached active logins keyed by the sorted integration id list and the method filter. */
+const rowCache = new Map<string, RowCacheEntry>();
 /** Changes when the cache is dropped, so a read started before that does not refill it. */
-let authCacheGeneration = 0;
+let rowCacheGeneration = 0;
 
 /**
  * The database OpenCode keeps its logins in: the one resolved path, or none
@@ -203,8 +201,8 @@ export function bindCredentialSource(source: CredentialSource): () => void {
 /** Drops cached logins, failed-login entries and the last `list()` error. */
 export function notifyCredentialsChanged(): void {
   credentialFailures.clear();
-  authCache.clear();
-  authCacheGeneration += 1;
+  rowCache.clear();
+  rowCacheGeneration += 1;
   lastListError = undefined;
 }
 
@@ -463,41 +461,50 @@ export function createIntegrationCredentialSource(
 }
 
 /**
- * The auth entry resolvers read for a row: its value, plus `resolveError`
- * when OpenCode could not return the login.
+ * The first row of each integration id, in order. Rows come active first, so these are the
+ * logins OpenCode uses.
  */
-export function credentialRowAuthEntry(row: CredentialRow): Record<string, unknown> {
-  return row.resolveError === undefined
-    ? row.value
-    : { ...row.value, resolveError: row.resolveError };
-}
-
-/** One login as the auth map resolvers read: its integration id and its auth entry. */
-export function credentialRowAuthData(row: CredentialRow): AuthData {
-  return { [row.integrationId]: credentialRowAuthEntry(row) } as AuthData;
+export function activeCredentialRows(rows: readonly CredentialRow[]): CredentialRow[] {
+  const active = new Map<string, CredentialRow>();
+  for (const row of rows) if (!active.has(row.integrationId)) active.set(row.integrationId, row);
+  return [...active.values()];
 }
 
 /**
- * The first login of each integration id as the auth map resolvers read, or null without
- * logins. Rows come active first, so these are the logins OpenCode uses.
+ * An OAuth sign-in read from its credential row. `failed`: OpenCode could not return it (see
+ * `CredentialRow.resolveError`). Otherwise its tokens (trimmed; none when blank or not text),
+ * its expiry (a finite number), and every field as stored, for the fields one vendor knows.
  */
-export function activeCredentialRowsAuthData(rows: readonly CredentialRow[]): AuthData | null {
-  const auth: Record<string, unknown> = {};
-  for (const row of rows) auth[row.integrationId] ??= credentialRowAuthEntry(row);
-  return Object.keys(auth).length > 0 ? (auth as AuthData) : null;
+export type OAuthLogin =
+  | { state: "failed"; error: string }
+  | {
+      state: "signed-in";
+      accessToken?: string;
+      refreshToken?: string;
+      expiresAt?: number;
+      fields: Readonly<Record<string, unknown>>;
+    };
+
+function trimmedText(value: unknown): string | undefined {
+  return typeof value === "string" ? value.trim() || undefined : undefined;
 }
 
-/**
- * Map of the first (active) login per requested integration id. With `methods`,
- * an active login using another method is left out without OpenCode resolving it.
- */
-export async function readAuthFile(params: {
-  integrationIds: readonly string[];
-  methods?: readonly CredentialMethod[];
-}): Promise<AuthData | null> {
-  return activeCredentialRowsAuthData(
-    await readCredentialRows(params.integrationIds, { methods: params.methods, firstOnly: true }),
-  );
+/** The OAuth sign-in a row holds; null for a row of another method. */
+export function readOAuthLogin(row: CredentialRow): OAuthLogin | null {
+  const { value } = row;
+  if (value.type !== "oauth") return null;
+  if (row.resolveError !== undefined) return { state: "failed", error: row.resolveError };
+  const accessToken = trimmedText(value.access);
+  const refreshToken = trimmedText(value.refresh);
+  const expiresAt =
+    typeof value.expires === "number" && Number.isFinite(value.expires) ? value.expires : undefined;
+  return {
+    state: "signed-in",
+    ...(accessToken ? { accessToken } : {}),
+    ...(refreshToken ? { refreshToken } : {}),
+    ...(expiresAt !== undefined ? { expiresAt } : {}),
+    fields: value,
+  };
 }
 
 /**
@@ -569,19 +576,19 @@ export function selectConnectionCredentialRows(
 }
 
 /**
- * Cached auth reader for frequently triggered code paths (e.g. per-question hooks).
- * This avoids asking OpenCode on every call while keeping login changes visible quickly.
+ * The active login of each requested integration id (a `firstOnly` read), cached for
+ * `maxAgeMs`: per-question hooks read often, and login changes still show quickly.
  */
-export async function readAuthFileCached(params: {
+export async function readActiveCredentialRowsCached(params: {
   maxAgeMs: number;
   integrationIds: readonly string[];
   methods?: readonly CredentialMethod[];
-}): Promise<AuthData | null> {
+}): Promise<CredentialRow[]> {
   const maxAgeMs = Math.max(0, params.maxAgeMs);
   const cacheKey = `${[...params.integrationIds].sort().join(",")}|${
     params.methods ? [...params.methods].sort().join(",") : "any"
   }`;
-  const cached = authCache.get(cacheKey);
+  const cached = rowCache.get(cacheKey);
   const now = Date.now();
 
   if (cached && now - cached.timestamp <= maxAgeMs) {
@@ -592,37 +599,37 @@ export async function readAuthFileCached(params: {
     return cached.inFlight;
   }
 
-  const generation = authCacheGeneration;
+  const generation = rowCacheGeneration;
   const inFlight = (async () => {
-    const value = await readAuthFile({
-      integrationIds: params.integrationIds,
+    const value = await readCredentialRows(params.integrationIds, {
       methods: params.methods,
+      firstOnly: true,
     });
     // A login change during the read may make this value stale: return it, but do not cache it.
-    if (generation === authCacheGeneration) {
-      authCache.set(cacheKey, { timestamp: Date.now(), value });
+    if (generation === rowCacheGeneration) {
+      rowCache.set(cacheKey, { timestamp: Date.now(), value });
     }
     return value;
   })();
 
-  authCache.set(cacheKey, {
+  rowCache.set(cacheKey, {
     timestamp: cached?.timestamp ?? 0,
-    value: cached?.value ?? null,
+    value: cached?.value ?? [],
     inFlight,
   });
 
   try {
     return await inFlight;
   } finally {
-    const entry = authCache.get(cacheKey);
+    const entry = rowCache.get(cacheKey);
     if (entry?.inFlight === inFlight) {
       entry.inFlight = undefined;
     }
   }
 }
 
-/** Test helper to clear cached auth state between test cases. */
-export function clearReadAuthFileCacheForTests(): void {
-  authCache.clear();
-  authCacheGeneration += 1;
+/** Test helper to clear cached logins between test cases. */
+export function clearCredentialRowCacheForTests(): void {
+  rowCache.clear();
+  rowCacheGeneration += 1;
 }

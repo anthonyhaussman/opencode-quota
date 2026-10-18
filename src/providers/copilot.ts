@@ -14,7 +14,7 @@ import {
 } from "../lib/copilot.js";
 import type { QuotaProvider, QuotaProviderContext } from "../lib/entries.js";
 import { fmtUsdAmount } from "../lib/format-utils.js";
-import { type CredentialRow, credentialRowAuthData } from "../lib/opencode-auth.js";
+import type { CredentialRow } from "../lib/opencode-auth.js";
 import { isCanonicalProviderAvailable } from "../lib/provider-availability.js";
 import { modelIncludesAny, modelProviderIncludesAny } from "../lib/provider-model-matching.js";
 import type {
@@ -291,7 +291,7 @@ function fetchPerCredential(
     async fetchLogin({ row }) {
       const result = await queryCopilotQuota({
         requestTimeoutMs,
-        authData: credentialRowAuthData(row),
+        login: row,
       });
       if (!result) return null;
       if (!result.success) return { rows: [], errors: [fetchError(result.error, result.facts)] };

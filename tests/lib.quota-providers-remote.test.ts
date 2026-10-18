@@ -18,7 +18,6 @@ import {
   type RemoteApiQuotaProviderDefinition,
   validateQuotaProviders,
 } from "../src/lib/quota-providers.js";
-import type { ProviderRow } from "../src/providers/contract.js";
 import { customRows } from "../src/providers/quota-providers.js";
 import {
   NEURALWATT_LIKE_ADAPTER,
@@ -80,7 +79,7 @@ function fetchBody(body: unknown, definition = source()) {
 /** The rows of a successful reply that reach the screen, and why any were dropped. */
 function shown(
   definition: RemoteApiQuotaProviderDefinition,
-  result: { success: true; rows: ProviderRow[] } | { success: false; error: string },
+  result: Awaited<ReturnType<typeof fetchRemoteQuotaProvider>>,
 ) {
   if (!result.success) throw new Error(result.error);
   return customRows(definition, result.rows);
@@ -98,6 +97,11 @@ function remoteRow(fields: Record<string, unknown>) {
   return { method: "remote_api", authority: "provider_reported", prominence: "primary", ...fields };
 }
 
+/** A reply the format's parser rejected. */
+function invalid(error: string) {
+  return { success: false, error, outcome: "invalid_response" };
+}
+
 function abortError(): Error {
   const error = new Error("aborted");
   error.name = "AbortError";
@@ -106,31 +110,56 @@ function abortError(): Error {
 
 describe("quota provider remote transport", () => {
   const reply = (body: string | null, init: ResponseInit) => () => new Response(body, init);
+  const badReply = { code: "bad_response" };
   it.each([
     [
       "redirect",
       reply(null, { status: 302, headers: { location: "https://elsewhere.example/" } }),
       "Redirect rejected",
+      "redirect_error",
+      { code: "bad_response", status: 302 },
     ],
     [
       "non-json",
       reply("ok", { headers: { "content-type": "text/plain" } }),
       "Expected a JSON response",
+      "invalid_content_type",
+      badReply,
+    ],
+    [
+      "JSON with a non-JSON type",
+      reply("{}", { headers: { "content-type": "text/plain" } }),
+      "Expected a JSON response",
+      "invalid_content_type",
+      undefined,
     ],
     [
       "invalid-json",
       reply("{", { headers: { "content-type": "application/problem+json" } }),
       "Invalid JSON response",
+      "invalid_json",
+      badReply,
     ],
     [
       "HTTP error",
-      reply("private response", { status: 401, headers: { "content-type": "text/plain" } }),
+      reply("private response secret", { status: 401, headers: { "content-type": "text/plain" } }),
       "HTTP 401",
+      "http_error",
+      { code: "login_expired", status: 401 },
+    ],
+    [
+      "server error",
+      reply("{}", { status: 503, headers: JSON_HEADERS }),
+      "HTTP 503",
+      "http_error",
+      { code: "provider_error", status: 503 },
     ],
     [
       "network error",
       () => Promise.reject(new Error("https://internal.example/?token=secret failed")),
       "Failed to read accounting data",
+      "network_error",
+      { code: "network" },
     ],
     [
       "oversized Content-Length",
@@ -138,20 +167,47 @@ describe("quota provider remote transport", () => {
         headers: { ...JSON_HEADERS, "content-length": String(QUOTA_PROVIDER_MAX_BODY_BYTES + 1) },
       }),
       "Response exceeded 262144 bytes",
+      "body_too_large",
+      badReply,
     ],
     [
       "oversized body",
       reply("x".repeat(QUOTA_PROVIDER_MAX_BODY_BYTES + 1), { headers: JSON_HEADERS }),
       "Response exceeded 262144 bytes",
+      "body_too_large",
+      badReply,
     ],
-  ])("rejects %s responses with a fixed message", async (_name, respond, error) => {
+  ])("rejects %s responses with a fixed message", async (_name, respond, error, outcome, facts) => {
     vi.stubGlobal(
       "fetch",
       vi.fn(async () => respond()),
     );
+    const result = await fetchRemoteQuotaProvider(source(), "secret");
+    expect(result).toEqual({ success: false, error, outcome, ...(facts ? { facts } : {}) });
+    expect(JSON.stringify(result)).not.toMatch(/secret|internal\.example|private response/u);
+  });
+
+  it.each([
+    ["", {}],
+    [" over the size cap", { "content-length": String(QUOTA_PROVIDER_MAX_BODY_BYTES + 1) }],
+  ])("keeps a 429's Retry-After%s as the time to try again", async (_name, headers) => {
+    vi.useFakeTimers({ now: Date.parse("2026-10-10T12:00:00.000Z") });
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(
+        async () =>
+          new Response("{}", { status: 429, headers: { ...headers, "Retry-After": "120" } }),
+      ),
+    );
     await expect(fetchRemoteQuotaProvider(source(), "secret")).resolves.toEqual({
       success: false,
-      error,
+      error: "HTTP 429",
+      outcome: "http_error",
+      facts: {
+        code: "rate_limited",
+        status: 429,
+        retryAtMs: Date.parse("2026-10-10T12:02:00.000Z"),
+      },
     });
   });
 
@@ -188,8 +244,35 @@ describe("quota provider remote transport", () => {
     await expect(pending).resolves.toEqual({
       success: false,
       error: "Request timeout after 0s",
+      outcome: "timeout",
+      facts: { code: "timeout" },
     });
     expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("shows a 401 whose body stalls past the timeout as a sign-in failure", async () => {
+    vi.useFakeTimers();
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (_url: string, init: RequestInit) => {
+        const body = new ReadableStream({
+          start(controller) {
+            init.signal?.addEventListener("abort", () => controller.error(abortError()));
+          },
+        });
+        return new Response(body, { status: 401, headers: JSON_HEADERS });
+      }),
+    );
+
+    const pending = fetchRemoteQuotaProvider(source(), "secret", 10);
+    await vi.advanceTimersByTimeAsync(11);
+
+    await expect(pending).resolves.toEqual({
+      success: false,
+      error: "HTTP 401",
+      outcome: "http_error",
+      facts: { code: "login_expired", status: 401 },
+    });
   });
 });
 
@@ -300,10 +383,7 @@ describe("quota-v1", () => {
     ["an overlong label", quotaV1({ ...exactBoundsRow, label: "x".repeat(81) })],
     ["an overlong right", quotaV1({ ...exactBoundsRow, right: "x".repeat(161) })],
   ])("rejects the complete response for %s", async (_name, body) => {
-    await expect(fetchBody(body)).resolves.toEqual({
-      success: false,
-      error: "Invalid quota-v1 response",
-    });
+    await expect(fetchBody(body)).resolves.toEqual(invalid("Invalid quota-v1 response"));
   });
 });
 
@@ -420,10 +500,9 @@ describe("openrouter-key-v1", () => {
       "fetch",
       vi.fn().mockResolvedValue(new Response(body, { headers: JSON_HEADERS })),
     );
-    await expect(fetchRemoteQuotaProvider(OPENROUTER, "secret")).resolves.toEqual({
-      success: false,
-      error: "Invalid openrouter-key-v1 response",
-    });
+    await expect(fetchRemoteQuotaProvider(OPENROUTER, "secret")).resolves.toEqual(
+      invalid("Invalid openrouter-key-v1 response"),
+    );
   });
 });
 
@@ -578,10 +657,9 @@ describe("json-v1", () => {
       jsonSource(mappings(usedValue("value"))),
       "secret-key",
     );
-    expect(result).toEqual({
-      success: false,
-      error: "Invalid json-v1 response: adapter.mappings[0].metric.value had wrong type at row 0",
-    });
+    expect(result).toEqual(
+      invalid("Invalid json-v1 response: adapter.mappings[0].metric.value had wrong type at row 0"),
+    );
     expect(JSON.stringify(result)).not.toMatch(
       /SUPER_SECRET_BODY_VALUE|secret-key|provider\.example/,
     );
@@ -630,10 +708,9 @@ describe("json-v1", () => {
     ["1".repeat(17), "exceeded the numeric magnitude limit"] as const,
   ])("rejects number text %j", async (balance, issue) => {
     const adapter = mappings({ type: "value", valueType: "balance", value: { path: ["balance"] } });
-    await expect(fetchBody({ balance }, jsonSource(adapter))).resolves.toEqual({
-      success: false,
-      error: `Invalid json-v1 response: adapter.mappings[0].metric.value ${issue} at row 0`,
-    });
+    await expect(fetchBody({ balance }, jsonSource(adapter))).resolves.toEqual(
+      invalid(`Invalid json-v1 response: adapter.mappings[0].metric.value ${issue} at row 0`),
+    );
   });
 
   it("caps detailed partial errors and adds one fixed omission summary", async () => {
@@ -720,10 +797,9 @@ describe("json-v1", () => {
     ],
     ["a scalar root", mappings(usedValue()), 5, "expected an object or array root"],
   ])("rejects %s", async (_name, adapter, body, message) => {
-    await expect(fetchBody(body, jsonSource(adapter as JsonV1Source["adapter"]))).resolves.toEqual({
-      success: false,
-      error: `Invalid json-v1 response: ${message}`,
-    });
+    await expect(fetchBody(body, jsonSource(adapter as JsonV1Source["adapter"]))).resolves.toEqual(
+      invalid(`Invalid json-v1 response: ${message}`),
+    );
   });
 
   const lit = (literal: number) => ({ literal });
@@ -755,10 +831,9 @@ describe("json-v1", () => {
     ],
   ] as const)("rejects the metric %j", async (metric, issue) => {
     const adapter = mappings(metric as JsonV1Mapping["metric"]);
-    await expect(fetchBody({ count: 1, blank: "  " }, jsonSource(adapter))).resolves.toEqual({
-      success: false,
-      error: `Invalid json-v1 response: adapter.mappings[0].${issue} at row 0`,
-    });
+    await expect(fetchBody({ count: 1, blank: "  " }, jsonSource(adapter))).resolves.toEqual(
+      invalid(`Invalid json-v1 response: adapter.mappings[0].${issue} at row 0`),
+    );
   });
 });
 
@@ -878,6 +953,7 @@ describe("quota provider key resolution", () => {
     await expect(fetchRemoteQuotaProvider(off, "key")).resolves.toEqual({
       success: false,
       error: "Provider is switched off",
+      outcome: "switched_off",
     });
     expect(fetch).not.toHaveBeenCalled();
   });

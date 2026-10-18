@@ -1,8 +1,10 @@
-import { safeErrorText } from "../core/redact.js";
 import type { DebugDetail } from "../core/types.js";
 import type { QuotaProvider, QuotaProviderContext } from "../lib/entries.js";
 import {
   consoleBaseUrl,
+  consoleLoginIdentity,
+  consoleSignInFailure,
+  type OpenCodeConsoleAuthState,
   type OpenCodeConsoleCredential,
   resolveOpenCodeConsoleAuth,
 } from "../lib/opencode-console-auth.js";
@@ -12,7 +14,6 @@ import {
   queryOpenCodeZenQuota,
 } from "../lib/opencode-zen.js";
 import { normalizeQuotaProviderId } from "../lib/provider-metadata.js";
-import { resolvedCredentialPolicy } from "./cache-policies.js";
 import { failedAccount, MONTHLY, type ProviderFetchResult, type ProviderRow } from "./contract.js";
 import { statusDetailsFromRecord } from "./result-helpers.js";
 
@@ -29,16 +30,13 @@ function isExplicitlyEnabled(ctx: QuotaProviderContext): boolean {
   );
 }
 
-function signInFailed(state: "expired" | "invalid", detail: string): ProviderFetchResult {
+function signInFailed(
+  auth: Extract<OpenCodeConsoleAuthState, { state: "expired" | "invalid" }>,
+): ProviderFetchResult {
   return {
     attempted: true,
-    accounts: [
-      failedAccount(
-        OPENCODE_ZEN_GROUP,
-        `OpenCode Console sign-in failed: ${detail}. ${LOGIN_HINT}`,
-      ),
-    ],
-    debug: [{ key: "console_auth_state", value: state }],
+    accounts: [failedAccount(OPENCODE_ZEN_GROUP, consoleSignInFailure(auth).message)],
+    debug: [{ key: "console_auth_state", value: auth.state }],
   };
 }
 
@@ -67,23 +65,15 @@ const ZEN_ROW = {
 
 export const opencodeZenProvider: QuotaProvider = {
   id: "opencode",
-  cachePolicy: resolvedCredentialPolicy("opencode", async () => {
-    const resolved = await resolveOpenCodeConsoleAuth();
-    if (resolved.state !== "configured") return null;
-    const { credential } = resolved;
-    // The identity distinguishes accounts within the same org (member budgets
-    // are queried per account): org + account, else the account, else the
-    // token. The Console URL qualifies it because org ids can collide across
-    // self-hosted Console URLs.
-    return {
-      credential:
-        credential.orgId && credential.accountId
-          ? JSON.stringify([credential.orgId, credential.accountId])
-          : (credential.orgId ?? credential.accountId ?? credential.accessToken),
-      principalKind: credential.orgId || credential.accountId ? "stable-id" : "credential",
-      qualifiers: [consoleBaseUrl(credential)],
-    };
-  }),
+  cachePolicy: {
+    kind: "resolved-auth",
+    async resolveIdentity() {
+      const resolved = await resolveOpenCodeConsoleAuth();
+      return resolved.state === "configured"
+        ? await consoleLoginIdentity("opencode", resolved.credential)
+        : null;
+    },
+  },
 
   async isAvailable(ctx: QuotaProviderContext): Promise<boolean> {
     // An expired or failed sign-in stays available so fetch() can show its hint.
@@ -114,13 +104,9 @@ export const opencodeZenProvider: QuotaProvider = {
         : { attempted: false, accounts: [], debug };
     }
 
-    if (consoleAuth.state === "invalid") {
-      return signInFailed("invalid", safeErrorText(consoleAuth.error));
-    }
-
-    if (consoleAuth.state === "expired") {
-      // OpenCode refreshes the Console token when it is read, so this is rare.
-      return signInFailed("expired", "the sign-in expired");
+    // OpenCode refreshes the Console token when it is read, so an expired one is rare.
+    if (consoleAuth.state === "invalid" || consoleAuth.state === "expired") {
+      return signInFailed(consoleAuth);
     }
 
     const { credential } = consoleAuth;
