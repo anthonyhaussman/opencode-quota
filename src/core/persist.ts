@@ -13,8 +13,8 @@ import { writeJsonAtomic } from "../lib/atomic-json.js";
 import { isRecord } from "../lib/json-guards.js";
 import { getOpencodeRuntimeDirs } from "../lib/opencode-runtime-paths.js";
 import { isQuotaErrorCode } from "./errors.js";
-import { safeDebugValue, safeDetail } from "./redact.js";
-import type { DebugDetail, QuotaError, QuotaRow, ResetNotice } from "./types.js";
+import { safeDetail } from "./redact.js";
+import type { QuotaError, QuotaRow, ResetNotice } from "./types.js";
 import { LABEL_MAX_CODE_POINTS, validateRows } from "./validate.js";
 import { isQuotaWindow } from "./windows.js";
 
@@ -43,7 +43,6 @@ export type SavedEntry = {
   error?: QuotaError;
   /** Failed attempts in a row; drives the error backoff. */
   failures: number;
-  debug: DebugDetail[];
   /** Windows of this account that reset recently; they belong to it like its rows. */
   notices: ResetNotice[];
   /** Per row (see `rowSlot`): when its current reset time was first seen. */
@@ -74,20 +73,6 @@ function parseError(value: unknown): QuotaError | undefined | null {
   if (missing === true) error.missing = true;
   if (typeof detail === "string") error.detail = safeDetail(detail, DETAIL_MAX_LENGTH);
   return error;
-}
-
-function parseDebug(value: unknown): DebugDetail[] {
-  if (!Array.isArray(value)) return [];
-  return value.flatMap((item) =>
-    isRecord(item) && typeof item.key === "string" && typeof item.value === "string"
-      ? [
-          {
-            key: safeDetail(item.key, 64),
-            value: safeDebugValue(item.key, item.value, DETAIL_MAX_LENGTH),
-          },
-        ]
-      : [],
-  );
 }
 
 function parseRows(providerId: string, value: unknown[]): LoginRow[] {
@@ -129,7 +114,6 @@ function parseEntry(key: string, value: unknown): SavedEntry | undefined {
     ...(checkedAtMs === undefined ? {} : { checkedAtMs }),
     ...(error === undefined ? {} : { error }),
     failures,
-    debug: parseDebug(value.debug),
     notices,
     resetSeenAtMs: parseSeenTimes(value.resetSeenAtMs),
   };

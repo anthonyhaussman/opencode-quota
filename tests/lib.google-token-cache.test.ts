@@ -1,13 +1,10 @@
-import { access, mkdir, mkdtemp, readdir, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { access, mkdir, readdir, rm, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
+import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
-const runtime = vi.hoisted(() => ({ cacheDir: "" }));
+import { useOpencodeFolders } from "./helpers/opencode-folders.js";
 
-vi.mock("../src/lib/opencode-runtime-paths.js", () => ({
-  getOpencodeRuntimeDirs: () => ({ cacheDir: runtime.cacheDir }),
-}));
+const runtime = useOpencodeFolders();
 
 function entry(accessToken: string, expiresAt = Date.now() + 60_000) {
   return { accessToken, expiresAt };
@@ -18,12 +15,7 @@ describe("google-token-cache", () => {
 
   beforeEach(async () => {
     vi.resetModules();
-    runtime.cacheDir = await mkdtemp(join(tmpdir(), "opencode-quota-google-token-cache-"));
     legacyCachePath = join(runtime.cacheDir, "opencode-quota", "google-access-tokens.json");
-  });
-
-  afterEach(async () => {
-    await rm(runtime.cacheDir, { recursive: true, force: true });
   });
 
   it("uses opaque process-local account keys without PII or reusable credential verifiers", async () => {

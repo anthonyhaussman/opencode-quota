@@ -139,7 +139,8 @@ describe("quota store", () => {
       okAtMs: START_MS,
       checkedAtMs: START_MS,
       refreshing: true,
-      debug: [{ key: "source", value: "test" }],
+      // Debug details stay in the memory of the process that checked.
+      debug: [],
     });
     // The poll it started is still running; the answer did not wait for it.
     expect(second.fetch).toHaveBeenCalledOnce();
@@ -504,6 +505,32 @@ describe("quota store", () => {
     expect(fresh.rows).toEqual([]);
   });
 
+  it("reads a file that still holds debug details and leaves them out of the next write", async () => {
+    const copilot = fakeProvider();
+    await makeStore([copilot.provider]).refresh({ reason: "manual" });
+    const saved = await savedFile();
+    const [key] = Object.keys(saved.entries);
+    if (!key) throw new Error("nothing saved");
+    expect(saved.entries[key]).not.toHaveProperty("debug");
+    // As an older plugin wrote it.
+    await writeFile(
+      file,
+      JSON.stringify({
+        ...saved,
+        entries: { [key]: { ...saved.entries[key], debug: [{ key: "source", value: "old" }] } },
+      }),
+    );
+
+    const restarted = makeStore([copilot.provider], HOUR);
+    expect(only(await restarted.snapshot())).toMatchObject({
+      rows: [row("allowance", 50)],
+      debug: [],
+    });
+    clock += 2 * HOUR;
+    await restarted.refresh({ reason: "manual" });
+    expect((await savedFile()).entries[key]).not.toHaveProperty("debug");
+  });
+
   it("keeps a failing login's last rows and backs off when another login answers", async () => {
     const copilot = fakeProvider();
     copilot.fetch.mockResolvedValue({
@@ -664,6 +691,25 @@ describe("quota store", () => {
     expect(snapshot.currentModelProviderIds).toEqual(["openai"]);
     expect(await store.snapshot()).not.toHaveProperty("currentModelProviderIds");
     expect(await store.snapshot({ model: {} })).not.toHaveProperty("currentModelProviderIds");
+  });
+
+  it("refreshes only the providers serving the model when asked to", async () => {
+    const copilot = fakeProvider("copilot");
+    const openai = fakeProvider("openai");
+    const forModel = (model: SessionModel) => (model.providerID === "openai" ? ["openai"] : []);
+    const store = makeStore([copilot.provider, openai.provider], 0, file, forModel);
+    const onlyModelProviders = true;
+    const answered = await store.refresh({
+      reason: "retry",
+      model: { id: "gpt-5", providerID: "openai" },
+      onlyModelProviders,
+    });
+    expect(answered.currentModelProviderIds).toEqual(["openai"]);
+    expect([copilot.fetch.mock.calls.length, openai.fetch.mock.calls.length]).toEqual([0, 1]);
+
+    await store.refresh({ reason: "retry", model: { id: "other" }, onlyModelProviders });
+    await store.refresh({ reason: "retry", onlyModelProviders });
+    expect([copilot.fetch.mock.calls.length, openai.fetch.mock.calls.length]).toEqual([0, 1]);
   });
 
   it("never answers a refresh with the old login's rows after a login change", async () => {

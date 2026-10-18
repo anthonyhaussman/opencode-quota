@@ -5,30 +5,6 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test"
 
 // --------------- mock modules ---------------
 
-const testPaths = vi.hoisted(() => {
-  const separator = process.platform === "win32" ? "\\" : "/";
-  const join = (...parts: string[]) => parts.join(separator);
-  const root = join(process.cwd(), ".quota-export-test");
-  const cacheDir = join(root, "cache");
-  return {
-    dataDir: join(root, "data"),
-    configDir: join(root, "config"),
-    cacheDir,
-    stateDir: join(root, "state"),
-    defaultExport: join(cacheDir, "quota-export.json"),
-    explicitExport: join(root, "export.json"),
-  };
-});
-
-vi.mock("../src/lib/opencode-runtime-paths.js", () => ({
-  getOpencodeRuntimeDirs: () => ({
-    dataDir: testPaths.dataDir,
-    configDir: testPaths.configDir,
-    cacheDir: testPaths.cacheDir,
-    stateDir: testPaths.stateDir,
-  }),
-}));
-
 vi.mock("../src/lib/atomic-json.js", () => ({
   writeJsonAtomic: vi.fn(),
 }));
@@ -53,6 +29,13 @@ import type {
 import type { AccountResult, ProviderFetchResult } from "../src/providers/contract.js";
 import { customAccount } from "../src/providers/quota-providers.js";
 import { percentRow, providerSnapshot, quotaRow } from "./helpers/fake-answers.js";
+import { useOpencodeFolders } from "./helpers/opencode-folders.js";
+
+const folders = useOpencodeFolders();
+const testPaths = {
+  defaultExport: join(folders.cacheDir, "quota-export.json"),
+  explicitExport: join(folders.root, "export.json"),
+};
 
 // --------------- helpers ---------------
 

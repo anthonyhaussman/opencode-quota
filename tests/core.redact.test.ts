@@ -2,8 +2,8 @@ import { describe, expect, it } from "vite-plus/test";
 
 import {
   looksSecret,
+  publicDebugValue,
   publicDetail,
-  safeDebugValue,
   safeDetail,
   safeErrorText,
   secretValuesRedactor,
@@ -151,9 +151,9 @@ describe("credential redaction", () => {
   });
 
   it.each([
-    // Any secret word in the key hides the whole value.
-    ["session_id", "abc", "[redacted]"],
-    ["sessionId", "abc", "[redacted]"],
+    // A private id key hides the whole value, as any secret word in the key does.
+    ["session_id", "abc", "[id]"],
+    ["sessionId", "abc", "[id]"],
     ["XSRFToken", "abc", "[redacted]"],
     ["x-api-key", "abc", "[redacted]"],
     ["api_key", "abc", "[redacted]"],
@@ -176,7 +176,7 @@ describe("credential redaction", () => {
     ["console_auth_state", "configured", "configured"],
     ["tokens_used", "500", "500"],
   ])("debug key %s with %j shows %j", (key, value, shown) => {
-    expect(safeDebugValue(key, value, 300)).toBe(shown);
+    expect(publicDebugValue(key, value, 300)).toBe(shown);
   });
 });
 

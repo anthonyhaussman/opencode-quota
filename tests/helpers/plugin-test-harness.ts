@@ -8,11 +8,6 @@ type MockFunction = ReturnType<typeof vi.fn>;
 interface PluginBootstrapMocks {
   getProviders?: MockFunction;
   sessionUsage?: MockFunction;
-  resolveAlibabaCodingPlanAuthCached?: MockFunction;
-}
-
-export function createProvidersRegistryModuleMock(getProviders: MockFunction) {
-  return { getProviders };
 }
 
 /** core/usage.js as it is, with `sessionUsage` replaced. */
@@ -20,32 +15,12 @@ export function createSessionUsageModuleMock(actual: object, sessionUsage: MockF
   return { ...actual, sessionUsage };
 }
 
-export function createAlibabaAuthModuleMock(resolveAlibabaCodingPlanAuthCached: MockFunction) {
-  return {
-    isAlibabaModelId: (model?: string) =>
-      typeof model === "string" &&
-      (model.toLowerCase().startsWith("alibaba/") || model.toLowerCase().startsWith("alibaba-cn/")),
-    resolveAlibabaCodingPlanAuthCached,
-  };
-}
-
-export function createPluginRuntimePathsMockModule(root: string) {
-  return {
-    getOpencodeRuntimeDirs: () => ({
-      dataDir: `${root}/data`,
-      configDir: `${root}/config`,
-      cacheDir: `${root}/cache`,
-      stateDir: `${root}/state`,
-    }),
-  };
-}
-
-/**
- * Writes the server settings file (settings.jsonc) under the runtime root of
- * `createPluginRuntimePathsMockModule(root)`.
- */
-export function writePluginTestSettings(root: string, settings: Record<string, unknown>): void {
-  const dir = join(root, "config", "opencode-quota");
+/** Writes the server settings file (settings.jsonc) in OpenCode's config folder `configDir`. */
+export function writePluginTestSettings(
+  configDir: string,
+  settings: Record<string, unknown>,
+): void {
+  const dir = join(configDir, "opencode-quota");
   mkdirSync(dir, { recursive: true });
   writeFileSync(join(dir, "settings.jsonc"), JSON.stringify(settings, null, 2));
 }
@@ -63,7 +38,6 @@ export function seedDefaultPluginBootstrapMocks(
 
   mocks.getProviders?.mockReturnValue([]);
   mocks.sessionUsage?.mockResolvedValue(undefined);
-  mocks.resolveAlibabaCodingPlanAuthCached?.mockResolvedValue({ state: "none" });
 }
 
 export type ServerTool = {

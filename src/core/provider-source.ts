@@ -36,26 +36,35 @@ export type ProviderSourceHost = {
   workspaceRoot: string;
   /** The server settings now. */
   settings: () => LoadedSettings;
+  /** The registered providers in display order; `getProviders()` when absent. */
+  providers?: () => readonly QuotaProvider[];
 };
 
 /** The settings the server reads besides the providers themselves. */
 export type ServerSettings = {
   waitForQuotaReset: boolean;
-  /** The enabled providers that serve `model`. */
-  providerIdsForModel: (model: SessionModel) => string[];
-  /** The custom definitions (rows `quota-providers.custom.<id>.*`) that serve `model`. */
-  customDefinitionIdsForModel: (model: SessionModel) => string[];
   /** The export file, written after each snapshot change when on. */
   export: { enabled: boolean; path: string };
   /** Quota gauges through the host's OpenTelemetry MeterProvider. */
   telemetry: boolean;
 };
 
+/** The start of every row id of the custom definition `definitionId`. */
+export function customRowPrefix(definitionId: string): string {
+  return `${QUOTA_PROVIDERS_AGGREGATE_ID}.custom.${definitionId}.`;
+}
+
+/** The host's registered providers. */
+export function registeredProviders(host: ProviderSourceHost): readonly QuotaProvider[] {
+  return host.providers ? host.providers() : getProviders();
+}
+
 /** All registered providers except the ids switched off, with custom mapped to its registry id. */
-function registryProviderIds(off: Settings["providers"]["off"]): string[] {
-  return getProviders()
-    .map((provider) => provider.id)
-    .filter((id) => !off.includes(offProviderId(id)));
+function registryProviderIds(
+  providers: readonly QuotaProvider[],
+  off: Settings["providers"]["off"],
+): string[] {
+  return providers.map((provider) => provider.id).filter((id) => !off.includes(offProviderId(id)));
 }
 
 /** What every provider reads from the settings when it checks its quota. */
@@ -77,16 +86,20 @@ export function providerContext(
       opencodeMonthlyLimit: opencode.monthlyLimitUsd ?? undefined,
       requestTimeoutMs: settings.providers.checking.requestTimeoutMs,
       requestTimeoutMsConfigured: fromFile.includes("providers.checking.requestTimeoutMs"),
-      enabledProviders: registryProviderIds(settings.providers.off),
+      enabledProviders: registryProviderIds(registeredProviders(host), settings.providers.off),
       automaticDiscovery: true,
       quotaProviders: cloneQuotaProviders(settings.providers.custom),
     },
   };
 }
 
-/** The registered providers that serve `model`, by the settings in `ctx`. */
-function providerIdsForModel(ctx: QuotaProviderContext, model: SessionModel): string[] {
-  return getProviders()
+/** The providers that serve `model`, by the settings in `ctx`. */
+function providerIdsForModel(
+  providers: readonly QuotaProvider[],
+  ctx: QuotaProviderContext,
+  model: SessionModel,
+): string[] {
+  return providers
     .filter((provider) =>
       matchesQuotaProviderCurrentSelection({
         provider,
@@ -110,8 +123,8 @@ async function openCodeProviderIds(ctx: QuotaProviderContext): Promise<ReadonlyS
 }
 
 /**
- * The custom definitions (rows `quota-providers.custom.<id>.*`) that serve `model`; without
- * OpenCode's provider list none can be matched to a model.
+ * The custom definitions (rows `customRowPrefix(id)`) that serve `model`; without OpenCode's
+ * provider list none can be matched to a model.
  */
 function customDefinitionIdsForModel(
   ctx: QuotaProviderContext,
@@ -228,9 +241,10 @@ function storeProvider(
 /** The store's source: the enabled and available providers, with the settings now. */
 export async function loadProviderSource(host: ProviderSourceHost): Promise<StoreSource> {
   const loaded = host.settings();
+  const providers = registeredProviders(host);
   const ctx = providerContext(host, loaded);
   const { enabledProviders } = ctx.config;
-  const enabled = getProviders().filter(
+  const enabled = providers.filter(
     (provider) => enabledProviders === "auto" || enabledProviders.includes(provider.id),
   );
   const available = await Promise.all(
@@ -260,28 +274,22 @@ export async function loadProviderSource(host: ProviderSourceHost): Promise<Stor
       .filter((_, index) => available[index])
       .map((provider) => storeProvider(provider, ctx, settingsKey)),
     minIntervalMs: loaded.settings.providers.checking.minIntervalMs,
-    providerIdsForModel: (model) => providerIdsForModel(ctx, model),
+    providerIdsForModel: (model) => providerIdsForModel(providers, ctx, model),
     // A custom definition's rows serve only the models the definition serves.
     rowPrefixesForModel: (model) => ({
       [QUOTA_PROVIDERS_AGGREGATE_ID]: customDefinitionIdsForModel(
         ctx,
         availableProviderIds,
         model,
-      ).map((id) => `${QUOTA_PROVIDERS_AGGREGATE_ID}.custom.${id}.`),
+      ).map(customRowPrefix),
     }),
   };
 }
 
 export async function loadServerSettings(host: ProviderSourceHost): Promise<ServerSettings> {
-  const loaded = host.settings();
-  const { settings } = loaded;
-  const ctx = providerContext(host, loaded);
-  const availableProviderIds = await openCodeProviderIds(ctx);
+  const { settings } = host.settings();
   return {
     waitForQuotaReset: settings.providers.checking.waitForQuotaReset,
-    providerIdsForModel: (model) => providerIdsForModel(ctx, model),
-    customDefinitionIdsForModel: (model) =>
-      customDefinitionIdsForModel(ctx, availableProviderIds, model),
     export: { enabled: settings.system.exportFile, path: settings.system.exportPath },
     telemetry: settings.system.telemetry,
   };

@@ -2,19 +2,12 @@ import { chmod, mkdir, readdir, readFile, rm, stat, symlink, writeFile } from "n
 import { dirname } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
-const TEST_RUNTIME_ROOT = "/tmp/opencode-quota-resolved-auth-identity-tests";
+import { useOpencodeFolders } from "./helpers/opencode-folders.js";
+
+const TEST_RUNTIME_ROOT = useOpencodeFolders().root;
 const TEST_SYMLINK_TARGET = `${TEST_RUNTIME_ROOT}-symlink-target`;
 const RESOLVED_AUTH_IDENTITY_PATTERN = /^rai1_[A-Za-z0-9_-]{43}$/u;
 const POSIX_IDENTITY_STORAGE = process.platform !== "win32" && typeof process.getuid === "function";
-
-vi.mock("../src/lib/opencode-runtime-paths.js", () => ({
-  getOpencodeRuntimeDirs: () => ({
-    dataDir: `${TEST_RUNTIME_ROOT}/data`,
-    configDir: `${TEST_RUNTIME_ROOT}/config`,
-    cacheDir: `${TEST_RUNTIME_ROOT}/cache`,
-    stateDir: `${TEST_RUNTIME_ROOT}/state`,
-  }),
-}));
 
 describe("resolved-auth identity", () => {
   beforeEach(async () => {

@@ -29,22 +29,57 @@ function filesQueryingCredentials(reached: string[]): string[] {
   );
 }
 
+/** The TUI's own files: its views and the quota window. */
+const TUI_FILE = /^(?:tui|view)\//u;
+
+/**
+ * The other dist files dist/tui.js loads, exactly, so a new one is added here on purpose: no
+ * login reader and no provider. settings/schema.js checks custom provider definitions with
+ * lib/quota-providers.js, which brings the price list (lib/modelsdev-pricing.js with
+ * lib/http.js, lib/atomic-json.js and the runtime folders).
+ */
+const TUI_MAY_REACH = [
+  "core/errors.js",
+  "core/pace.js",
+  "core/redact.js",
+  "core/usage-ranges.js",
+  "core/validate.js",
+  "core/windows.js",
+  "lib/accounting-format.js",
+  "lib/atomic-json.js",
+  "lib/calendar-date.js",
+  "lib/cursor-pricing.js",
+  "lib/display-sanitize.js",
+  "lib/home-dir-display.js",
+  "lib/http.js",
+  "lib/json-guards.js",
+  "lib/modelsdev-pricing.js",
+  "lib/opencode-runtime-paths.js",
+  "lib/pricing-key.js",
+  "lib/provider-metadata.js",
+  "lib/provider-registration.js",
+  "lib/quota-providers.js",
+  "lib/quota-report-message.js",
+  "lib/token-buckets.js",
+  "lib/version.js",
+  "rpc.js",
+  "settings/schema.js",
+  "tui.js",
+];
+
 describe("tui dist import graph", () => {
   // Run after `pnpm build`. The TUI asks the server plugin for quota over the RPC, so it
   // must load no login reader and no provider code.
-  it("reaches no credential or provider module from dist/tui.js", () => {
+  it("reaches only its own files and the allowed ones from dist/tui.js", () => {
     const entry = resolve(distDir, "tui.js");
     expect(existsSync(entry)).toBe(true);
 
     const reached = reachableFrom(entry);
 
     expect(reached).toContain("rpc.js");
-    expect(reached).not.toContain("lib/opencode-auth.js");
-    expect(reached).not.toContain("lib/opencode-auth-sqlite.js");
-    expect(reached.filter((file) => file.startsWith("providers/"))).toEqual([]);
-    // It reads no settings files and no logins: no reachable module may query OpenCode's
-    // credential table (only the terminal command's reader does).
-    expect(reached).not.toContain("lib/config.js");
+    expect(reached.filter((file) => !TUI_FILE.test(file))).toEqual(TUI_MAY_REACH);
+    // No reachable module may query OpenCode's credential table (only the terminal
+    // command's reader does).
     expect(filesQueryingCredentials(reached)).toEqual([]);
   });
 
