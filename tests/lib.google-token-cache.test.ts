@@ -99,25 +99,32 @@ describe("google-token-cache", () => {
     }
   });
 
-  it("does not reuse memory or opaque account keys across module instances", async () => {
-    const firstModule = await import("../src/lib/google-token-cache.js");
-    const firstKey = firstModule.makeAccountCacheKey({
-      refreshToken: "refresh-secret",
-      projectId: "project-id",
-    });
-    await firstModule.createGoogleTokenCache().set({ key: firstKey, entry: entry("first-token") });
-
+  it("does not reuse opaque account keys across module instances", async () => {
+    const account = { refreshToken: "refresh-secret", projectId: "project-id" };
+    const firstKey = (await import("../src/lib/google-token-cache.js")).makeAccountCacheKey(
+      account,
+    );
     vi.resetModules();
-    const secondModule = await import("../src/lib/google-token-cache.js");
-    const secondKey = secondModule.makeAccountCacheKey({
-      refreshToken: "refresh-secret",
-      projectId: "project-id",
-    });
+    const secondKey = (await import("../src/lib/google-token-cache.js")).makeAccountCacheKey(
+      account,
+    );
 
     expect(secondKey).not.toBe(firstKey);
+  });
+
+  it("gives Google AGY and Gemini CLI separate token caches", async () => {
+    const { AGY_FLAVOR } = await import("../src/lib/google-agy.js");
+    const { GEMINI_CLI_FLAVOR } = await import("../src/lib/google-gemini-cli.js");
+    await AGY_FLAVOR.tokenCache.set({ key: "shared", entry: entry("agy-token") });
+    await GEMINI_CLI_FLAVOR.tokenCache.set({ key: "other", entry: entry("gemini-token") });
+
     await expect(
-      secondModule.createGoogleTokenCache().get({ key: secondKey, skewMs: 0 }),
+      GEMINI_CLI_FLAVOR.tokenCache.get({ key: "shared", skewMs: 0 }),
     ).resolves.toBeNull();
+    await expect(AGY_FLAVOR.tokenCache.get({ key: "other", skewMs: 0 })).resolves.toBeNull();
+    await expect(AGY_FLAVOR.tokenCache.get({ key: "shared", skewMs: 0 })).resolves.toMatchObject({
+      accessToken: "agy-token",
+    });
   });
 
   it("retries a denied legacy cleanup without using an insecure fallback", async () => {

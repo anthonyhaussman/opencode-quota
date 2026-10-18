@@ -3,7 +3,7 @@
  *
  * Access tokens and account correlation material are intentionally never
  * persisted. The legacy v1 disk cache contained account PII and an unkeyed
- * refresh-token verifier, so it is ignored and removed on first use.
+ * refresh-token verifier, so it is never read and is removed before every get and set.
  */
 
 import { createHmac, randomBytes } from "node:crypto";
