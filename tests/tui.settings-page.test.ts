@@ -112,6 +112,15 @@ describe("a Settings page without the window", () => {
     expect(draft.shown().collapsed.show).toBe(false);
   });
 
+  it("does nothing for a tree line the snapshot no longer has", async () => {
+    const { server, draft, page } = await pageOn("collapsed");
+
+    page().activate("line:gone");
+    page().step("line:gone", 1);
+    expect(draft.shown().collapsed.hidden).toEqual([]);
+    expect(server.dirty()).toBe(false);
+  });
+
   it("puts a preset above the line it names, and steps all its lines at once", async () => {
     const { draft, page } = await pageOn("layout");
     const ids = page().options.map((line) => line.id);

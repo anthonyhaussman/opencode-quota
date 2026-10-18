@@ -309,8 +309,12 @@ export function settingsPage(input: {
 
   const options = optionLines();
   const optionById = (id: string) => options.find((line) => line.id === id);
-  /** The tree line id of a selection id; undefined for any other line. */
-  const treeId = (id: string) => (id.startsWith("line:") ? id.slice("line:".length) : undefined);
+  /**
+   * The tree line id of a selection id; undefined for any other line, and for a line the tree no
+   * longer has (its provider left the snapshot). The time only changes the lines' texts.
+   */
+  const treeId = (id: string) =>
+    editor?.lines(shown(), Date.now()).find((line) => lineKey(line.id) === id)?.id;
 
   return {
     surface: surface as Surface | undefined,

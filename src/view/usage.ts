@@ -120,10 +120,13 @@ const NO_CACHE_HIT = "—";
 
 /**
  * A model's cache hit as the Usage tab writes it, in the breakdown's Cache column and in the
- * model's details alike: "49.9%", or "—" without one.
+ * model's details alike: "49.9%", or "—" without one. Rounded down to one decimal, like
+ * CacheHit.text, so a low cache hit never reads "50.0%".
  */
 function cacheHitText(cache: CacheHit | undefined): string {
-  return cache ? formatShare(cache.share) : NO_CACHE_HIT;
+  if (!cache) return NO_CACHE_HIT;
+  const tenths = Math.floor(cache.share * 1000);
+  return tenths === 0 && cache.share > 0 ? "<0.1%" : formatShare(tenths / 1000);
 }
 /** The model breakdown drops its Cache column before its names get narrower than this. */
 const CACHE_NAME_MIN_WIDTH = 8;

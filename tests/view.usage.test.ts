@@ -890,6 +890,22 @@ describe("usageView", () => {
     expect(detail[grid + 1]?.trim()).toMatch(/ 49\.9%$/);
   });
 
+  it("rounds a low cache hit down, so it never reads 50.0%", () => {
+    const report = cacheReport();
+    const sonnet = report.models[1] as UsageModelRow;
+    // 49.96% of 1M input tokens read from the cache.
+    sonnet.tokensByType = { ...sonnet.tokensByType, input: 500_400, cacheRead: 499_600 };
+    const column = section(
+      usageView(report, { mode: "cost", breakdown: "model", width: 80 }).lines,
+      "Breakdown",
+    ).map(textOf);
+    const detail = modelDetailView(report, sonnet, { mode: "cost", width: 80 }).map(textOf);
+
+    expect(column.find((text) => text.includes("claude-sonnet-5"))).toMatch(/ {2}49\.9% ⚠ ▸$/);
+    const grid = detail.findIndex((text) => text.includes("Cache hit"));
+    expect(detail[grid + 1]?.trim()).toMatch(/ 49\.9%$/);
+  });
+
   it.each([
     { width: 80, cache: true, sonnet: "claude-sonnet-5" },
     // The names still get 8 columns.
@@ -1005,8 +1021,9 @@ describe("modelDetailView", () => {
     ]);
     expect(lines[1]).toEqual([{ text: "Anthropic · 81.4% of cost", role: "muted" }]);
     expect(cells(lines[3])).toEqual(["Cost", "Tokens", "Per 1M tokens", "Cache hit"]);
-    // Cache hit: cache reads ÷ all input tokens (input, cache reads and cache writes).
-    expect(cells(lines[4])).toEqual(["$4,410.41", "12.5B", "$0.35", "97.7%"]);
+    // Cache hit: cache reads ÷ all input tokens (input, cache reads and cache writes), 97.67%
+    // rounded down.
+    expect(cells(lines[4])).toEqual(["$4,410.41", "12.5B", "$0.35", "97.6%"]);
     const chart = from(lines, "Daily cost");
     // The model's days are its provider's part, so its chart is in its provider's color.
     const blocks = chart
@@ -1035,7 +1052,7 @@ describe("modelDetailView", () => {
       model: "claude-opus-5-5",
       mode: "tokens" as const,
       share: "Anthropic · 93.3% of tokens",
-      numbers: ["$4,410.41", "12.5B", "$0.35", "97.7%"],
+      numbers: ["$4,410.41", "12.5B", "$0.35", "97.6%"],
       headings: ["Daily tokens", "Cost by type   Tokens by type"],
     },
   ])("model $name", ({ model, mode, share, numbers, headings }) => {

@@ -27,7 +27,7 @@ import {
   TextAttributes,
 } from "@opentui/core";
 import { type JSX, useTerminalDimensions } from "@opentui/solid";
-import { createSignal, Show } from "solid-js";
+import { createMemo, createSignal, Show } from "solid-js";
 import {
   DEFAULT_USAGE_RANGE,
   USAGE_RANGES,
@@ -629,12 +629,12 @@ export function createUsageTab(
       })),
     }));
 
-    const view = (): UsageViewLines => {
+    const view = createMemo((): UsageViewLines => {
       const report = readyReport();
       return report
         ? usageView(report, { mode: mode(), breakdown: breakdown(), width: props.width })
         : { lines: [], modelLines: [] };
-    };
+    });
     const dateBox = (field: DateField) => (
       <input
         ref={(element: InputRenderable) => {
