@@ -75,7 +75,7 @@ Run `/quota_status` first and check that provider's section. Every known provide
 | Config is rejected                         | Keep definitions in `providers.custom` in `settings.jsonc` ([where](configuration.md#where-settings-live)). Remove unknown fields, duplicate IDs/request identities, or overlapping model coverage. |
 | Definition is `unavailable`                | Confirm OpenCode reports the exact `providerId`. With `words.onlyCurrentModel`, the model id (without provider prefix) must match `modelIds`, or omit `modelIds`. |
 | `Not set up` (`missing_credential`)       | Set the `apiKeyEnv` variable, trusted global `provider.<providerId>.options.apiKey`, or an API-key login saved in OpenCode 2 for that provider id. |
-| `HTTP <code>`, timeout, or response error  | Check the endpoint and its response format. `/quota_status` intentionally hides URLs, request/response contents, raw errors, and secret material. |
+| `Provider error <code>`, `Timed out`, `Can't reach …`, or `Unexpected reply` | Check the endpoint and its response format; the `custom 1 check` outcome says which step failed. `/quota_status` intentionally hides URLs, request/response contents, raw errors, and secret material. |
 | One definition fails but others show       | Expected. Working definitions stay visible; the failed one stays an error row. |
 | CLI/export looks stale                     | `show --json` is cache-only, and the export file changes only when the server's quota does. Open a TUI session first. `/quota_status` is the live check. |
 

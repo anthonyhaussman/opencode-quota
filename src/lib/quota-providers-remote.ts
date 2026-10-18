@@ -1,9 +1,10 @@
+import type { ErrorFacts } from "../core/errors.js";
 import { codePointLength, isIsoTime, LABEL_MAX_CODE_POINTS } from "../core/validate.js";
 import type { ProviderRow } from "../providers/contract.js";
 import { type ApiKeySpec, getApiKeyCheckedPaths, resolveApiKey } from "./api-key-resolver.js";
 import { sanitizeSingleLineDisplayText } from "./display-sanitize.js";
 import { fmtUsdAmount } from "./format-utils.js";
-import { REQUEST_TIMEOUT_MS } from "./http.js";
+import { failureFacts, type RequestFailure, requestJson } from "./http.js";
 import { hasOnlyKeys, isRecord } from "./json-guards.js";
 import { getCredentialDatabasePaths } from "./opencode-auth.js";
 import type {
@@ -55,10 +56,29 @@ export interface QuotaProviderAuthResolution {
   credentialDatabasePaths: string[];
 }
 
-/** The rows of one reply; each key is the part of the row id after `custom.<definition id>.`. */
-export type RemoteQuotaProviderResult =
+/** Why a check got no rows, as its /quota_status check names it. */
+export type RemoteFailureOutcome =
+  | "switched_off"
+  | "http_error"
+  | "redirect_error"
+  | "timeout"
+  | "body_too_large"
+  | "invalid_content_type"
+  | "invalid_json"
+  | "invalid_response"
+  | "network_error";
+
+type ParsedReply =
   | { success: true; rows: ProviderRow[]; rowErrors?: string[] }
   | { success: false; error: string };
+
+/**
+ * The rows of one reply (each key is the part of the row id after `custom.<definition id>.`),
+ * or why there are none: the words, the outcome, and the request's facts when it gave them.
+ */
+export type RemoteQuotaProviderResult =
+  | { success: true; rows: ProviderRow[]; rowErrors?: string[] }
+  | { success: false; error: string; outcome: RemoteFailureOutcome; facts?: ErrorFacts };
 
 function boundedDisplayText(value: unknown, maxCodePoints: number): string | null {
   if (typeof value !== "string") return null;
@@ -95,52 +115,10 @@ export async function resolveQuotaProviderApiKey(
   };
 }
 
-function isJsonContentType(response: Response): boolean {
-  const type = response.headers.get("content-type")?.split(";", 1)[0]?.trim().toLowerCase();
+function isJsonContentType(headers: Headers): boolean {
+  const type = headers.get("content-type")?.split(";", 1)[0]?.trim().toLowerCase();
   if (!type) return false;
   return type === "application/json" || (type.startsWith("application/") && type.endsWith("+json"));
-}
-
-/** Reads at most QUOTA_PROVIDER_MAX_BODY_BYTES, so a huge reply never sits in memory. */
-async function readBoundedJson(
-  response: Response,
-): Promise<{ ok: true; body: unknown } | { ok: false; error: string }> {
-  const tooLarge = {
-    ok: false,
-    error: `Response exceeded ${QUOTA_PROVIDER_MAX_BODY_BYTES} bytes`,
-  } as const;
-  if (!isJsonContentType(response)) return { ok: false, error: "Expected a JSON response" };
-
-  const declaredLength = Number(response.headers.get("content-length"));
-  if (Number.isFinite(declaredLength) && declaredLength > QUOTA_PROVIDER_MAX_BODY_BYTES) {
-    return tooLarge;
-  }
-
-  let text = "";
-  if (response.body) {
-    const reader = response.body.getReader();
-    const decoder = new TextDecoder();
-    let total = 0;
-    try {
-      for (let next = await reader.read(); !next.done; next = await reader.read()) {
-        total += next.value.byteLength;
-        if (total > QUOTA_PROVIDER_MAX_BODY_BYTES) {
-          await reader.cancel();
-          return tooLarge;
-        }
-        text += decoder.decode(next.value, { stream: true });
-      }
-      text += decoder.decode();
-    } finally {
-      reader.releaseLock();
-    }
-  }
-
-  try {
-    return { ok: true, body: JSON.parse(text) as unknown };
-  } catch {
-    return { ok: false, error: "Invalid JSON response" };
-  }
 }
 
 /** A quota-v1 row keyed by its name. */
@@ -209,7 +187,7 @@ function parseQuotaV1Row(raw: unknown): ProviderRow | null {
   return null;
 }
 
-function parseQuotaV1(body: unknown): RemoteQuotaProviderResult {
+function parseQuotaV1(body: unknown): ParsedReply {
   const invalid = { success: false, error: "Invalid quota-v1 response" } as const;
   if (
     !isRecord(body) ||
@@ -459,8 +437,8 @@ function mapJsonV1Candidate(
 function parseJsonV1(
   source: Extract<RemoteApiQuotaProviderDefinition, { format: "json-v1" }>,
   body: unknown,
-): RemoteQuotaProviderResult {
-  const invalid = (message: string): RemoteQuotaProviderResult => ({
+): ParsedReply {
+  const invalid = (message: string): ParsedReply => ({
     success: false,
     error: `Invalid json-v1 response: ${message}`,
   });
@@ -536,7 +514,7 @@ function parseJsonV1(
  * The key's budget (percent left), or its spend when the key has no limit: this month's
  * (`usage_monthly`, the current UTC month) when the reply has it, else all time.
  */
-function parseOpenRouterKeyV1(body: unknown): RemoteQuotaProviderResult {
+function parseOpenRouterKeyV1(body: unknown): ParsedReply {
   const invalid = { success: false, error: "Invalid openrouter-key-v1 response" } as const;
   if (!isRecord(body) || !isRecord(body.data)) return invalid;
 
@@ -593,55 +571,69 @@ function parseOpenRouterKeyV1(body: unknown): RemoteQuotaProviderResult {
   };
 }
 
+function parseReply(source: RemoteApiQuotaProviderDefinition, body: unknown): ParsedReply {
+  switch (source.format) {
+    case "quota-v1":
+      return parseQuotaV1(body);
+    case "openrouter-key-v1":
+      return parseOpenRouterKeyV1(body);
+    case "json-v1":
+      return parseJsonV1(source, body);
+  }
+}
+
+/**
+ * A failed request as fixed words: an endpoint's reply body and a thrown error's text are never
+ * echoed, since they can hold the endpoint or account data.
+ */
+function requestFailure(failure: RequestFailure): RemoteQuotaProviderResult {
+  const fail = (error: string, outcome: RemoteFailureOutcome, facts: ErrorFacts) =>
+    ({ success: false, error, outcome, facts }) as const;
+  switch (failure.kind) {
+    case "http": {
+      const status = failure.status ?? 0;
+      return status >= 300 && status < 400
+        ? fail("Redirect rejected", "redirect_error", failureFacts(failure, "bad_response"))
+        : fail(`HTTP ${status}`, "http_error", failureFacts(failure));
+    }
+    case "timeout":
+      return fail(failure.detail, "timeout", failureFacts(failure));
+    case "network":
+      return fail("Failed to read accounting data", "network_error", failureFacts(failure));
+    case "too_large":
+      return fail(
+        `Response exceeded ${QUOTA_PROVIDER_MAX_BODY_BYTES} bytes`,
+        "body_too_large",
+        failureFacts(failure),
+      );
+    case "invalid_json":
+      return failure.headers && !isJsonContentType(failure.headers)
+        ? fail("Expected a JSON response", "invalid_content_type", failureFacts(failure))
+        : fail("Invalid JSON response", "invalid_json", failureFacts(failure));
+  }
+}
+
 export async function fetchRemoteQuotaProvider(
   source: RemoteApiQuotaProviderDefinition,
   apiKey: string,
   requestTimeoutMs?: number,
 ): Promise<RemoteQuotaProviderResult> {
   // A switched-off provider is never sent a request or its key, whoever asks.
-  if (source.enabled === false) return { success: false, error: "Provider is switched off" };
-  const timeoutMs = requestTimeoutMs ?? REQUEST_TIMEOUT_MS;
-  const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
-
-  try {
-    const response = await fetch(source.url, {
-      method: "GET",
-      redirect: "manual",
-      signal: controller.signal,
-      headers: {
-        Authorization: `Bearer ${apiKey}`,
-        Accept: "application/json",
-      },
-    });
-
-    if (response.redirected || (response.status >= 300 && response.status < 400)) {
-      return { success: false, error: "Redirect rejected" };
-    }
-    if (!response.ok) {
-      return { success: false, error: `HTTP ${response.status}` };
-    }
-
-    const read = await readBoundedJson(response);
-    if (!read.ok) return { success: false, error: read.error };
-    switch (source.format) {
-      case "quota-v1":
-        return parseQuotaV1(read.body);
-      case "openrouter-key-v1":
-        return parseOpenRouterKeyV1(read.body);
-      case "json-v1":
-        return parseJsonV1(source, read.body);
-    }
-  } catch (error) {
-    if (controller.signal.aborted || (error instanceof Error && error.name === "AbortError")) {
-      return {
-        success: false,
-        error: `Request timeout after ${Math.round(timeoutMs / 1000)}s`,
-      };
-    }
-    // Never echo thrown text: it can contain the endpoint or response data.
-    return { success: false, error: "Failed to read accounting data" };
-  } finally {
-    clearTimeout(timeoutId);
+  if (source.enabled === false) {
+    return { success: false, error: "Provider is switched off", outcome: "switched_off" };
   }
+  const reply = await requestJson(source.url, {
+    method: "GET",
+    redirect: "manual",
+    headers: { Authorization: `Bearer ${apiKey}`, Accept: "application/json" },
+    secrets: [apiKey],
+    timeoutMs: requestTimeoutMs,
+    maxBytes: QUOTA_PROVIDER_MAX_BODY_BYTES,
+  });
+  if (!reply.ok) return requestFailure(reply.failure);
+  if (!isJsonContentType(reply.headers)) {
+    return { success: false, error: "Expected a JSON response", outcome: "invalid_content_type" };
+  }
+  const parsed = parseReply(source, reply.json);
+  return parsed.success ? parsed : { ...parsed, outcome: "invalid_response" };
 }

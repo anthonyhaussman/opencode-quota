@@ -482,7 +482,7 @@ describe("the export of each provider's last check", () => {
         attempted: true,
         accounts: [
           customAccount(one, [customQuota("Remaining", 25)], []),
-          customAccount(two, [], ["secondary source unavailable"]),
+          customAccount(two, [], [{ message: "secondary source unavailable" }]),
         ],
         debug: [
           {
@@ -568,7 +568,7 @@ describe("the export of each provider's last check", () => {
       {
         attempted: true,
         accounts: [
-          customAccount(first, [], ["Failed to read accounting data"]),
+          customAccount(first, [], [{ message: "Failed to read accounting data" }]),
           customAccount(second, [customQuota("Monthly", 50)], []),
         ],
         debug: [],

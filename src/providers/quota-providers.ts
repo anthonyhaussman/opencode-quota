@@ -11,6 +11,7 @@ import {
   fetchRemoteQuotaProvider,
   type QuotaProviderAuthResolution,
   type QuotaProviderAuthSource,
+  type RemoteQuotaProviderResult,
   resolveQuotaProviderApiKey,
 } from "../lib/quota-providers-remote.js";
 import type {
@@ -32,6 +33,8 @@ import {
 import {
   type AccountResult,
   failedAccount,
+  type FetchError,
+  fetchError,
   type ProviderFetchResult,
   type ProviderRow,
 } from "./contract.js";
@@ -63,13 +66,13 @@ export type DefinitionResult = {
 export function customAccount(
   definition: QuotaProviderDefinition,
   rows: readonly ProviderRow[],
-  errors: readonly string[],
+  errors: readonly FetchError[],
 ): AccountResult {
   return {
     name: definition.label,
     login: definition.id,
     rows: rows.map((row) => ({ ...row, key: `custom.${definition.id}.${row.key}` })),
-    errors: errors.map((message) => ({ message })),
+    errors: [...errors],
   };
 }
 
@@ -113,17 +116,13 @@ function selectDefinitions(
   });
 }
 
-/** The outcome of a failed request, for example "outcome=http_error http_status=503". */
-function failedRequestParts(error: string): string[] {
-  if (error === "Redirect rejected") return ["outcome=redirect_error"];
-  if (error.startsWith("Request timeout after ")) return ["outcome=timeout"];
-  if (error === "Response exceeded 262144 bytes") return ["outcome=body_too_large"];
-  if (error === "Expected a JSON response") return ["outcome=invalid_content_type"];
-  if (error === "Invalid JSON response") return ["outcome=invalid_json"];
-  if (error.startsWith("Invalid ")) return ["outcome=invalid_response"];
-  const status = /^HTTP (\d+)$/.exec(error);
-  if (status) return ["outcome=http_error", `http_status=${status[1]}`];
-  return ["outcome=network_error"];
+/** The check's words for a failed request, for example "outcome=http_error http_status=503". */
+function failedRequestParts(
+  result: Extract<RemoteQuotaProviderResult, { success: false }>,
+): string[] {
+  return result.outcome === "http_error" && result.facts?.status !== undefined
+    ? ["outcome=http_error", `http_status=${result.facts.status}`]
+    : [`outcome=${result.outcome}`];
 }
 
 async function executeRemote(
@@ -133,7 +132,7 @@ async function executeRemote(
   const auth = await resolveQuotaProviderApiKey(definition);
   if (!auth.key) {
     return {
-      account: customAccount(definition, [], ["API key not configured"]),
+      account: customAccount(definition, [], [fetchError("API key not configured")]),
       check: checkDetail(definition, ["outcome=missing_credential", ...credentialParts(auth)]),
       failure: "API key not configured",
       missingKey: true,
@@ -143,16 +142,17 @@ async function executeRemote(
   const result = await fetchRemoteQuotaProvider(definition, auth.key, requestTimeoutMs);
   if (!result.success) {
     return {
-      account: customAccount(definition, [], [result.error]),
-      check: checkDetail(definition, [
-        ...failedRequestParts(result.error),
-        ...credentialParts(auth),
-      ]),
+      account: customAccount(definition, [], [fetchError(result.error, result.facts)]),
+      check: checkDetail(definition, [...failedRequestParts(result), ...credentialParts(auth)]),
       failure: result.error,
     };
   }
   return {
-    account: customAccount(definition, result.rows, result.rowErrors ?? []),
+    account: customAccount(
+      definition,
+      result.rows,
+      (result.rowErrors ?? []).map((message) => ({ message })),
+    ),
     check: checkDetail(definition, ["outcome=success", ...credentialParts(auth)]),
   };
 }
@@ -166,7 +166,7 @@ async function executeLocal(
   } catch {
     const failure = "Failed to read OpenCode's messages";
     return {
-      account: customAccount(definition, [], [failure]),
+      account: customAccount(definition, [], [fetchError(failure)]),
       check: checkDetail(definition, ["outcome=local_read_error"]),
       failure,
     };
@@ -180,7 +180,7 @@ async function executeLocal(
 /** A definition whose check threw: its error, and a check that knows nothing more. */
 function failedDefinition(definition: QuotaProviderDefinition): DefinitionResult {
   return {
-    account: customAccount(definition, [], ["Provider execution failed"]),
+    account: customAccount(definition, [], [fetchError("Provider execution failed")]),
     check: checkDetail(definition, [
       "outcome=network_error",
       ...(definition.mode === "remote-api" ? credentialParts(undefined) : []),

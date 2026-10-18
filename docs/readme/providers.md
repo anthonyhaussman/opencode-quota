@@ -263,7 +263,7 @@ Pair denominators (`limit` and pair-form `budget`) must be greater than zero. Re
 
 **Never put secrets in adapter display configuration.** Static `name`, `label`, and `unit` fields and every `literal` can appear in written configuration, cache identity, rendered quota rows, or exports.
 
-OpenCode Quota sends a fixed authenticated `GET`. The URL must use HTTPS, except for loopback testing. Redirects and URLs containing credentials, queries, or fragments are rejected. Responses must be JSON and are limited to 256 KiB. Standard envelopes are limited to 100 rows and `json-v1` lists to 100 items.
+OpenCode Quota sends a fixed authenticated `GET` and waits up to `providers.checking.requestTimeoutMs` (5 seconds unset). The URL must use HTTPS, except for loopback testing. Redirects and URLs containing credentials, queries, or fragments are rejected. Responses must be JSON and are limited to 256 KiB. Standard envelopes are limited to 100 rows and `json-v1` lists to 100 items. An HTTP 401 shows as `Sign in again`, a 429 as `Rate limited` (with its `Retry-After` wait, at most a day), an endpoint that cannot be reached as `Can't reach …`, and a redirect or a reply that is not valid JSON as `Unexpected reply`.
 
 </details>
 
