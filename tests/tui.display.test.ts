@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vite-plus/test";
-import { checkSetting, SETTINGS_SCHEMA, type SettingRule } from "../src/settings/schema.js";
+import {
+  checkSetting,
+  SETTINGS_SCHEMA,
+  type SettingRule,
+  UNSET_IS_NOT_DEFAULT,
+} from "../src/settings/schema.js";
 import {
   type DisplaySettings,
   defaultDisplaySettings,
@@ -43,7 +48,11 @@ describe("the Settings tabs' field table", () => {
       const rule: SettingRule = SETTINGS_SCHEMA[path];
       expect(rule.fileOnly).toBeUndefined();
       if (item.values.length > 0) expect(item.values).toContain(rule.default);
-      for (const value of item.values) expect(checkSetting(path, value).issues).toEqual([]);
+      // null on the request timeout leaves it unset: each provider waits its own time.
+      const values = UNSET_IS_NOT_DEFAULT.has(path)
+        ? item.values.filter((value) => value !== null)
+        : item.values;
+      for (const value of values) expect(checkSetting(path, value).issues).toEqual([]);
     },
   );
 

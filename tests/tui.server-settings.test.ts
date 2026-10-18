@@ -73,6 +73,15 @@ describe("the Settings tabs' lines", () => {
       "Ultra: $400 a month",
     ]);
     expect(field("providers.opencode.monthlyLimitUsd").show(null)).toBe("from the Console");
+    const timeout = field("providers.checking.requestTimeoutMs");
+    expect(timeout.values.map(timeout.show)).toEqual([
+      "each provider's own",
+      "after 5 s",
+      "after 8 s",
+      "after 12 s",
+      "after 20 s",
+      "after 30 s",
+    ]);
   });
 
   it.each([
@@ -409,6 +418,47 @@ describe("the server settings this window edits", () => {
     await saving;
 
     expect(rpc.saveSettings.mock.calls[0]?.[0].patch).toEqual({ statusLine: { show: null } });
+  });
+
+  it("tells an unset request timeout from a set 5 s, and saves the step between them", async () => {
+    const key = "providers.checking.requestTimeoutMs";
+    const rpc = fakeRpc();
+    rpc.settings.mockResolvedValue({
+      ...SAVED,
+      values: { ...SAVED.values, [key]: 5_000 },
+      fromFile: [],
+    });
+    const server = createServerSettings(rpc);
+    await server.load();
+    expect([server.unset(key), server.unset("words.percent")]).toEqual([true, false]);
+
+    server.set(key, 5_000);
+    expect([server.unset(key), server.dirty()]).toEqual([false, true]);
+    server.set(key, null);
+    expect([server.unset(key), server.dirty()]).toEqual([true, false]);
+    server.set(key, 5_000);
+    await server.save();
+    expect(rpc.saveSettings).toHaveBeenCalledWith({
+      patch: { providers: { checking: { requestTimeoutMs: 5_000 } } },
+    });
+  });
+
+  it("shows a Reset request timeout as unset, and a later 5 s as set", async () => {
+    const key = "providers.checking.requestTimeoutMs";
+    const rpc = fakeRpc();
+    rpc.settings.mockResolvedValue({
+      ...SAVED,
+      values: { ...SAVED.values, [key]: 5_000 },
+      fromFile: [key],
+    });
+    const server = createServerSettings(rpc);
+    await server.load();
+    expect(server.unset(key)).toBe(false);
+
+    server.reset(key);
+    expect([server.unset(key), server.dirty()]).toEqual([true, true]);
+    server.set(key, 5_000);
+    expect([server.unset(key), server.dirty()]).toEqual([false, false]);
   });
 
   it("resets a changed value when an older server sends no file keys", async () => {

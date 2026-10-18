@@ -430,7 +430,7 @@ export function createSettingsEditor(
   /** A field's line: ‹ › step through its values, or you type one. */
   function fieldLine(field: Field): OptionLine {
     const role = field.color ? (field.path.slice("colors.".length) as ColorRole) : undefined;
-    const value = () => lineValue(field.path);
+    const value = () => (server.unset(field.path) ? null : lineValue(field.path));
     return {
       id: field.path,
       group: field.group,
