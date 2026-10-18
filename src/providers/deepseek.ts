@@ -7,7 +7,7 @@ import { isCanonicalAccountingDecimal } from "../lib/accounting-format.js";
 import { API_KEY_VENDORS, readVendorKeys } from "../lib/api-key-resolver.js";
 import { sanitizeDisplaySnippet, sanitizeDisplayText } from "../lib/display-sanitize.js";
 import type { QuotaProvider, QuotaProviderContext } from "../lib/entries.js";
-import { failureFacts, requestJson } from "../lib/http.js";
+import { errorWords, failureFacts, requestJson } from "../lib/http.js";
 import { isRecord, nonEmptyString } from "../lib/json-guards.js";
 import { modelProviderIncludesAny } from "../lib/provider-model-matching.js";
 import type { QuotaError } from "../lib/types.js";
@@ -104,7 +104,7 @@ async function queryDeepSeekBalance(
       success: false,
       error:
         failure.kind === "http"
-          ? `DeepSeek API error ${failure.status}: ${sanitizeDisplaySnippet(failure.detail, 120)}`
+          ? `DeepSeek API error ${failure.status}${errorWords(sanitizeDisplaySnippet(failure.detail, 120))}`
           : failure.detail,
       facts: failureFacts(failure),
     };

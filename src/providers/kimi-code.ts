@@ -9,7 +9,7 @@ import { API_KEY_VENDORS, type ApiKeyLoginSpec, readVendorKeys } from "../lib/ap
 import { sanitizeDisplaySnippet, sanitizeDisplayText } from "../lib/display-sanitize.js";
 import type { QuotaProvider, QuotaProviderContext } from "../lib/entries.js";
 import { clampPercent } from "../lib/format-utils.js";
-import { failureFacts, requestJson } from "../lib/http.js";
+import { errorWords, failureFacts, requestJson } from "../lib/http.js";
 import { nonEmptyString } from "../lib/json-guards.js";
 import { normalizeQuotaProviderId } from "../lib/provider-metadata.js";
 import type { QuotaError } from "../lib/types.js";
@@ -197,7 +197,7 @@ async function queryKimiWindows(
       success: false,
       error:
         failure.kind === "http"
-          ? `Kimi API error ${failure.status}: ${sanitizeDisplaySnippet(failure.detail, 120)}`
+          ? `Kimi API error ${failure.status}${errorWords(sanitizeDisplaySnippet(failure.detail, 120))}`
           : failure.detail,
       facts: failureFacts(failure),
     };

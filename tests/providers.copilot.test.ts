@@ -6,6 +6,7 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
+import { describeError } from "../src/core/errors.js";
 import type { Amount, QuotaRow } from "../src/core/types.js";
 import {
   bindCredentialSource,
@@ -158,6 +159,26 @@ describe("copilot provider", () => {
       key: "error",
       value: "Copilot: GitHub API error 403: Forbidden",
     });
+  });
+
+  it.each([
+    ["an empty body", "", "Copilot: GitHub API error 503"],
+    [
+      "a plain-text body",
+      "Service Unavailable",
+      "Copilot: GitHub API error 503: Service Unavailable",
+    ],
+  ])("names a 503 with %s by its status alone or with its words", async (_name, body, text) => {
+    patConfig({ token: "github_pat_personal", tier: "pro", username: "alice" });
+    fakeHttp((url) =>
+      new URL(url).pathname === "/user" ? { login: "alice" } : new Response(body, { status: 503 }),
+    );
+
+    const fetched = await fetchRows(copilotProvider);
+
+    if (!fetched.error) throw new Error("expected an error");
+    expect(fetched.debug).toContainEqual({ key: "error", value: text });
+    expect(describeError(fetched.error, "Copilot", Date.now())).toBe("Provider error 503");
   });
 
   it.each([

@@ -1,6 +1,12 @@
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 import { describeError, providerError } from "../src/core/errors.js";
-import { failureFacts, fetchWithTimeout, parseRetryAfterMs, requestJson } from "../src/lib/http.js";
+import {
+  errorWords,
+  failureFacts,
+  fetchWithTimeout,
+  parseRetryAfterMs,
+  requestJson,
+} from "../src/lib/http.js";
 
 function createPendingFetch() {
   return vi.fn((_url: string | URL | Request, options?: RequestInit) => {
@@ -394,6 +400,16 @@ describe("requestJson", () => {
 
     expect(reply.failure).toMatchObject({ kind: "http", status: 403 });
     expect(providerError(reply.failure.detail, failureFacts(reply.failure)).code).toBe("no_plan");
+  });
+});
+
+describe("errorWords", () => {
+  it.each([
+    ["Service Unavailable", ": Service Unavailable"],
+    ["", ""],
+    ["  ", ""],
+  ])("adds the reply's words %j after a colon only when there are some", (words, suffix) => {
+    expect(errorWords(words)).toBe(suffix);
   });
 });
 

@@ -165,6 +165,11 @@ export function failureFacts(
   };
 }
 
+/** ": <words>" to end an "<api> error <status>" text; nothing when the reply had no words. */
+export function errorWords(words: string): string {
+  return words.trim() ? `: ${words}` : "";
+}
+
 /** A failed request as a thrown error, for callers that throw; its facts stay with it. */
 export class RequestFailedError extends Error {
   constructor(
