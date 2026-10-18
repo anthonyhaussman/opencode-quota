@@ -5,21 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test"
 import { PROVIDER_IDS as CONFIG_PROVIDER_IDS } from "../src/settings/schema.js";
 import { answer, percentRow, textRow } from "./helpers/fake-answers.js";
 
-const { mockProviders, runtimeDirs } = vi.hoisted(() => ({
-  mockProviders: [] as any[],
-  runtimeDirs: {
-    value: {
-      dataDir: "/tmp/opencode-quota-cli-reports-data",
-      configDir: "/tmp/opencode-quota-cli-reports-config",
-      cacheDir: "/tmp/opencode-quota-cli-reports-cache",
-      stateDir: "/tmp/opencode-quota-cli-reports-state",
-    },
-  },
-}));
-
-vi.mock("../src/lib/opencode-runtime-paths.js", () => ({
-  getOpencodeRuntimeDirs: () => runtimeDirs.value,
-}));
+const mockProviders: any[] = [];
 
 const { snapshotFilePath } = await import("../src/core/persist.js");
 const { loadProviderSource } = await import("../src/core/provider-source.js");
@@ -88,12 +74,11 @@ describe("CLI reports", () => {
     workspaceDir = join(tempDir, "workspace");
     mkdirSync(globalConfigDir, { recursive: true });
     mkdirSync(workspaceDir, { recursive: true });
-    runtimeDirs.value = {
-      dataDir: join(tempDir, "data"),
-      configDir: globalConfigDir,
-      cacheDir: join(tempDir, "cache"),
-      stateDir: join(tempDir, "state"),
-    };
+    // OpenCode's folders by its own rules: `$XDG_<KIND>_HOME/opencode`.
+    vi.stubEnv("XDG_CONFIG_HOME", join(tempDir, "global-config"));
+    vi.stubEnv("XDG_DATA_HOME", join(tempDir, "data"));
+    vi.stubEnv("XDG_CACHE_HOME", join(tempDir, "cache"));
+    vi.stubEnv("XDG_STATE_HOME", join(tempDir, "state"));
     vi.stubEnv("OPENCODE_DB", join(tempDir, "opencode.db"));
     mockProviders.length = 0;
   });

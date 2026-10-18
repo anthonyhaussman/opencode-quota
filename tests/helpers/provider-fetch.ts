@@ -1,11 +1,10 @@
 /**
  * The world of a provider fetch test: temp OpenCode folders (never this machine's real ones),
  * API keys in the environment, logins in a temp `opencode.db`, and fake HTTP. Call
- * `useProviderWorld()` once per test file (or describe block).
+ * `useProviderWorld()` once per test file.
  */
 
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { afterEach, beforeEach, expect, vi } from "vite-plus/test";
 
@@ -16,6 +15,7 @@ import type { QuotaProvider } from "../../src/lib/entries.js";
 import { createSqliteCredentialSource } from "../../src/lib/opencode-auth-sqlite.js";
 import { bindCredentialSource, notifyCredentialsChanged } from "../../src/lib/opencode-auth.js";
 import { type CredentialDatabaseRow, writeCredentialDatabase } from "./credential-database.js";
+import { useOpencodeFolders } from "./opencode-folders.js";
 import { isLedgerRowKey } from "./provider-assertions.js";
 
 /** Environment variables a vendor may read a key, cookie or folder from. */
@@ -40,16 +40,14 @@ export type ProviderWorld = {
 
 /** Temp OpenCode folders and a bound credential reader for each test; see the file header. */
 export function useProviderWorld(): ProviderWorld {
+  const folders = useOpencodeFolders();
   const originalEnv = process.env;
-  let root = "";
   let unbind = () => {};
 
   const world: ProviderWorld = {
-    get configDir() {
-      return join(root, "config", "opencode");
-    },
+    configDir: folders.configDir,
     storeLogins(rows) {
-      const databasePath = join(root, "data", "opencode", "opencode.db");
+      const databasePath = join(folders.dataDir, "opencode.db");
       rmSync(databasePath, { force: true });
       mkdirSync(dirname(databasePath), { recursive: true });
       writeCredentialDatabase(databasePath, rows);
@@ -61,7 +59,7 @@ export function useProviderWorld(): ProviderWorld {
       writeFileSync(path, content);
     },
     writeCacheFile(relativePath, content) {
-      const path = join(root, "cache", "opencode", relativePath);
+      const path = join(folders.cacheDir, relativePath);
       mkdirSync(dirname(path), { recursive: true });
       writeFileSync(path, content);
       return path;
@@ -69,14 +67,7 @@ export function useProviderWorld(): ProviderWorld {
   };
 
   beforeEach(() => {
-    root = mkdtempSync(join(tmpdir(), "opencode-quota-provider-"));
-    process.env = {
-      ...originalEnv,
-      XDG_CONFIG_HOME: join(root, "config"),
-      XDG_DATA_HOME: join(root, "data"),
-      XDG_CACHE_HOME: join(root, "cache"),
-      XDG_STATE_HOME: join(root, "state"),
-    };
+    process.env = { ...originalEnv };
     for (const name of PROVIDER_ENV_NAMES) delete process.env[name];
     unbind = bindCredentialSource(createSqliteCredentialSource());
     notifyCredentialsChanged();
@@ -86,7 +77,6 @@ export function useProviderWorld(): ProviderWorld {
     unbind();
     notifyCredentialsChanged();
     process.env = originalEnv;
-    rmSync(root, { recursive: true, force: true });
   });
 
   return world;

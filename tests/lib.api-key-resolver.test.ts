@@ -10,14 +10,6 @@ const mocks = vi.hoisted(() => ({
   readAuthFileCached: vi.fn(),
 }));
 
-vi.mock("../src/lib/opencode-runtime-paths.js", () => ({
-  getOpencodeRuntimeDirs: () => ({
-    dataDir: join(homedir(), ".local", "share", "opencode"),
-    configDir: join(homedir(), ".config", "opencode"),
-    cacheDir: join(homedir(), ".cache", "opencode"),
-    stateDir: join(homedir(), ".local", "state", "opencode"),
-  }),
-}));
 vi.mock("fs", async (importOriginal) => ({
   ...(await importOriginal<typeof import("fs")>()),
   existsSync: mocks.existsSync,

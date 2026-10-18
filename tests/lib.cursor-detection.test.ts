@@ -46,9 +46,8 @@ vi.mock("../src/lib/opencode-auth.js", () => ({
   readAuthFile: vi.fn(async () => mockAuth.value),
 }));
 
-vi.mock("../src/lib/opencode-runtime-paths.js", () => ({
-  getOpencodeRuntimeDirs: () => ({ configDir: testPaths.config }),
-}));
+// OpenCode's own rule: OPENCODE_CONFIG_DIR replaces its config folder.
+process.env.OPENCODE_CONFIG_DIR = testPaths.config;
 
 import {
   inspectCursorAuthPresence,

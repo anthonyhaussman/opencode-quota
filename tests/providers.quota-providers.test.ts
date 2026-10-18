@@ -1,7 +1,4 @@
-import { mkdtempSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
+import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 import type { QuotaProviderContext } from "../src/lib/entries.js";
 import { bindCredentialSource } from "../src/lib/opencode-auth.js";
@@ -11,21 +8,14 @@ import type {
 } from "../src/lib/quota-providers.js";
 import { createRuntimeProviderIdResolver } from "../src/lib/runtime-provider-ids.js";
 import type { ProviderFetchResult, ProviderRow } from "../src/providers/contract.js";
+import { useOpencodeFolders } from "./helpers/opencode-folders.js";
+
+useOpencodeFolders();
 
 const runtimeMocks = vi.hoisted(() => ({
-  root: "",
   resolveQuotaProviderApiKey: vi.fn(),
   fetchRemoteQuotaProvider: vi.fn(),
   collectLocalQuotaProviderEstimate: vi.fn(),
-}));
-
-vi.mock("../src/lib/opencode-runtime-paths.js", () => ({
-  getOpencodeRuntimeDirs: () => ({
-    dataDir: `${runtimeMocks.root}/data`,
-    configDir: `${runtimeMocks.root}/config`,
-    cacheDir: `${runtimeMocks.root}/cache`,
-    stateDir: `${runtimeMocks.root}/state`,
-  }),
 }));
 
 vi.mock("../src/lib/quota-providers-remote.js", async (importOriginal) => {
@@ -129,7 +119,6 @@ function context(
 
 describe("quota-providers aggregate provider", () => {
   beforeEach(() => {
-    runtimeMocks.root = mkdtempSync(join(tmpdir(), "opencode-quota-provider-cache-"));
     runtimeMocks.resolveQuotaProviderApiKey.mockReset().mockResolvedValue({
       key: "secret",
       source: "opencode.db",
@@ -141,10 +130,6 @@ describe("quota-providers aggregate provider", () => {
       rows: [],
     });
     runtimeMocks.collectLocalQuotaProviderEstimate.mockReset().mockResolvedValue({ rows: [] });
-  });
-
-  afterEach(() => {
-    rmSync(runtimeMocks.root, { recursive: true, force: true });
   });
 
   const alibabaTuning: QuotaProviderDefinition = {

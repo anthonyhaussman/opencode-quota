@@ -27,14 +27,6 @@ import {
 import { createFakeIntegration } from "./helpers/fake-integration.js";
 
 // The key tests fake OpenCode's folders under the test home and the files in them.
-vi.mock("../src/lib/opencode-runtime-paths.js", () => ({
-  getOpencodeRuntimeDirs: () => ({
-    dataDir: join(homedir(), ".local", "share", "opencode"),
-    configDir: join(homedir(), ".config", "opencode"),
-    cacheDir: join(homedir(), ".cache", "opencode"),
-    stateDir: join(homedir(), ".local", "state", "opencode"),
-  }),
-}));
 vi.mock("fs", () => ({ existsSync: vi.fn() }));
 vi.mock("fs/promises", () => ({ readFile: vi.fn() }));
 

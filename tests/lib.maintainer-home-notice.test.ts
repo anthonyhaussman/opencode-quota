@@ -1,18 +1,6 @@
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
-
-const state = vi.hoisted(() => ({ root: "" }));
-
-vi.mock("../src/lib/opencode-runtime-paths.js", () => ({
-  getOpencodeRuntimeDirs: () => ({
-    dataDir: join(state.root, "data"),
-    configDir: join(state.root, "config"),
-    cacheDir: join(state.root, "cache"),
-    stateDir: join(state.root, "state"),
-  }),
-}));
+import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 // One announcement for Copilot users and one for Z.ai users, with the same dates.
 vi.mock("../src/lib/maintainer-announcements.js", async (importOriginal) => ({
@@ -40,11 +28,14 @@ import {
   homeNoticeLine,
   listNotices,
 } from "../src/lib/maintainer-home-notice.js";
+import { useOpencodeFolders } from "./helpers/opencode-folders.js";
+
+const folders = useOpencodeFolders();
 
 const NOTICE = "Notice: 1 maintainer notice, see /quota_status.";
 const MINUTE = 60_000;
 const homeStateFile = () =>
-  join(state.root, "state", "opencode-quota", "maintainer-announcements-home.json");
+  join(folders.stateDir, "opencode-quota", "maintainer-announcements-home.json");
 const MORNING = new Date(2026, 9, 10, 9, 0).getTime();
 
 function lineAt(nowMs: number) {
@@ -53,12 +44,7 @@ function lineAt(nowMs: number) {
 
 describe("Home maintainer notice", () => {
   beforeEach(async () => {
-    state.root = await mkdtemp(join(tmpdir(), "opencode-quota-home-notice-"));
     __resetMaintainerHomeNoticeForTests();
-  });
-
-  afterEach(async () => {
-    await rm(state.root, { recursive: true, force: true });
   });
 
   it.each([
@@ -93,8 +79,8 @@ describe("Home maintainer notice", () => {
 
   it("keeps one process to once a day when the state file cannot be written", async () => {
     // A file where the state folder should be makes every read and write fail.
-    await mkdir(join(state.root, "state"), { recursive: true });
-    await writeFile(join(state.root, "state", "opencode-quota"), "not a folder");
+    await mkdir(folders.stateDir, { recursive: true });
+    await writeFile(join(folders.stateDir, "opencode-quota"), "not a folder");
     await expect(lineAt(MORNING)).resolves.toBe(NOTICE);
     await expect(lineAt(MORNING + 11 * MINUTE)).resolves.toBe("");
     await expect(lineAt(new Date(2026, 9, 11, 9, 0).getTime())).resolves.toBe(NOTICE);

@@ -1,6 +1,5 @@
 import { createHash } from "node:crypto";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { readFile, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
@@ -13,20 +12,11 @@ import type { ProviderFetchResult } from "../src/providers/contract.js";
 import { minimaxChinaCodingPlanProvider } from "../src/providers/minimax-coding-plan.js";
 import { defaultSettings } from "../src/settings/index.js";
 import { answer, percentRow, quotaRow } from "./helpers/fake-answers.js";
+import { useOpencodeFolders } from "./helpers/opencode-folders.js";
 
-const runtime = vi.hoisted(() => ({ root: "" }));
+const runtime = useOpencodeFolders();
 /** The registered providers every host below names. */
 const registry = { providers: [] as QuotaProvider[] };
-
-vi.mock("../src/lib/opencode-runtime-paths.js", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("../src/lib/opencode-runtime-paths.js")>()),
-  getOpencodeRuntimeDirs: () => ({
-    dataDir: join(runtime.root, "data"),
-    configDir: join(runtime.root, "config"),
-    cacheDir: join(runtime.root, "cache"),
-    stateDir: join(runtime.root, "state"),
-  }),
-}));
 
 const POSIX_IDENTITY_STORAGE = process.platform !== "win32" && typeof process.getuid === "function";
 const EMAIL = "alice@example.com";
@@ -74,14 +64,12 @@ function copilotPlan(login: string, percentRemaining: number) {
 }
 
 describe("provider source logins", () => {
-  beforeEach(async () => {
-    runtime.root = await mkdtemp(join(tmpdir(), "opencode-quota-logins-"));
+  beforeEach(() => {
     __resetResolvedAuthIdentityForTests();
   });
 
-  afterEach(async () => {
+  afterEach(() => {
     __resetResolvedAuthIdentityForTests();
-    await rm(runtime.root, { recursive: true, force: true });
   });
 
   it("checks found and later registered providers unless their id is switched off", async () => {
@@ -193,13 +181,8 @@ describe("provider source logins", () => {
 });
 
 describe("export of a check and of the saved snapshot", () => {
-  beforeEach(async () => {
-    runtime.root = await mkdtemp(join(tmpdir(), "opencode-quota-export-reload-"));
-  });
-
-  afterEach(async () => {
+  afterEach(() => {
     registry.providers = [];
-    await rm(runtime.root, { recursive: true, force: true });
   });
 
   /** `provider`'s part of the export after a check, and after a restart reads the file. */

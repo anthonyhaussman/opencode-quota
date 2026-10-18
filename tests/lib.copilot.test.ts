@@ -10,12 +10,9 @@ import {
 } from "../src/lib/copilot.js";
 import { type CredentialRow, credentialRowAuthData } from "../src/lib/opencode-auth.js";
 import type { CopilotResult } from "../src/lib/types.js";
+import { useOpencodeFolders } from "./helpers/opencode-folders.js";
 
 const mocks = vi.hoisted(() => ({
-  configDir:
-    process.platform === "win32"
-      ? "C:\\Users\\test\\.config\\opencode"
-      : "/home/test/.config/opencode",
   existsSync: vi.fn((_path: string) => false),
   readFileSync: vi.fn(),
   readCredentialRows: vi.fn(async (): Promise<CredentialRow[]> => []),
@@ -27,13 +24,6 @@ vi.mock("fs", async (importOriginal) => ({
   existsSync: mocks.existsSync,
   readFileSync: mocks.readFileSync,
 }));
-vi.mock("../src/lib/opencode-runtime-paths.js", () => ({
-  // The state folder is the test's temp one: it keeps the key the login list identity uses.
-  getOpencodeRuntimeDirs: () => ({
-    configDir: mocks.configDir,
-    stateDir: process.env.XDG_STATE_HOME,
-  }),
-}));
 vi.mock("../src/lib/opencode-auth.js", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../src/lib/opencode-auth.js")>()),
   readCredentialRows: mocks.readCredentialRows,
@@ -43,7 +33,9 @@ vi.mock("../src/lib/resolved-auth-identity.js", async (importOriginal) => ({
   deriveResolvedAuthIdentity: mocks.deriveResolvedAuthIdentity,
 }));
 
-const patPath = join(mocks.configDir, "copilot-quota-token.json");
+// The state folder keeps the key the login list identity uses.
+const folders = useOpencodeFolders();
+const patPath = join(folders.configDir, "copilot-quota-token.json");
 
 function configure(value: Record<string, unknown>): void {
   mocks.existsSync.mockImplementation((path) => path === patPath);

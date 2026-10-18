@@ -4,24 +4,21 @@ const CONFIG_PROVIDER_IDS = Object.keys(QUOTA_PROVIDER_CATALOG).map((id) =>
   id === "quota-providers" ? "custom" : id,
 );
 
-import { mkdtempSync } from "node:fs";
 import { rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 import { answer, percentRow } from "./helpers/fake-answers.js";
 import { createFakeTuiHost, stubJsx } from "./helpers/fake-tui-host.js";
+import { useOpencodeFolders } from "./helpers/opencode-folders.js";
 import {
-  createPluginRuntimePathsMockModule,
   createServerContext,
   seedDefaultPluginBootstrapMocks,
   writePluginTestSettings,
 } from "./helpers/plugin-test-harness.js";
 import { createQuotaRpcBridge } from "./helpers/quota-rpc-bridge.js";
 
-// A fresh folder per run, so test runs in sibling checkouts never share it.
-const TEST_RUNTIME_ROOT = mkdtempSync(join(tmpdir(), "opencode-quota-plugin-announcements-"));
+const folders = useOpencodeFolders();
+const TEST_RUNTIME_ROOT = folders.root;
 const ANNOUNCEMENT_HOME_MESSAGE = "Notice: 1 maintainer notice, see /quota_status.";
 
 const TEST_ANNOUNCEMENT = vi.hoisted(() => ({
@@ -40,9 +37,6 @@ const announcementMocks = vi.hoisted(() => ({
   getMaintainerAnnouncementsSummary: vi.fn(),
 }));
 
-vi.mock("../src/lib/opencode-runtime-paths.js", () =>
-  createPluginRuntimePathsMockModule(TEST_RUNTIME_ROOT),
-);
 // Records the getters of the TUI's Solid signals, so a test can read what a view shows.
 const signals = vi.hoisted(() => [] as Array<() => unknown>);
 vi.mock("solid-js", async (importOriginal) => {
@@ -83,7 +77,7 @@ function makeAnnouncementSummary(overrides: Record<string, unknown> = {}) {
 
 /** Copilot with quota and the question toast enabled. */
 function configureQuestionQuotaToast(): void {
-  writePluginTestSettings(TEST_RUNTIME_ROOT, {
+  writePluginTestSettings(folders.configDir, {
     toast: { afterQuestion: true },
     providers: {
       off: CONFIG_PROVIDER_IDS.filter((id) => !["copilot"].includes(id)),

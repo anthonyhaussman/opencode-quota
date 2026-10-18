@@ -1,27 +1,19 @@
-import { mkdtempSync } from "node:fs";
 import { rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 import type { QuotaRetryEvent } from "../src/lib/quota-retry-wait.js";
 import type { ProviderRow } from "../src/providers/contract.js";
 import type { LoadedSettings, Settings } from "../src/settings/index.js";
 import { answer, percentRow, quotaRow } from "./helpers/fake-answers.js";
-import { createPluginRuntimePathsMockModule } from "./helpers/plugin-test-harness.js";
+import { useOpencodeFolders } from "./helpers/opencode-folders.js";
 
-// A fresh folder per run, so test runs in sibling checkouts never share it.
-const TEST_RUNTIME_ROOT = mkdtempSync(join(tmpdir(), "opencode-quota-retry-wait-"));
+const TEST_RUNTIME_ROOT = useOpencodeFolders().root;
 const NOW_MS = Date.parse("2026-01-01T00:00:00.000Z");
 const MINUTE_MS = 60_000;
 
 const mocks = vi.hoisted(() => ({
   getProviders: vi.fn(),
 }));
-
-vi.mock("../src/lib/opencode-runtime-paths.js", () =>
-  createPluginRuntimePathsMockModule(TEST_RUNTIME_ROOT),
-);
 
 // Loaded after the mocks above are set up.
 const { defaultSettings } = await import("../src/settings/schema.js");

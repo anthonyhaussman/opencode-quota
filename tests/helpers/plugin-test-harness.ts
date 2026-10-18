@@ -15,23 +15,12 @@ export function createSessionUsageModuleMock(actual: object, sessionUsage: MockF
   return { ...actual, sessionUsage };
 }
 
-export function createPluginRuntimePathsMockModule(root: string) {
-  return {
-    getOpencodeRuntimeDirs: () => ({
-      dataDir: `${root}/data`,
-      configDir: `${root}/config`,
-      cacheDir: `${root}/cache`,
-      stateDir: `${root}/state`,
-    }),
-  };
-}
-
-/**
- * Writes the server settings file (settings.jsonc) under the runtime root of
- * `createPluginRuntimePathsMockModule(root)`.
- */
-export function writePluginTestSettings(root: string, settings: Record<string, unknown>): void {
-  const dir = join(root, "config", "opencode-quota");
+/** Writes the server settings file (settings.jsonc) in OpenCode's config folder `configDir`. */
+export function writePluginTestSettings(
+  configDir: string,
+  settings: Record<string, unknown>,
+): void {
+  const dir = join(configDir, "opencode-quota");
   mkdirSync(dir, { recursive: true });
   writeFileSync(join(dir, "settings.jsonc"), JSON.stringify(settings, null, 2));
 }
