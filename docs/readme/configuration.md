@@ -17,7 +17,7 @@ Every quota setting lives here, in the sections `sidebar`, `collapsed`, `statusL
 
 Only the sidebar panel's open or collapsed state lives in OpenCode's plugin storage. Custom definitions, the Claude CLI path and the export path are file-only settings. The Plugin tab (`/quota_status`) has the old command names, quota file and OpenTelemetry switches; they save as soon as you change them.
 
-OpenCode Quota writes only the settings you change. A setting the file does not set uses its default, also when a newer version changes that default. **Reset page** (ctrl+r; **Reset tab** on Colors and Providers) removes that page's settings, except row names, from the file on Save, so they use their defaults again.
+OpenCode Quota writes only the settings you change. A setting the file does not set uses its default, also when a newer version changes that default. **Reset page** (ctrl+r; **Reset tab** on Colors and Providers) removes that page's settings, except row names, from the file on Save, so they use their defaults again. On Providers it also puts each custom provider's switch back to its saved state.
 
 Without the file, OpenCode Quota uses its defaults and writes nothing. The first Save, Plugin tab switch or agent change creates it with `version` and the settings changed. After 4.x or 5.x, the first start converts the global settings you set there into it. See [Updating](updating.md#moving-from-5x).
 

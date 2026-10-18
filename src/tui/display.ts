@@ -246,7 +246,7 @@ const SHOW = {
   decimals: (value) =>
     `${value} (${formatDuration(RESET_EXAMPLES_MS[0] as number, "decimal", Number(value))})`,
   minutes: (value) => `every ${Number(value) / MINUTE_MS} min`,
-  seconds: (value) => `after ${Number(value) / 1_000} s`,
+  timeout: (value) => (value === null ? "each provider's own" : `after ${Number(value) / 1_000} s`),
   days: (value) => (value === 1 ? "every day" : `every ${value} days`),
   day: (value) => (typeof value === "number" ? `day ${value}` : "calendar month"),
   rows: named({ summary: "main rows only", detailed: "all rows" }),
@@ -373,8 +373,9 @@ export const FIELDS: readonly Field[] = [
     group: "Checking",
     values: [1, 2, 5, 10, 15, 30].map((count) => count * MINUTE_MS),
   }),
-  field("providers.checking.requestTimeoutMs", "Slow provider: give up", SHOW.seconds, {
-    values: [5_000, 8_000, 12_000, 20_000, 30_000],
+  // Unset (null), each provider waits its own time; set, every provider waits that long.
+  field("providers.checking.requestTimeoutMs", "Slow provider: give up", SHOW.timeout, {
+    values: [null, 5_000, 8_000, 12_000, 20_000, 30_000],
   }),
   field("providers.checking.waitForQuotaReset", "A model hits its limit", SHOW.limitHit),
   field(

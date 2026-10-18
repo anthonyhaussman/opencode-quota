@@ -477,6 +477,44 @@ describe("quota window shell", () => {
     view.dispose();
   });
 
+  it("counts the Settings tree's reset times down with the window's clock", () => {
+    const resetMs = Date.UTC(2026, 9, 18, 12);
+    const snapshot: QuotaSnapshot = {
+      version: 6,
+      generatedAtMs: resetMs - 4 * 3_600_000,
+      resetNotices: [],
+      providers: [
+        providerSnapshot("openai", "OpenAI", [
+          quotaRow("openai.five_hour", {
+            label: "5h",
+            window: "five_hour",
+            percentRemaining: 65,
+            resetsAt: new Date(resetMs).toISOString(),
+          }),
+        ]),
+      ],
+    };
+    const { settings } = fakeHost(snapshot);
+    const body = (nowMs: number) =>
+      createRoot(() =>
+        textLines(
+          settings.Body({
+            tab: "sidebar",
+            showPage: () => {},
+            host: { quota: { snapshot: () => snapshot } } as never,
+            sessionID: "ses_1",
+            box: () => undefined,
+            scroll: () => undefined,
+            width: 80,
+            nowMs,
+          }),
+        ).join("\n"),
+      );
+
+    expect(body(resetMs - 3 * 3_600_000)).toContain("65% left · 3h");
+    expect(body(resetMs - 3_600_000)).toContain("65% left · 1h");
+  });
+
   it("copies the limits on Limits as Web /quota writes them", () => {
     const nowMs = Date.now();
     const snapshot: QuotaSnapshot = {
@@ -892,6 +930,28 @@ describe("quota window: the Usage tab", () => {
     await new Promise((resolve) => setTimeout(resolve, 20));
     expect(words(usageTab())).toContainEqual(expect.stringMatching(/ 2 sessions · /u));
     expect(activeLabels(usageTab())).toContain("30 days");
+  });
+
+  it("starts Between on the month of the day it asks, not the day the plugin started", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date(2026, 9, 18, 12));
+    const { tui, usageTab } = usageHost();
+    const asked: UsageQuery[] = [];
+    const usage = tui.answers.usage;
+    tui.answers.usage = (query: UsageQuery) => {
+      asked.push(query);
+      return usage(query);
+    };
+
+    vi.setSystemTime(new Date(2026, 10, 3, 12));
+    tui.quotaWindow.open("usage");
+    clickable(usageTab(), "Between").props.onMouseUp();
+    await vi.waitFor(() => expect(asked).toHaveLength(2));
+    vi.useRealTimers();
+
+    expect(asked[1]).toEqual(
+      expect.objectContaining({ range: "between", from: "2026-11-01", to: "2026-11-03" }),
+    );
   });
 
   it("applies two Between dates typed in the tab, and warns about dates out of order", async () => {

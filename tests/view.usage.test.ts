@@ -146,7 +146,7 @@ function textOf(line: UsageLine): string {
 }
 
 function render(report: UsageReport, options: UsageViewOptions): string[] {
-  return usageView(report, options).map(textOf);
+  return usageView(report, options).lines.map(textOf);
 }
 
 /** The first line whose text holds `text`, and the lines after it. */
@@ -165,13 +165,23 @@ function section(lines: UsageLine[], text: string): UsageLine[] {
 
 /** The T3 report's view from the first line holding `text`; default: cost by model, 80 columns. */
 function t3From(text: string, options: Partial<UsageViewOptions> = {}): UsageLine[] {
-  const view = usageView(t3Report(), { mode: "cost", breakdown: "model", width: 80, ...options });
+  const view = usageView(t3Report(), {
+    mode: "cost",
+    breakdown: "model",
+    width: 80,
+    ...options,
+  }).lines;
   return from(view, text);
 }
 
 /** The T3 report's section from the first line holding `text`; default: cost by model, 80 columns. */
 function t3Section(text: string, options: Partial<UsageViewOptions> = {}): UsageLine[] {
-  const view = usageView(t3Report(), { mode: "cost", breakdown: "model", width: 80, ...options });
+  const view = usageView(t3Report(), {
+    mode: "cost",
+    breakdown: "model",
+    width: 80,
+    ...options,
+  }).lines;
   return section(view, text);
 }
 
@@ -356,7 +366,7 @@ describe("usageView", () => {
   );
 
   it.each(cases)("$name at $width columns, $mode by $breakdown: every line fits", (testCase) => {
-    const lines = usageView(testCase.report, testCase);
+    const lines = usageView(testCase.report, testCase).lines;
     expect(lines.length).toBeGreaterThan(10);
     for (const line of lines) {
       expect(columnsIn(textOf(line))).toBeLessThanOrEqual(testCase.width);
@@ -369,7 +379,7 @@ describe("usageView", () => {
 
   it("measures names in terminal columns and cuts them between characters", () => {
     const lines = from(
-      usageView(wideNamesReport(), { mode: "cost", breakdown: "model", width: 67 }),
+      usageView(wideNamesReport(), { mode: "cost", breakdown: "model", width: 67 }).lines,
       "Breakdown",
     );
     const rows = lines.slice(1).map(textOf);
@@ -417,7 +427,11 @@ describe("usageView", () => {
   ])(
     "$mode mode: the total, then the providers as a table, the mode's amount first",
     (expected) => {
-      const lines = usageView(t3Report(), { mode: expected.mode, breakdown: "model", width: 64 });
+      const lines = usageView(t3Report(), {
+        mode: expected.mode,
+        breakdown: "model",
+        width: 64,
+      }).lines;
       expect(lines.slice(0, expected.total.length)).toEqual(expected.total);
       const [header, anthropic] = from(lines, "Provider");
       expect(textOf(header)).toMatch(expected.header);
@@ -437,7 +451,7 @@ describe("usageView", () => {
 
   it("drops the other amount from a narrow provider table before names get short", () => {
     const header = (width: number) => {
-      const lines = usageView(t3Report(), { mode: "cost", breakdown: "model", width });
+      const lines = usageView(t3Report(), { mode: "cost", breakdown: "model", width }).lines;
       return textOf(from(lines, "Provider")[0]);
     };
     expect(header(64)).toMatch(/^Provider +Cost {2}Share {2}Tokens$/);
@@ -472,7 +486,10 @@ describe("usageView", () => {
       [1, 100],
       [1, 100],
     ]);
-    const lines = from(usageView(report, { mode: "cost", breakdown: "model", width: 40 }), "Daily");
+    const lines = from(
+      usageView(report, { mode: "cost", breakdown: "model", width: 40 }).lines,
+      "Daily",
+    );
     const top = textOf(lines[1].slice(1));
     expect(top).toMatch(/^(█+ )+$/u);
     expect(top.split(" ").filter(Boolean)).toHaveLength(4);
@@ -507,7 +524,10 @@ describe("usageView", () => {
       { date: second, costUsd: 1, tokens: 100 },
     ];
     // 6 rows of 8 eighths: Anthropic fills 36 of the first day's 48 and 12 of the second's 24.
-    const lines = from(usageView(report, { mode: "cost", breakdown: "model", width: 40 }), "Daily");
+    const lines = from(
+      usageView(report, { mode: "cost", breakdown: "model", width: 40 }).lines,
+      "Daily",
+    );
     const blocks = (line: UsageLine) =>
       line
         .slice(1)
@@ -558,7 +578,10 @@ describe("usageView", () => {
     report.models[1].days = [{ date: second, costUsd: 4, tokens: 40 }];
     report.models[2].days = [{ date: second, costUsd: 3, tokens: 30 }];
     // The second day is one cell: Anthropic 2 eighths, OpenAI 4, Google 2.
-    const lines = from(usageView(report, { mode: "cost", breakdown: "model", width: 40 }), "Daily");
+    const lines = from(
+      usageView(report, { mode: "cost", breakdown: "model", width: 40 }).lines,
+      "Daily",
+    );
     const bottom = lines[6]
       .slice(1)
       .filter((part) => part.text.trim())
@@ -570,11 +593,11 @@ describe("usageView", () => {
   });
 
   it("puts the chart beside the list as tall as the list, at least 6 rows", () => {
-    const lines = usageView(t3Report(), { mode: "cost", breakdown: "model", width: 110 });
+    const lines = usageView(t3Report(), { mode: "cost", breakdown: "model", width: 110 }).lines;
     const rows = lines.filter((line) => line.some((part) => part.role === "bar"));
     expect(rows).toHaveLength(6);
     const tall = { ...t3Report(), providers: [...t3Report().providers, ...t3Report().providers] };
-    const tallLines = usageView(tall, { mode: "cost", breakdown: "model", width: 110 });
+    const tallLines = usageView(tall, { mode: "cost", breakdown: "model", width: 110 }).lines;
     const tallRows = tallLines.filter((line) => line.some((part) => part.role === "bar"));
     // 2 + 1 + 8 list lines, less the chart's title, baseline and dates.
     expect(tallRows).toHaveLength(8);
@@ -582,7 +605,7 @@ describe("usageView", () => {
 
   it("charts many days a few to a column, with the year on dates outside this year", () => {
     const lines = from(
-      usageView(longReport(), { mode: "cost", breakdown: "day", width: 64 }),
+      usageView(longReport(), { mode: "cost", breakdown: "day", width: 64 }).lines,
       "per",
     );
     expect(lines[0]).toEqual([{ text: "Cost per 8 days", role: "heading" }]);
@@ -603,7 +626,7 @@ describe("usageView", () => {
       days: Array.from({ length: 54 }, (_, index): Amounts => [index === 0 ? 0.004 : 0.0001, 1000]),
     },
   ])("keeps every day on the chart when $name", ({ mode, days }) => {
-    const lines = usageView(daysReport(days), { mode, breakdown: "model", width: 60 });
+    const lines = usageView(daysReport(days), { mode, breakdown: "model", width: 60 }).lines;
     const heading = lines.findIndex((line) => /^(Daily|Cost per|Tokens per) /.test(textOf(line)));
     // The first day is the highest, so its column is the one that reaches the top row.
     expect(lines[heading + 1][1].text).toMatch(/^█/);
@@ -764,7 +787,7 @@ describe("usageView", () => {
 
   it("breakdown by day: newest first, used days only, $0.00 for free models, no price for unpriced", () => {
     const lines = section(
-      usageView(unpricedReport(), { mode: "cost", breakdown: "day", width: 64 }),
+      usageView(unpricedReport(), { mode: "cost", breakdown: "day", width: 64 }).lines,
       "Breakdown",
     );
     const cells = (line: UsageLine) => textOf(line).replace(/━+/g, "").replace(/ {2,}/g, " | ");
@@ -804,7 +827,7 @@ describe("usageView", () => {
       ],
     },
   ])("one unpriced note line at the bottom: $name", ({ report, width, note }) => {
-    const lines = usageView(report, { mode: "cost", breakdown: "model", width });
+    const lines = usageView(report, { mode: "cost", breakdown: "model", width }).lines;
     const notes = lines.filter((line) => line.some((part) => part.role === "warning"));
     expect(notes).toEqual(note ? [note] : []);
     if (note) expect(lines.at(-1)).toBe(notes[0]);
@@ -812,7 +835,7 @@ describe("usageView", () => {
 
   it("breakdown by model: each model's cache hit under Cache, a low one in the warning color with ⚠", () => {
     const lines = section(
-      usageView(cacheReport(), { mode: "cost", breakdown: "model", width: 80 }),
+      usageView(cacheReport(), { mode: "cost", breakdown: "model", width: 80 }).lines,
       "Breakdown",
     );
     const texts = lines.map(textOf);
@@ -822,11 +845,11 @@ describe("usageView", () => {
     const cacheCells = lines.slice(2).map((line) => line.slice(-3, -1));
     expect(cacheCells).toEqual([
       [
-        { text: "    91%", role: "good" },
+        { text: "  91.0%", role: "good" },
         { text: "  ", role: "muted" },
       ],
       [
-        { text: "    35%", role: "warning" },
+        { text: "  35.0%", role: "warning" },
         { text: " ⚠", role: "warning" },
       ],
       // No cache numbers.
@@ -836,12 +859,12 @@ describe("usageView", () => {
       ],
       // Under 200K input tokens: too few to call it good or low.
       [
-        { text: "    13%", role: "muted" },
+        { text: "  13.3%", role: "muted" },
         { text: "  ", role: "muted" },
       ],
       // Half of the input cached.
       [
-        { text: "    50%", role: "good" },
+        { text: "  50.0%", role: "good" },
         { text: "  ", role: "muted" },
       ],
       // No input tokens.
@@ -850,6 +873,37 @@ describe("usageView", () => {
         { text: "  ", role: "muted" },
       ],
     ]);
+  });
+
+  it("writes a model's cache hit the same in the Cache column and in its details", () => {
+    const report = cacheReport();
+    const sonnet = report.models[1] as UsageModelRow;
+    sonnet.tokensByType = { ...sonnet.tokensByType, input: 501_000, cacheRead: 499_000 };
+    const column = section(
+      usageView(report, { mode: "cost", breakdown: "model", width: 80 }).lines,
+      "Breakdown",
+    ).map(textOf);
+    const detail = modelDetailView(report, sonnet, { mode: "cost", width: 80 }).map(textOf);
+
+    expect(column.find((text) => text.includes("claude-sonnet-5"))).toMatch(/ {2}49\.9% ⚠ ▸$/);
+    const grid = detail.findIndex((text) => text.includes("Cache hit"));
+    expect(detail[grid + 1]?.trim()).toMatch(/ 49\.9%$/);
+  });
+
+  it("rounds a low cache hit down, so it never reads 50.0%", () => {
+    const report = cacheReport();
+    const sonnet = report.models[1] as UsageModelRow;
+    // 49.96% of 1M input tokens read from the cache.
+    sonnet.tokensByType = { ...sonnet.tokensByType, input: 500_400, cacheRead: 499_600 };
+    const column = section(
+      usageView(report, { mode: "cost", breakdown: "model", width: 80 }).lines,
+      "Breakdown",
+    ).map(textOf);
+    const detail = modelDetailView(report, sonnet, { mode: "cost", width: 80 }).map(textOf);
+
+    expect(column.find((text) => text.includes("claude-sonnet-5"))).toMatch(/ {2}49\.9% ⚠ ▸$/);
+    const grid = detail.findIndex((text) => text.includes("Cache hit"));
+    expect(detail[grid + 1]?.trim()).toMatch(/ 49\.9%$/);
   });
 
   it.each([
@@ -862,7 +916,7 @@ describe("usageView", () => {
     "drops the Cache column before names get shorter than 8 columns, and before Cost, Share and Tokens: $width",
     ({ width, cache, sonnet }) => {
       const lines = section(
-        usageView(cacheReport(), { mode: "cost", breakdown: "model", width }),
+        usageView(cacheReport(), { mode: "cost", breakdown: "model", width }).lines,
         "Breakdown",
       ).map(textOf);
       expect(lines[1]).toMatch(
@@ -874,7 +928,7 @@ describe("usageView", () => {
   );
 
   it("says so in one line when the range has no usage", () => {
-    expect(usageView(EMPTY_REPORT, { mode: "cost", breakdown: "model", width: 80 })).toEqual([
+    expect(usageView(EMPTY_REPORT, { mode: "cost", breakdown: "model", width: 80 }).lines).toEqual([
       [{ text: "No usage in this range.", role: "muted" }],
     ]);
   });
@@ -967,8 +1021,9 @@ describe("modelDetailView", () => {
     ]);
     expect(lines[1]).toEqual([{ text: "Anthropic · 81.4% of cost", role: "muted" }]);
     expect(cells(lines[3])).toEqual(["Cost", "Tokens", "Per 1M tokens", "Cache hit"]);
-    // Cache hit: cache reads ÷ all input tokens (input, cache reads and cache writes).
-    expect(cells(lines[4])).toEqual(["$4,410.41", "12.5B", "$0.35", "97.7%"]);
+    // Cache hit: cache reads ÷ all input tokens (input, cache reads and cache writes), 97.67%
+    // rounded down.
+    expect(cells(lines[4])).toEqual(["$4,410.41", "12.5B", "$0.35", "97.6%"]);
     const chart = from(lines, "Daily cost");
     // The model's days are its provider's part, so its chart is in its provider's color.
     const blocks = chart
@@ -989,7 +1044,7 @@ describe("modelDetailView", () => {
       model: "exo-free",
       mode: "cost" as const,
       share: "OpenCode Zen · 0% of cost",
-      numbers: ["no price", "970K", "no price", "0%"],
+      numbers: ["no price", "970K", "no price", "—"],
       headings: ["Tokens by type"],
     },
     {
@@ -997,7 +1052,7 @@ describe("modelDetailView", () => {
       model: "claude-opus-5-5",
       mode: "tokens" as const,
       share: "Anthropic · 93.3% of tokens",
-      numbers: ["$4,410.41", "12.5B", "$0.35", "97.7%"],
+      numbers: ["$4,410.41", "12.5B", "$0.35", "97.6%"],
       headings: ["Daily tokens", "Cost by type   Tokens by type"],
     },
   ])("model $name", ({ model, mode, share, numbers, headings }) => {
@@ -1032,23 +1087,36 @@ describe("modelDetailView", () => {
   });
 });
 
-describe("breakdownModels", () => {
+describe("breakdownModels and usageView's line ids", () => {
   it.each(["cost", "tokens"] as const)(
-    "names the last lines of the %s model breakdown, in order",
+    "puts the Breakdown heading at breakdownAt and each %s model at its modelLines line, in order",
     (mode) => {
       const report = t3Report();
       const models = breakdownModels(report, mode);
-      const lines = usageView(report, { mode, breakdown: "model", width: 80 });
+      const { lines, breakdownAt, modelLines } = usageView(report, {
+        mode,
+        breakdown: "model",
+        width: 80,
+      });
 
-      const header = lines.findIndex((line) => /^# {2}Model/.test(textOf(line)));
-      const rows = lines.slice(header + 1, header + 1 + models.length);
-      expect(lines[header + 1 + models.length]).toEqual([]);
-      for (const [index, row] of rows.entries()) {
+      expect(textOf(lines[breakdownAt as number])).toBe("Breakdown");
+      expect(modelLines).toHaveLength(models.length);
+      for (const [index, line] of modelLines.entries()) {
         const model = models[index];
         const provider = report.providers.findIndex((item) => item.providerID === model.providerID);
-        expect(textOf(row)).toContain(model.modelID);
-        expect(row).toContainEqual({ text: "● ", role: `provider:${provider}` });
+        expect(textOf(lines[line])).toContain(model.modelID);
+        expect(lines[line]).toContainEqual({ text: "● ", role: `provider:${provider}` });
       }
     },
   );
+
+  it("has no model lines by day, and no breakdown without usage", () => {
+    const byDay = usageView(t3Report(), { mode: "cost", breakdown: "day", width: 80 });
+    expect([textOf(byDay.lines[byDay.breakdownAt as number]), byDay.modelLines]).toEqual([
+      "Breakdown",
+      [],
+    ]);
+    const empty = usageView(daysReport([]), { mode: "cost", breakdown: "model", width: 80 });
+    expect([empty.breakdownAt, empty.modelLines]).toEqual([undefined, []]);
+  });
 });

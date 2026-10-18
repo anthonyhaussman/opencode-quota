@@ -826,14 +826,14 @@ describe("v6 surfaces on the quota snapshot", () => {
         "Cost by type",
         "# Model Cost Share Tokens Cache",
         // Cache: 3M of the 4M input tokens came from the cache; output alone has no cache hit.
-        expect.stringMatching(/^1 ● claude-sonnet-4-5 ━+ \$\d+\.\d\d 100\.0% 4\.10M 75% ▸$/u),
+        expect.stringMatching(/^1 ● claude-sonnet-4-5 ━+ \$\d+\.\d\d 100\.0% 4\.10M 75\.0% ▸$/u),
         "2 ● mystery-1 no price 0% 500K — ▸",
       ]),
     );
     // A cache hit that is not low takes the theme's success color.
     const cacheHit = findAll(
       usageTab(),
-      (node) => node.type === "span" && node.props.children === "    75%",
+      (node) => node.type === "span" && node.props.children === "  75.0%",
     );
     expect(cacheHit.map((node) => node.props.style.fg)).toEqual(["green"]);
     // The share without a price is the content's last line.

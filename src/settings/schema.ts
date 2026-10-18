@@ -590,7 +590,9 @@ export function settingsFrom(assignments: readonly Assignment[]): {
  * Settings where no value is not the same as the default value: unset, the providers with their
  * own request timeout use it; set, every provider uses that one.
  */
-const UNSET_IS_NOT_DEFAULT: ReadonlySet<string> = new Set(["providers.checking.requestTimeoutMs"]);
+export const UNSET_IS_NOT_DEFAULT: ReadonlySet<string> = new Set([
+  "providers.checking.requestTimeoutMs",
+]);
 
 /**
  * Every setting whose value differs between `before` and `after`. With the keys each file sets,
