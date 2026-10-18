@@ -10,6 +10,7 @@ import {
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
+import { parse } from "jsonc-parser";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 import { getOpencodeRuntimeDirs } from "../src/lib/opencode-runtime-paths.js";
 import { oldSettingsFolders } from "../src/settings/convert.js";
@@ -187,6 +188,12 @@ const ROWS: Array<{
       statusLine: { show: true, withSidebar: true, home: false, detail: "one" },
     },
   },
+  {
+    // Without the compact line switched on, v5 used neither; the v6 defaults stay.
+    v5: { tuiCompactStatus: { sessionPrompt: true, homeBottom: true } },
+    sections: { statusLine: defaultSettings().statusLine },
+    dropped: ["tuiCompactStatus.sessionPrompt", "tuiCompactStatus.homeBottom"],
+  },
   { v5: { tuiCompactStatus: { maxWidth: 80 } }, dropped: ["tuiCompactStatus.maxWidth"] },
   {
     v5: { maintainerAnnouncements: { enabled: false, home: false, homeFrequency: "always" } },
@@ -229,8 +236,10 @@ describe("convertV5, key by key", () => {
     for (const [key, value] of Object.entries(row.server ?? {})) {
       expect(valueAt(loaded.settings, key), key).toEqual(value);
     }
-    expect(loaded.fromFile).toContain("sidebar.show");
-    expect(loaded.fromFile).toContain("system.telemetry");
+    // Only what the old settings chose is written; every other key keeps following its default.
+    expect(loaded.fromFile.filter((key) => key !== "version").sort()).toEqual(
+      Object.keys(conversion?.values ?? {}).sort(),
+    );
   });
 
   it("drops the three notice settings with their reason", async () => {
@@ -277,7 +286,7 @@ describe("convertV5, key by key", () => {
 });
 
 describe("convertV5, which v5 files", () => {
-  it("writes all settings into settings.jsonc once, with mode 0600", async () => {
+  it("writes the converted settings into settings.jsonc once, with mode 0600", async () => {
     const old = writeV5({ percentDisplayMode: "used", enableToast: false });
     const conversion = await convertV5();
     expect(conversion?.sources).toEqual([old]);
@@ -291,6 +300,28 @@ describe("convertV5, which v5 files", () => {
     expect(
       existsSync(join(root, "state", "opencode", "opencode-quota", "display-import.json")),
     ).toBe(false);
+  });
+
+  it("writes only what the old settings chose, a choice equal to the default too", async () => {
+    writeV5({ percentDisplayMode: "remaining", tuiPromptBar: { enabled: true } });
+
+    await convertV5();
+
+    const text = readFileSync(settingsPath(), "utf8");
+    // v5's default for the Home status line is not written: statusLine.home follows v6's.
+    expect(parse(text)).toEqual({
+      version: 6,
+      statusLine: { show: true, withSidebar: true, detail: "one" },
+      words: { percent: "left" },
+    });
+    expect(text).toContain("// Only the settings you chose there are here;");
+    expect((await loadSettings()).fromFile.sort()).toEqual([
+      "statusLine.detail",
+      "statusLine.show",
+      "statusLine.withSidebar",
+      "version",
+      "words.percent",
+    ]);
   });
 
   it("leaves the /tokens_* commands on, as for everyone, and writes nothing without old settings", async () => {
@@ -439,7 +470,7 @@ describe("convertV5, which v5 files", () => {
       },
     ]);
     expect(readFileSync(settingsPath(), "utf8")).toMatch(
-      /^\/\/ OpenCode Quota settings, by section\./,
+      /^\/\/ OpenCode Quota settings: only the ones you changed\./,
     );
   });
 

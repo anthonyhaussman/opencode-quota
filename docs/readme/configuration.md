@@ -17,7 +17,9 @@ Every quota setting lives here, in the sections `sidebar`, `collapsed`, `statusL
 
 Only the sidebar panel's open or collapsed state lives in OpenCode's plugin storage. Custom definitions, the Claude CLI path and the export path are file-only settings. The Plugin tab (`/quota_status`) has the old command names, quota file and OpenTelemetry switches; they save as soon as you change them.
 
-Without the file, OpenCode Quota uses its defaults and writes nothing. Saving creates the file with the default sections. After 4.x or 5.x, the first start converts their global settings into it. See [Updating](updating.md#moving-from-5x).
+OpenCode Quota writes only the settings you change. A setting the file does not set uses its default, also when a newer version changes that default. **Reset page** (ctrl+r; **Reset tab** on Colors and Providers) removes that page's settings, except row names, from the file on Save, so they use their defaults again.
+
+Without the file, OpenCode Quota uses its defaults and writes nothing. The first Save, Plugin tab switch or agent change creates it with `version` and the settings changed. After 4.x or 5.x, the first start converts the global settings you set there into it. See [Updating](updating.md#moving-from-5x).
 
 ## Common changes
 
@@ -81,8 +83,8 @@ Rules:
 - `id` is the stable identity. Add `providerId` only when it differs.
 - `modelIds` only limits `words.onlyCurrentModel` and which requests a local estimate counts. Use exact, case-sensitive model IDs without the outer provider prefix, or omit it to cover every model for that provider.
 - Remote APIs use a fixed authenticated `GET`. Formats: `quota-v1`, `json-v1`, and `openrouter-key-v1`. `json-v1` needs an `adapter` with 1–16 mappings; paths are literal own-property segment arrays, not JSONPath. See [response rules](providers.md#custom-providers).
-- Local estimates support 1–16 UTC-day or rolling request windows. Counters live under `~/.local/state/opencode/opencode-quota/quota-providers/`.
-- Automatic models.dev matching runs first. Add `pricingModelMap` only when it cannot find one clear model. `pricingModelMap` cannot override a successful automatic match.
+- Local estimates support 1–16 UTC-day or rolling request windows. Each check counts the completed requests in OpenCode's own messages; nothing else is stored.
+- Automatic matching (models.dev, and Cursor's own prices for Auto and Composer) runs first. Add `pricingModelMap` only when it finds no price. `pricingModelMap` cannot override a successful automatic match.
 - If any request cannot be priced, request counts stay visible and the budget percentage is reported unavailable.
 - Credentials resolve from `apiKeyEnv`, trusted global `provider.<providerId>.options.apiKey`, then API-key logins saved in OpenCode 2 (`opencode.db`).
 - `"enabled": false` switches a definition off: it is never fetched, its key is never sent, and `/quota_status` shows it as off. Without `enabled` (or with `true`) it is on. Providers an agent adds start switched off; switch one on by setting `"enabled": true` in `opencode-quota/settings.jsonc`, or in `/quota_settings` → **Providers**, which shows each custom provider's web address and the key it sends (and warns about plain `http`) next to its switch.
@@ -90,7 +92,7 @@ Rules:
 - To tune maintained estimates, use the reserved `alibaba-coding-plan` ID and its window shape. Do not add a duplicate normal provider block.
 - Not accepted: project secrets, scripts, methods, custom headers, templates, executable mappings, regular expressions, JSONPath, and automatic endpoint discovery.
 - A custom model provider still needs its normal OpenCode `provider` block in `opencode.json`: that block tells OpenCode how to use the model, and `providers.custom` tells OpenCode Quota how to measure it.
-- `/quota_status` shows each definition as `custom 1`, `custom 2`, … with its mode, model count, check outcome and credential source, never its id, URLs, keys, headers, response bodies, counter contents, or raw errors.
+- `/quota_status` shows each definition as `custom 1`, `custom 2`, … with its mode, model count, check outcome and credential source, never its id, URLs, keys, headers, response bodies, or raw errors.
 
 <details>
 <summary><strong>Complete example</strong></summary>
@@ -184,7 +186,7 @@ Roles are `good`, `warning`, `low`, `empty`, `title`, `provider`, `account`, `la
 | --- | --- | --- |
 | `layout.bar` | `"blocks"` | `blocks`, `shades`, `line`, `squares`, `dots`, `none`. Every place and the Limits tab use it; with `none`, Limits keeps a thin line for its pace mark. |
 | `layout.barWidth` | `"fill"` | `fill` takes the room the other columns leave, at most 20 cells on the sidebar and 10 on the collapsed panel; or a whole number 1–30. |
-| `layout.evenUse` | `false` | `true` puts the Limits tab's `┃` mark in the bars of the sidebar, collapsed panel, status line and toasts, where even use would be: the percent left if the limit were used evenly until it resets. Only rows with a reset time and a known window length; no mark in bars under 3 cells. **Even-use mark** on All places. |
+| `layout.evenUse` | `true` | `true` puts the Limits tab's `┃` mark in the bars of the sidebar, collapsed panel, status line and toasts, where even use would be: the percent left if the limit were used evenly until it resets; `false` leaves it out. Only rows with a reset time and a known window length; no mark in bars under 3 cells. **Even-use mark** on All places. |
 | `layout.indent` | `1` | Whole number 0–4. |
 | `layout.labelWidth` | `8` | Whole number 3–20: the most columns a row name takes. The name column fits the longest name next to a bar. |
 | `layout.providerGap` | `1` | Whole number 0–2. |
@@ -200,7 +202,7 @@ Roles are `good`, `warning`, `low`, `empty`, `title`, `provider`, `account`, `la
 | `words.rowNames` | `"short"` | `short` shows a row's window (`5h`, `7d`, `30d`) unless it has none or shares it with another row of the provider; `full` shows its name (`Weekly`). |
 | `words.detail` | `"summary"` | `detailed` includes supplementary rows. |
 | `words.onlyCurrentModel` | `false` | Show providers serving the current model. |
-| `words.sessionTokens` | `"current"` | `tree` includes subagent sessions, each counted once. |
+| `words.sessionTokens` | `"current"` | `current` counts this chat; `tree` adds its subagent sessions, each counted once, as the Usage tab's `session` range does. The line counts like the Usage tab: "in" is new input plus cache writes, "out" is output plus reasoning, compactions that recorded tokens count, and a fork's copies of its parent's messages do not. |
 
 In the TUI, they are on **Layout → All places**, since every place follows them.
 
@@ -216,7 +218,7 @@ In the TUI, they are on **Layout → All places**, since every place follows the
 | `providers.cursor.billingCycleStartDay` | `null` | The day of the month your Cursor bill renews, 1–28. Unset uses the calendar month. |
 | `providers.opencode.monthlyLimitUsd` | `null` | Positive monthly USD amount, used instead of the Console's budget or credit limit. |
 | `providers.checking.minIntervalMs` | `300000` | Positive milliseconds between provider checks. |
-| `providers.checking.requestTimeoutMs` | `5000` | Positive request timeout in milliseconds. |
+| `providers.checking.requestTimeoutMs` | unset | Positive request timeout in milliseconds, for every provider. Unset, each provider uses its own: `5000`, except OpenCode Zen and Xiaomi MiMo `10000`, and Google AGY and Gemini CLI `8000` to sign in and `6000` for the quota. So a set `8000` shortens Zen and MiMo. |
 | `providers.checking.waitForQuotaReset` | `true` | On a model limit error, wait until 1 minute after the earliest exhausted window resets, at most 5 hours. `false` keeps normal retry timing. |
 | `providers.pricing.source` | `"auto"` | `auto`, `bundled`, `runtime`. |
 | `providers.pricing.autoRefreshDays` | `7` | Whole number of days, at least 1. |

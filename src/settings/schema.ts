@@ -14,6 +14,7 @@ import { normalizeQuotaProviderId, QUOTA_PROVIDER_CATALOG } from "../lib/provide
 import {
   describeQuotaProviderRequest,
   isMaintainedQuotaProviderTuning,
+  QUOTA_PROVIDERS_AGGREGATE_ID,
   type QuotaProviderDefinition,
   validateQuotaProviders,
 } from "../lib/quota-providers.js";
@@ -131,7 +132,7 @@ export const SETTINGS_SCHEMA = {
   /** "fill": the room the other columns leave, up to each place's most. */
   "layout.barWidth": { ...whole(1, 30), word: "fill", default: "fill" },
   /** The ┃ mark where even use would be, in every place's bars (the Limits tab always has it). */
-  "layout.evenUse": bool(false),
+  "layout.evenUse": bool(true),
   "layout.indent": { ...whole(0, 4), default: 1 },
   /** The most columns a row name takes; the name column fits the names next to a bar. */
   "layout.labelWidth": { ...whole(3, 20), default: 8 },
@@ -261,10 +262,17 @@ export function keysUnder(group: string): string[] {
   return [...new Set(names)];
 }
 
+/**
+ * A provider's id as `providers.off` stores it: the same id, except "custom" for the custom
+ * providers, which the registry and their rows call "quota-providers".
+ */
+export function offProviderId(providerId: string): string {
+  return providerId === QUOTA_PROVIDERS_AGGREGATE_ID ? "custom" : providerId;
+}
+
 /** Provider ids `providers.off` accepts; `custom` switches all custom providers off. */
-export const PROVIDER_IDS: readonly string[] = Object.keys(QUOTA_PROVIDER_CATALOG).map((id) =>
-  id === "quota-providers" ? "custom" : id,
-);
+export const PROVIDER_IDS: readonly string[] =
+  Object.keys(QUOTA_PROVIDER_CATALOG).map(offProviderId);
 
 /**
  * Built-in provider ids of 4.x and 5.x that this version does not have. `providers.off` and the
@@ -280,8 +288,7 @@ const FORMER_PROVIDER_IDS: ReadonlySet<string> = new Set([
 
 /** A provider id or one of its aliases ("claude", "quota-providers") as `providers.off` stores it. */
 function canonicalProviderId(id: string): string | undefined {
-  const normalized = normalizeQuotaProviderId(id);
-  const canonical = normalized === "quota-providers" ? "custom" : normalized;
+  const canonical = offProviderId(normalizeQuotaProviderId(id));
   return PROVIDER_IDS.includes(canonical) ? canonical : undefined;
 }
 
@@ -579,13 +586,32 @@ export function settingsFrom(assignments: readonly Assignment[]): {
   return { settings, issues, fromFile: [...fromFile] };
 }
 
-/** Every setting whose value differs between `before` and `after`. */
+/**
+ * Settings where no value is not the same as the default value: unset, the providers with their
+ * own request timeout use it; set, every provider uses that one.
+ */
+const UNSET_IS_NOT_DEFAULT: ReadonlySet<string> = new Set(["providers.checking.requestTimeoutMs"]);
+
+/**
+ * Every setting whose value differs between `before` and `after`. With the keys each file sets,
+ * a setting in `UNSET_IS_NOT_DEFAULT` the file does not set is null, so setting it to its
+ * default or removing it is a change too.
+ */
 export function diffSettings(
   before: Settings,
   after: Settings,
+  fromFile?: { before: readonly string[]; after: readonly string[] },
 ): Array<{ key: string; before: unknown; after: unknown }> {
+  const valueOf = (settings: Settings, keys: readonly string[] | undefined, key: string) =>
+    keys !== undefined && UNSET_IS_NOT_DEFAULT.has(key) && !keys.includes(key)
+      ? null
+      : getSetting(settings, key);
   return Object.keys(RULES)
-    .map((key) => ({ key, before: getSetting(before, key), after: getSetting(after, key) }))
+    .map((key) => ({
+      key,
+      before: valueOf(before, fromFile?.before, key),
+      after: valueOf(after, fromFile?.after, key),
+    }))
     .filter((change) => JSON.stringify(change.before) !== JSON.stringify(change.after));
 }
 
@@ -619,13 +645,27 @@ export function customProviderFingerprint(definition: QuotaProviderDefinition): 
 export type ClientSettings = {
   /** Every setting but `version` and the file-only ones, by dotted key ("words.percent"). */
   values: Record<string, unknown>;
+  /**
+   * The keys of `values` that settings.jsonc sets, with an invalid value too (shown as its
+   * default); the others follow their defaults.
+   */
+  fromFile: string[];
   /** The ids `providers.off` takes, with their names. */
   providers: Array<{ id: string; label: string }>;
   /** The custom providers in settings.jsonc, without the maintained tunings. */
   custom: CustomProviderSwitch[];
 };
 
-export function clientSettings(settings: Settings): ClientSettings {
+/** `fromFile` and `issues` as `loadSettings` returns them. */
+export function clientSettings({
+  settings,
+  fromFile: fileKeys,
+  issues,
+}: {
+  settings: Settings;
+  fromFile: readonly string[];
+  issues: readonly SettingsIssue[];
+}): ClientSettings {
   const values = Object.fromEntries(
     Object.keys(RULES)
       .filter(
@@ -649,5 +689,8 @@ export function clientSettings(settings: Settings): ClientSettings {
       request: describeQuotaProviderRequest(definition),
       fingerprint: customProviderFingerprint(definition),
     }));
-  return { values, providers, custom };
+  // An invalid value's issue names its key, so Reset can remove it with its problem.
+  const setKeys = new Set([...fileKeys, ...issues.map((issue) => issue.key)]);
+  const fromFile = [...setKeys].filter((key) => Object.hasOwn(values, key));
+  return { values, fromFile, providers, custom };
 }

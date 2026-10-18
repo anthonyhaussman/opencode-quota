@@ -429,25 +429,37 @@ function mapV5Values(values: ReadonlyMap<string, unknown>): {
     "tuiPromptBar.enabled",
   ].filter(has);
   if (statusKeys.length > 0) {
-    // What v5 showed, with v5's defaults for the keys the user did not set.
+    // What v5 showed, with v5's defaults for the keys the user did not set. Each v6 key is
+    // written only when the user set a v5 key it comes from; the others keep the v6 default.
+    // sessionPrompt and homeBottom changed nothing while the compact line was off, v5's
+    // default, so they count only with tuiCompactStatus.enabled.
     const compact = chosen("tuiCompactStatus.enabled", false);
     const promptBar = chosen("tuiPromptBar.enabled", false);
     const sessionPrompt = chosen("tuiCompactStatus.sessionPrompt", true);
-    server["statusLine.show"] = promptBar || (compact && sessionPrompt);
-    // v5 showed its status line next to the sidebar panel.
-    if (server["statusLine.show"]) server["statusLine.withSidebar"] = true;
-    server["statusLine.home"] = compact && chosen("tuiCompactStatus.homeBottom", true);
-    if (promptBar) server["statusLine.detail"] = "one";
-    for (const key of statusKeys) {
-      for (const to of [
-        "statusLine.show",
-        ...(server["statusLine.show"] ? ["statusLine.withSidebar"] : []),
-        "statusLine.home",
-        ...(promptBar ? ["statusLine.detail"] : []),
-      ]) {
-        toServer(key, to, server[to]);
-      }
+    const show = promptBar || (compact && sessionPrompt);
+    const home = compact && chosen("tuiCompactStatus.homeBottom", true);
+    const compactOnly = ["tuiCompactStatus.sessionPrompt", "tuiCompactStatus.homeBottom"];
+    const counted = has("tuiCompactStatus.enabled")
+      ? statusKeys
+      : statusKeys.filter((key) => !compactOnly.includes(key));
+    for (const key of statusKeys.filter((other) => !counted.includes(other))) {
+      dropped.push({
+        key,
+        reason: "v5 used it only while tuiCompactStatus.enabled was on, which you did not set",
+      });
     }
+    const showFrom = counted.filter((key) => key !== "tuiCompactStatus.homeBottom");
+    const homeFrom = counted.filter(
+      (key) => key === "tuiCompactStatus.enabled" || key === "tuiCompactStatus.homeBottom",
+    );
+    const toStatusLine = (to: string, value: unknown, from: readonly string[]) => {
+      for (const key of from) toServer(key, to, value);
+    };
+    toStatusLine("statusLine.show", show, showFrom);
+    // v5 showed its status line next to the sidebar panel.
+    if (show) toStatusLine("statusLine.withSidebar", true, showFrom);
+    toStatusLine("statusLine.home", home, homeFrom);
+    if (promptBar) toStatusLine("statusLine.detail", "one", ["tuiPromptBar.enabled"]);
   }
 
   if (has("opencodeGoWindows")) {

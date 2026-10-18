@@ -583,20 +583,15 @@ export function renameRow(
 }
 
 /**
- * The tab's lines back to their defaults. A surface tab puts every setting of its surface back,
- * its order, hidden rows, switch and preferred windows too; row names stay.
+ * The settings a tab's reset puts back to their defaults: its lines. A surface tab resets every
+ * setting of its surface, its order, hidden rows, switch and preferred windows too; row names stay.
  */
-export function resetTab(settings: DisplaySettings, tab: SettingsTab): DisplaySettings {
-  const defaults = defaultSettings();
-  const paths = isSurfaceTab(tab)
+export function resetKeys(tab: SettingsTab): string[] {
+  return isSurfaceTab(tab)
     ? keysUnder(tab)
         .filter((key) => key !== "names")
         .map((key) => `${tab}.${key}`)
     : FIELDS.filter((field) => field.tab === tab).map((field) => field.path);
-  return paths.reduce(
-    (result, path) => setIn(result, path.split("."), valueAt(defaults, path)),
-    settings,
-  );
 }
 
 /** Settings received through the RPC, with this window's draft on top. */

@@ -9,7 +9,7 @@ import {
   presetChoice,
   presetValues,
   renameRow,
-  resetTab,
+  resetKeys,
   setIn,
   stepIn,
   THEME_COLORS,
@@ -151,20 +151,22 @@ describe("the Settings tabs' field table", () => {
   });
 
   it("resets only the tab's lines, its surface and its windows; row names stay", () => {
-    let changed = defaultDisplaySettings();
-    changed = setIn(changed, ["collapsed", "runsOut"], true);
-    changed = setIn(changed, ["collapsed", "providerOrder"], ["openai", "anthropic"]);
-    changed = setIn(changed, ["collapsed", "window", "anthropic"], "week");
-    changed = setIn(changed, ["sidebar", "runsOut"], false);
-    changed = setIn(changed, ["sidebar", "names", "anthropic.five_hour"], "Session");
-    const reset = resetTab(changed, "collapsed");
-    expect(reset).toEqual(
-      setIn(
-        setIn(defaultDisplaySettings(), ["sidebar", "runsOut"], false),
-        ["sidebar", "names", "anthropic.five_hour"],
-        "Session",
-      ),
-    );
-    expect(resetTab(changed, "layout")).toEqual(changed);
+    expect(resetKeys("collapsed")).toEqual([
+      "collapsed.show",
+      "collapsed.runsOut",
+      "collapsed.hidden",
+      "collapsed.providerOrder",
+      "collapsed.rowOrder",
+      "collapsed.window",
+    ]);
+    expect(resetKeys("sidebar")).toEqual([
+      "sidebar.show",
+      "sidebar.sessionTokens",
+      "sidebar.runsOut",
+      "sidebar.hidden",
+      "sidebar.providerOrder",
+      "sidebar.rowOrder",
+    ]);
+    expect(resetKeys("layout").every((key) => /^(layout|words)\./.test(key))).toBe(true);
   });
 });

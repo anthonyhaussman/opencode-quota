@@ -15,6 +15,7 @@ import {
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
+import { parse } from "jsonc-parser";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 import {
   clientSettings,
@@ -28,7 +29,7 @@ import {
   settingsPath,
   watchSettings,
 } from "../src/settings/index.js";
-import { CHANGED_SINCE_REVIEW } from "../src/settings/schema.js";
+import { CHANGED_SINCE_REVIEW, SETTINGS_SCHEMA } from "../src/settings/schema.js";
 import { VALID_QUOTA_PROVIDER_INPUTS, VALID_QUOTA_PROVIDERS } from "./fixtures/quota-providers.js";
 
 let root: string;
@@ -289,17 +290,48 @@ describe("saveSettings", () => {
     expect((await loadSettings()).settings.words.reset).toBe("short");
   });
 
-  it("creates a new file with a header comment, mode 0600", async () => {
+  it("creates a new file with a header comment and only the saved keys, mode 0600", async () => {
     const result = await saveSettings({ words: { percent: "bare" } });
 
     expect(result.ok).toBe(true);
     const text = readFileSync(settingsPath(), "utf8");
-    expect(text).toMatch(/^\/\/ OpenCode Quota settings, by section\./);
-    expect(text).toContain('"version": 6');
-    expect((await loadSettings()).settings.words.percent).toBe("bare");
+    expect(text).toMatch(/^\/\/ OpenCode Quota settings: only the ones you changed\./);
+    expect(text).toContain("// Every setting and its default: https://");
+    expect(parse(text)).toEqual({ version: 6, words: { percent: "bare" } });
+    const loaded = await loadSettings();
+    expect(loaded.settings.words.percent).toBe("bare");
+    expect(loaded.fromFile).toEqual(["version", "words.percent"]);
     if (process.platform !== "win32") {
       expect(statSync(settingsPath()).mode & 0o777).toBe(0o600);
     }
+  });
+
+  it("lets a later default change reach every key the file does not set", async () => {
+    await saveSettings({ words: { percent: "bare" } });
+    const rule = SETTINGS_SCHEMA["layout.evenUse"] as { default: boolean };
+    const before = rule.default;
+
+    rule.default = !before;
+    try {
+      expect((await loadSettings()).settings.layout.evenUse).toBe(!before);
+    } finally {
+      rule.default = before;
+    }
+    expect((await loadSettings()).settings.layout.evenUse).toBe(before);
+  });
+
+  it("leaves a file that lists every key as it is when loading, and saves one key into it", async () => {
+    const full = `// OpenCode Quota settings, by section.\n${JSON.stringify(defaultSettings(), null, 2)}\n`;
+    const path = writeSettings(full);
+
+    const loaded = await loadSettings();
+
+    expect(readFileSync(path, "utf8")).toBe(full);
+    expect(loaded.settings).toEqual(defaultSettings());
+    expect(loaded.fromFile).toContain("layout.evenUse");
+    expect(loaded.fromFile).toContain("system.telemetry");
+    await saveSettings({ words: { percent: "used" } });
+    expect(readFileSync(path, "utf8")).toBe(full.replace('"percent": "left"', '"percent": "used"'));
   });
 
   it.each([
@@ -349,7 +381,7 @@ describe("saveSettings", () => {
       ].join("\n");
     /** Switches the second provider on, as the user saw it in the file now. */
     const switchOnSecond = async () => {
-      const shown = clientSettings((await loadSettings()).settings).custom;
+      const shown = clientSettings(await loadSettings()).custom;
       const fingerprint = shown.find((entry) => entry.id === second.id)?.fingerprint ?? "";
       return { [second.id]: { enabled: true, fingerprint } };
     };

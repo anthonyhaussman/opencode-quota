@@ -1,14 +1,27 @@
-import { describe, expect, it, vi } from "vite-plus/test";
+import { afterEach, describe, expect, it, vi } from "vite-plus/test";
+import type { QuotaSnapshot } from "../src/core/types.js";
 import type { QuotaRpcSaveSettingsInput, QuotaRpcSettingsOutput } from "../src/rpc.js";
 import { checkSetting } from "../src/settings/index.js";
 import { CHANGED_SINCE_REVIEW } from "../src/settings/schema.js";
-import { FIELDS, type Field, presetChoice, presetValues, typedNumber } from "../src/tui/display.js";
+import type { QuotaClient } from "../src/tui/client.js";
+import {
+  createFileDisplay,
+  FIELDS,
+  type Field,
+  presetChoice,
+  presetValues,
+  typedNumber,
+} from "../src/tui/display.js";
 import {
   createServerSettings,
   isTicked,
   settingsPatch,
   withTick,
 } from "../src/tui/server-settings.js";
+import { SidebarPanel } from "../src/tui/sidebar.tsx";
+import { DEFAULT_WORDS } from "../src/view/format.js";
+import { stubJsx } from "./helpers/fake-tui-host.js";
+import { textLines, THEME } from "./helpers/jsx-tree.js";
 
 const field = (path: string) => FIELDS.find((item) => item.path === path) as Field;
 
@@ -156,10 +169,10 @@ describe("the server settings this window edits", () => {
     expect(server.dirty()).toBe(false);
     server.set("words.percent", "used");
     server.switchCustom("gw", true);
-    expect([server.dirty(), server.customOn("gw"), server.draftWords()]).toEqual([
+    expect([server.dirty(), server.customOn("gw"), server.value("words.percent")]).toEqual([
       true,
       true,
-      { percent: "used" },
+      "used",
     ]);
 
     await server.save();
@@ -342,6 +355,79 @@ describe("the server settings this window edits", () => {
     ]).toEqual(["bare", 12, false]);
   });
 
+  /** A server whose file sets `values`, and a save that waits for the returned `release`. */
+  function heldSave(values: Record<string, unknown>) {
+    const held = { release: () => {} };
+    const saved = {
+      ...SAVED,
+      values: { ...SAVED.values, ...values },
+      fromFile: Object.keys(values),
+    };
+    const rpc = {
+      settings: vi.fn(async () => structuredClone(saved)),
+      saveSettings: vi.fn(async (_input: QuotaRpcSaveSettingsInput) => {
+        await new Promise<void>((resolve) => {
+          held.release = resolve;
+        });
+        return { ok: true, issues: [] };
+      }),
+    };
+    return { rpc, held };
+  }
+
+  it("keeps a record Reset made while Save waits when one of its entries changes after it", async () => {
+    const { rpc, held } = heldSave({ "collapsed.window": { anthropic: "weekly" } });
+    const server = createServerSettings(rpc);
+    await server.load();
+    server.set("words.percent", "used");
+
+    const saving = server.save();
+    server.reset("collapsed.window");
+    server.set("collapsed.window", { openai: "five_hour" });
+    held.release();
+    await saving;
+
+    expect(server.value("collapsed.window")).toEqual({ openai: "five_hour" });
+    const next = server.save();
+    held.release();
+    await next;
+    expect(rpc.saveSettings.mock.calls[1]?.[0].patch).toEqual({
+      collapsed: { window: { anthropic: null, openai: "five_hour" } },
+    });
+  });
+
+  it("keeps a Reset of a key the file sets to its default when the line goes away and back", async () => {
+    const { rpc, held } = heldSave({ "statusLine.show": true });
+    const server = createServerSettings(rpc);
+    await server.load();
+
+    server.reset("statusLine.show");
+    server.set("statusLine.show", false);
+    server.set("statusLine.show", true);
+    const saving = server.save();
+    held.release();
+    await saving;
+
+    expect(rpc.saveSettings.mock.calls[0]?.[0].patch).toEqual({ statusLine: { show: null } });
+  });
+
+  it("resets a changed value when an older server sends no file keys", async () => {
+    const rpc = fakeRpc();
+    rpc.settings.mockResolvedValue({
+      ...SAVED,
+      values: { ...SAVED.values, "words.percent": "used" },
+    });
+    const server = createServerSettings(rpc);
+    await server.load();
+
+    server.reset("words.percent");
+    server.reset("providers.off");
+
+    expect(server.value("words.percent")).toBe("left");
+    await server.save();
+    expect(rpc.saveSettings).toHaveBeenCalledWith({ patch: { words: { percent: null } } });
+  });
+
   it("rebases a row rename made during Save over another TUI's names", async () => {
     let release = () => {};
     const next: QuotaRpcSettingsOutput = {
@@ -370,5 +456,83 @@ describe("the server settings this window edits", () => {
     await saving;
     expect(server.value("sidebar.names")).toEqual({ first: "Draft", other: "Other TUI" });
     expect(server.dirty()).toBe(true);
+  });
+
+  describe("words on the surfaces", () => {
+    afterEach(() => {
+      vi.unstubAllGlobals();
+      vi.useRealTimers();
+    });
+
+    /** The server's last snapshot: it still has the words from before Save. */
+    const SNAPSHOT: QuotaSnapshot = {
+      version: 6,
+      providers: [
+        {
+          providerId: "copilot",
+          label: "Copilot",
+          rows: [
+            {
+              id: "copilot.weekly",
+              providerId: "copilot",
+              label: "Weekly",
+              type: "quota",
+              method: "remote_api",
+              authority: "provider_reported",
+              window: "week",
+              prominence: "primary",
+              percentRemaining: 80,
+            },
+          ],
+          okAtMs: 0,
+          checkedAtMs: 0,
+          refreshing: false,
+          debug: [],
+        },
+      ],
+      resetNotices: [],
+      generatedAtMs: 0,
+      serverId: "server",
+      revision: 1,
+      words: { ...DEFAULT_WORDS, percent: "left" },
+    };
+
+    it("keeps showing the saved words between Save and the server's changed event", async () => {
+      // The sidebar's minute clock never runs here.
+      vi.useFakeTimers({ toFake: ["setInterval", "clearInterval"] });
+      stubJsx();
+      const server = createServerSettings(fakeRpc());
+      await server.load();
+      const display = createFileDisplay(server).shown;
+      // The snapshot carries the unsaved words too, so while editing both places agree; only
+      // after Save, before the changed event, do the snapshot's words fall back to the old ones.
+      const snapshot = (): QuotaSnapshot =>
+        server.dirty() ? { ...SNAPSHOT, words: display().words } : SNAPSHOT;
+      const host = {
+        theme: () => THEME,
+        display,
+        quota: { watch: () => () => {}, snapshot } as unknown as QuotaClient,
+        editing: {
+          marked: () => undefined,
+          panelOpen: () => undefined,
+          sidebarShown: () => () => {},
+          statusLineShown: () => false,
+        },
+      };
+      const sidebar = () =>
+        textLines(SidebarPanel({ host, sessionID: "ses_1", open: () => true, setOpen: () => {} }))
+          .map((line) => line.replace(/\s+/gu, " ").trim())
+          .join(" | ");
+      const LEFT = "▼ Quota left | Copilot | 7d ████████████████░░░░ 80%";
+      const USED = "▼ Quota used | Copilot | 7d ████████████████░░░░ 20%";
+
+      expect(sidebar()).toBe(LEFT);
+      server.set("words.percent", "used");
+      expect(sidebar()).toBe(USED);
+      await server.save();
+      // The draft is gone and no changed event came yet: the saved words show, not the old ones.
+      expect(server.dirty()).toBe(false);
+      expect(sidebar()).toBe(USED);
+    });
   });
 });

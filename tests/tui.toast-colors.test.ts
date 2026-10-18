@@ -13,6 +13,7 @@ import { DEFAULT_WORDS } from "../src/view/format.js";
 import { visibleGroups } from "../src/view/select.js";
 import { toastLines } from "../src/view/text.js";
 import { providerSnapshot, quotaRow } from "./helpers/fake-answers.js";
+import { stubJsx } from "./helpers/fake-tui-host.js";
 import { type Node, THEME } from "./helpers/jsx-tree.js";
 
 const NOW = Date.parse("2026-10-10T12:00:00.000Z");
@@ -64,16 +65,7 @@ function spansText(spans: unknown): string {
 }
 
 beforeEach(() => {
-  vi.stubGlobal("React", {
-    createElement: (
-      type: unknown,
-      props: Record<string, unknown> | null,
-      ...children: unknown[]
-    ) => ({
-      type,
-      props: { ...props, children: children.length > 1 ? children : children[0] },
-    }),
-  });
+  stubJsx({ components: "keep" });
 });
 
 describe("colored quota toasts", () => {
@@ -87,13 +79,17 @@ describe("colored quota toasts", () => {
     expect(colored).toEqual([
       ["Claude", "text", true],
       ["  5h ", "text", false],
-      ["████████████", "green", false],
+      ["█████████", "green", false],
+      ["┃", "text", false],
+      ["██", "green", false],
       ["░░░░░░░░", "muted", false],
       ["  58% left", "green", false],
       ["  2h 14m", "muted", false],
       ["  7d ", "text", false],
       ["██", "red", false],
-      ["░░░░░░░░░░░░░░░░░░", "muted", false],
+      ["░░░░░░░", "muted", false],
+      ["┃", "text", false],
+      ["░░░░░░░░░░", "muted", false],
       ["  12% left", "red", false],
       ["  3.2d", "muted", false],
       ["     runs out in 13h", "yellow", false],
