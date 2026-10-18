@@ -4,11 +4,7 @@ import type {
   GoogleCompanionConfiguredCredentials,
   GoogleCompanionResolver,
 } from "./google-companion-credentials.js";
-import {
-  getCachedAccessToken,
-  makeAccountCacheKey,
-  setCachedAccessToken,
-} from "./google-token-cache.js";
+import { type GoogleTokenCache, makeAccountCacheKey } from "./google-token-cache.js";
 import { failureFacts, RequestFailedError, requestJson, thrownFacts } from "./http.js";
 import { nonEmptyString } from "./json-guards.js";
 import {
@@ -86,6 +82,8 @@ export type GoogleQuotaFlavor<
   missingCompanionError?: string;
   quotaUrl: string;
   quotaHeaders: () => Record<string, string>;
+  /** The flavor's access tokens of this process. */
+  tokenCache: GoogleTokenCache;
   /** Buckets of one account's quota response; throwing marks the account as failed. */
   toBuckets: (response: Response, account: GoogleAccount<Key>) => Bucket[];
 };
@@ -305,19 +303,20 @@ async function refreshAccessToken(
 
 /** The process cache first, then the login's own unexpired token, then a refresh. */
 async function getAccessToken(params: {
+  tokenCache: GoogleTokenCache;
   account: GoogleAccount<GoogleAuthSourceKey>;
   credentials: GoogleCompanionConfiguredCredentials;
   timeoutMs: number | undefined;
   force: boolean;
 }): Promise<AccessTokenResult> {
-  const { account } = params;
+  const { tokenCache, account } = params;
   const key = makeAccountCacheKey({
     refreshToken: account.refreshToken,
     projectId: account.projectId,
   });
 
   if (!params.force) {
-    const cached = await getCachedAccessToken({ key, skewMs: TOKEN_EXPIRY_SKEW_MS });
+    const cached = await tokenCache.get({ key, skewMs: TOKEN_EXPIRY_SKEW_MS });
     if (cached) return { accessToken: cached.accessToken };
     if (
       account.accessToken &&
@@ -335,7 +334,7 @@ async function getAccessToken(params: {
   );
   if ("error" in refreshed) return refreshed;
 
-  await setCachedAccessToken({
+  await tokenCache.set({
     key,
     entry: {
       accessToken: refreshed.accessToken,
@@ -387,8 +386,15 @@ async function fetchAccountBuckets<Key extends GoogleAuthSourceKey, Response, Bu
   timeoutMs: number | undefined;
 }): Promise<{ buckets: Bucket[] } | { error: string; facts?: ErrorFacts }> {
   const { flavor, account, credentials, timeoutMs } = params;
+  const { tokenCache } = flavor;
   try {
-    const token = await getAccessToken({ account, credentials, timeoutMs, force: false });
+    const token = await getAccessToken({
+      tokenCache,
+      account,
+      credentials,
+      timeoutMs,
+      force: false,
+    });
     if ("error" in token) return token;
 
     let response: Response;
@@ -401,7 +407,13 @@ async function fetchAccountBuckets<Key extends GoogleAuthSourceKey, Response, Bu
       );
     } catch (err) {
       if (thrownFacts(err)?.code !== "login_expired") throw err;
-      const retryToken = await getAccessToken({ account, credentials, timeoutMs, force: true });
+      const retryToken = await getAccessToken({
+        tokenCache,
+        account,
+        credentials,
+        timeoutMs,
+        force: true,
+      });
       if ("error" in retryToken) return retryToken;
       response = await retrieveQuota<Response>(
         flavor,
