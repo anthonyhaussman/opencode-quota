@@ -13,10 +13,11 @@ import { sanitizeDisplaySnippet, sanitizeSingleLineDisplaySnippet } from "./disp
 import { failureFacts, RequestFailedError, requestJson, thrownFacts } from "./http.js";
 import { finiteNumber } from "./json-guards.js";
 import {
-  activeCredentialRowsAuthData,
+  activeCredentialRows,
   type CredentialRow,
-  credentialRowAuthData,
+  type OAuthLogin,
   readCredentialRows,
+  readOAuthLogin,
 } from "./opencode-auth.js";
 import { getOpencodeRuntimeDirs } from "./opencode-runtime-paths.js";
 import {
@@ -25,8 +26,6 @@ import {
   type ResolvedAuthIdentity,
 } from "./resolved-auth-identity.js";
 import type {
-  AuthData,
-  CopilotAuthData,
   CopilotBillingModel,
   CopilotBudgetResult,
   CopilotEnterpriseUsageResult,
@@ -432,22 +431,37 @@ function readQuotaConfigWithMeta(): CopilotPatReadResult {
   }
 }
 
-function getCopilotOAuthToken(auth: CopilotAuthData | null): string | null {
-  return auth?.access?.trim() || auth?.refresh?.trim() || null;
+/** The token a Copilot OAuth login sends: its access token, else its refresh token. */
+function copilotOAuthToken(login: OAuthLogin | null): string | null {
+  return login?.state === "signed-in" ? (login.accessToken ?? login.refreshToken ?? null) : null;
 }
 
-function selectCopilotAuth(authData: AuthData | null): {
-  auth: CopilotAuthData | null;
+/** The GitHub Enterprise Cloud host OpenCode stored with a Copilot OAuth login. */
+function copilotEnterpriseUrl(login: OAuthLogin | null): unknown {
+  return login?.state === "signed-in" ? login.fields.enterpriseUrl : undefined;
+}
+
+/**
+ * A row's Copilot OAuth login when it counts: one with a token, or one OpenCode could not
+ * return (it shows as an error); null otherwise.
+ */
+function copilotOAuthLogin(row: CredentialRow): OAuthLogin | null {
+  const login = readOAuthLogin(row);
+  return login && (login.state === "failed" || copilotOAuthToken(login)) ? login : null;
+}
+
+/** The login OpenCode uses: the active login of the first auth key (in order) that counts. */
+function selectActiveCopilotLogin(rows: readonly CredentialRow[]): {
+  login: OAuthLogin | null;
   keyName: CopilotAuthKeyName | null;
 } {
+  const active = activeCredentialRows(rows);
   for (const keyName of COPILOT_AUTH_KEYS) {
-    const auth = authData?.[keyName];
-    if (!auth || auth.type !== "oauth") continue;
-    // A login OpenCode could not return still counts, so it shows as an error.
-    if (!getCopilotOAuthToken(auth) && auth.resolveError === undefined) continue;
-    return { auth, keyName };
+    const row = active.find((candidate) => candidate.integrationId === keyName);
+    const login = row ? copilotOAuthLogin(row) : null;
+    if (login) return { login, keyName };
   }
-  return { auth: null, keyName: null };
+  return { login: null, keyName: null };
 }
 
 /** What Copilot can check: the PAT config, and every OpenCode Copilot OAuth login. */
@@ -463,8 +477,8 @@ export async function readCopilotLogins(): Promise<CopilotLogins> {
 
 export function getCopilotQuotaAuthDiagnostics(logins: CopilotLogins): CopilotQuotaAuthDiagnostics {
   const { pat } = logins;
-  const { auth, keyName } = selectCopilotAuth(activeCredentialRowsAuthData(logins.oauth));
-  const oauthEnterpriseHost = validateEnterpriseHost(auth?.enterpriseUrl);
+  const { login: auth, keyName } = selectActiveCopilotLogin(logins.oauth);
+  const oauthEnterpriseHost = validateEnterpriseHost(copilotEnterpriseUrl(auth));
   const target = pat.config ? resolvePatBillingTarget(pat.config) : null;
   const compatibilityError = target ? validatePatTargetCompatibility(target, pat.tokenKind) : null;
   // Any PAT config, even an invalid one, is authoritative over OAuth.
@@ -501,9 +515,9 @@ export function getCopilotQuotaAuthDiagnostics(logins: CopilotLogins): CopilotQu
     oauth: {
       configured: Boolean(auth),
       keyName,
-      hasRefreshToken: Boolean(auth?.refresh?.trim()),
-      hasAccessToken: Boolean(auth?.access?.trim()),
-      hasEnterpriseUrl: auth?.enterpriseUrl !== undefined,
+      hasRefreshToken: auth?.state === "signed-in" && auth.refreshToken !== undefined,
+      hasAccessToken: auth?.state === "signed-in" && auth.accessToken !== undefined,
+      hasEnterpriseUrl: copilotEnterpriseUrl(auth) !== undefined,
     },
     deployment,
     apiHost:
@@ -1030,19 +1044,19 @@ function parseCopilotInternalUser(
 }
 
 async function queryCopilotOAuthQuota(
-  authData: AuthData | undefined,
+  row: CredentialRow | undefined,
   requestTimeoutMs?: number,
 ): Promise<CopilotResult> {
-  const { auth } = selectCopilotAuth(authData ?? null);
-  if (auth?.resolveError !== undefined) {
+  const auth = row ? copilotOAuthLogin(row) : null;
+  if (auth?.state === "failed") {
     return toQuotaError(
-      `Copilot sign-in could not be read: ${auth.resolveError}. Run \`opencode auth login github-copilot\`.`,
+      `Copilot sign-in could not be read: ${auth.error}. Run \`opencode auth login github-copilot\`.`,
     );
   }
-  const token = getCopilotOAuthToken(auth);
-  if (!auth || !token) return null;
+  const token = copilotOAuthToken(auth);
+  if (!token) return null;
 
-  const enterpriseHost = validateEnterpriseHost(auth.enterpriseUrl);
+  const enterpriseHost = validateEnterpriseHost(copilotEnterpriseUrl(auth));
   if (enterpriseHost.error) {
     return toQuotaError(`Invalid OpenCode Copilot enterpriseUrl: ${enterpriseHost.error}`);
   }
@@ -1077,13 +1091,13 @@ async function queryCopilotOAuthQuota(
  * OpenCode-managed Copilot OAuth token can query the per-user internal quota endpoint.
  */
 export async function queryCopilotQuota(
-  options: { requestTimeoutMs?: number; authData?: AuthData } = {},
+  options: { requestTimeoutMs?: number; login?: CredentialRow } = {},
 ): Promise<CopilotResult> {
   const pat = readQuotaConfigWithMeta();
   if (pat.state === "invalid") {
     return toQuotaError(`Invalid copilot-quota-token.json: ${pat.error} (${pat.selectedPath})`);
   }
-  if (!pat.config) return await queryCopilotOAuthQuota(options.authData, options.requestTimeoutMs);
+  if (!pat.config) return await queryCopilotOAuthQuota(options.login, options.requestTimeoutMs);
 
   const config = pat.config;
   const billingTarget = resolvePatBillingTarget(config);
@@ -1116,11 +1130,11 @@ export async function queryCopilotQuota(
 
 /** The identity of one OAuth login: its token and API host; none without a usable token. */
 async function oauthIdentity(row: CredentialRow): Promise<ResolvedAuthIdentity | null> {
-  const { auth } = selectCopilotAuth(credentialRowAuthData(row));
-  const token = getCopilotOAuthToken(auth);
-  if (!auth || !token) return null;
+  const auth = copilotOAuthLogin(row);
+  const token = copilotOAuthToken(auth);
+  if (!token) return null;
 
-  const enterpriseHost = validateEnterpriseHost(auth.enterpriseUrl);
+  const enterpriseHost = validateEnterpriseHost(copilotEnterpriseUrl(auth));
   if (enterpriseHost.error) return null;
   return deriveResolvedAuthIdentity({
     providerId: "copilot:oauth",
@@ -1158,7 +1172,7 @@ export async function copilotLoginsIdentity(
   }
 
   // A login without a token or OAuth state gives no rows, so it is no part of the identity.
-  const checked = logins.oauth.filter((row) => selectCopilotAuth(credentialRowAuthData(row)).auth);
+  const checked = logins.oauth.filter((row) => copilotOAuthLogin(row) !== null);
   return loginListIdentity(
     "copilot",
     await Promise.all(checked.map(async (row) => ({ row, identity: await oauthIdentity(row) }))),

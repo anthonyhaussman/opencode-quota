@@ -13,10 +13,10 @@ vi.mock("../src/lib/quota-retry-wait.js", () => ({
 }));
 
 import {
-  clearReadAuthFileCacheForTests,
+  clearCredentialRowCacheForTests,
   getCredentialSourceDiagnostics,
-  readAuthFile,
-  readAuthFileCached,
+  readActiveCredentialRowsCached,
+  readCredentialRows,
 } from "../src/lib/opencode-auth.js";
 import { formatQuotaReportMessage } from "../src/lib/quota-report-message.js";
 import plugin from "../src/plugin.js";
@@ -347,9 +347,9 @@ describe("V2 server plugin", () => {
       state: "bound",
       kind: "opencode-integration-api",
     });
-    await expect(readAuthFile({ integrationIds: ["deepseek"] })).resolves.toEqual({
-      deepseek: { type: "api", key: "deepseek-key" },
-    });
+    await expect(readCredentialRows(["deepseek"], { firstOnly: true })).resolves.toEqual([
+      expect.objectContaining({ value: { type: "api", key: "deepseek-key" } }),
+    ]);
     const signal = subscribe.mock.calls[0]?.[0].signal;
     expect(signal?.aborted).toBe(false);
 
@@ -357,7 +357,7 @@ describe("V2 server plugin", () => {
     expect(signal?.aborted).toBe(true);
     // Only this setup's binding is gone; earlier tests' empty fakes hold no deepseek login.
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
-    await expect(readAuthFile({ integrationIds: ["deepseek"] })).resolves.toBeNull();
+    await expect(readCredentialRows(["deepseek"], { firstOnly: true })).resolves.toEqual([]);
     warn.mockRestore();
     expect(integration.connection.active).toHaveBeenCalledOnce();
   });
@@ -365,7 +365,7 @@ describe("V2 server plugin", () => {
   it.each(["credential.updated", "credential.switched"])(
     "drops cached logins when OpenCode reports %s",
     async (type) => {
-      clearReadAuthFileCacheForTests();
+      clearCredentialRowCacheForTests();
       // The event makes the store check DeepSeek again; it gets a fake answer, not the real API.
       vi.stubGlobal(
         "fetch",
@@ -392,16 +392,17 @@ describe("V2 server plugin", () => {
         },
       }));
       const cleanup = await plugin.setup({ ...ctx, integration, event: { subscribe } } as never);
-      const read = () => readAuthFileCached({ maxAgeMs: 60_000, integrationIds: ["deepseek"] });
+      const readKey = async () =>
+        (
+          await readActiveCredentialRowsCached({ maxAgeMs: 60_000, integrationIds: ["deepseek"] })
+        )[0]?.value.key;
 
-      await expect(read()).resolves.toEqual({ deepseek: { type: "api", key: "old-key" } });
+      await expect(readKey()).resolves.toBe("old-key");
       deepseek.value = { type: "key", key: "new-key" };
-      await expect(read()).resolves.toEqual({ deepseek: { type: "api", key: "old-key" } });
+      await expect(readKey()).resolves.toBe("old-key");
 
       emit({ type, data: { integrationID: "deepseek", credentialID: "cred_deepseek" } });
-      await vi.waitFor(async () =>
-        expect(await read()).toEqual({ deepseek: { type: "api", key: "new-key" } }),
-      );
+      await vi.waitFor(async () => expect(await readKey()).toBe("new-key"));
       await cleanup?.();
     },
   );

@@ -40,7 +40,6 @@ import {
   resolveGoogleConfiguredProjectId,
 } from "../src/lib/google-oauth-quota.js";
 import type { CredentialRow } from "../src/lib/opencode-auth.js";
-import type { AuthData } from "../src/lib/types.js";
 
 const TOKEN_URL = "https://oauth2.googleapis.com/token";
 
@@ -99,12 +98,29 @@ function login(
   };
 }
 
-function queryAgy(authData: unknown, options: { requestTimeoutMs?: number } = {}) {
-  return queryGoogleQuota(AGY_FLAVOR, { ...options, authData: authData as AuthData });
+/** One stored login of each integration id, written as `{ id: value }`. */
+function loginsOf(logins: Record<string, Record<string, unknown>>): CredentialRow[] {
+  return Object.entries(logins).map(([integrationId, { resolveError, ...value }]) =>
+    login(integrationId, value, typeof resolveError === "string" ? resolveError : undefined),
+  );
 }
 
-function queryGeminiCli(authData: unknown, options: { requestTimeoutMs?: number } = {}) {
-  return queryGoogleQuota(GEMINI_CLI_FLAVOR, { ...options, authData: authData as AuthData });
+/** The AGY query of the one login in `logins`. */
+function queryAgy(
+  logins: Record<string, Record<string, unknown>>,
+  options: { requestTimeoutMs?: number } = {},
+) {
+  const [row] = loginsOf(logins);
+  return queryGoogleQuota(AGY_FLAVOR, { ...options, login: row! });
+}
+
+/** The Gemini CLI query of the one login in `logins`. */
+function queryGeminiCli(
+  logins: Record<string, Record<string, unknown>>,
+  options: { requestTimeoutMs?: number } = {},
+) {
+  const [row] = loginsOf(logins);
+  return queryGoogleQuota(GEMINI_CLI_FLAVOR, { ...options, login: row! });
 }
 
 function summaryResponse(
@@ -468,8 +484,8 @@ describe.each(FLAVORS)("$name OAuth quota flow", (flavor) => {
 
 const AGY_AUTH_KEYS = ["google-agy", "opencode-agy-auth", "google-agy-auth"] as const;
 
-function resolveAgyAccounts(auth: Parameters<typeof resolveGoogleAccounts>[1], project: string) {
-  return resolveGoogleAccounts({ authKeys: AGY_AUTH_KEYS }, auth, project);
+function resolveAgyAccounts(logins: Record<string, Record<string, unknown>>, project: string) {
+  return resolveGoogleAccounts({ authKeys: AGY_AUTH_KEYS }, loginsOf(logins), project);
 }
 
 describe("Google account resolution", () => {

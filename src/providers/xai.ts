@@ -16,18 +16,13 @@ import type {
 import { clampPercent } from "../lib/format-utils.js";
 import { failureFacts, requestJson } from "../lib/http.js";
 import { isRecord, nonEmptyString } from "../lib/json-guards.js";
-import {
-  type CredentialRow,
-  credentialRowAuthData,
-  readCredentialRows,
-} from "../lib/opencode-auth.js";
+import { type CredentialRow, readCredentialRows, readOAuthLogin } from "../lib/opencode-auth.js";
 import { modelProviderMatchesRuntimeId } from "../lib/provider-model-matching.js";
 import {
   deriveResolvedAuthIdentity,
   loginListIdentity,
   type ResolvedAuthIdentity,
 } from "../lib/resolved-auth-identity.js";
-import type { AuthData } from "../lib/types.js";
 import {
   type FetchError,
   fetchEachLogin,
@@ -75,22 +70,12 @@ function periodLabel(value: unknown): string {
   return "Period";
 }
 
-function resolveXaiOAuth(auth: AuthData | null | undefined): ResolvedXaiOAuth {
-  const entry = auth?.xai;
-  if (!entry || entry.type !== "oauth") return { state: "none" };
-  if (entry.resolveError !== undefined) return { state: "failed", error: entry.resolveError };
-
-  const accessToken = typeof entry.access === "string" ? entry.access.trim() : "";
-  if (!accessToken) return { state: "none" };
-
-  return {
-    state: "configured",
-    accessToken,
-    expiresAt:
-      typeof entry.expires === "number" && Number.isFinite(entry.expires)
-        ? entry.expires
-        : undefined,
-  };
+function resolveXaiOAuth(row: CredentialRow): ResolvedXaiOAuth {
+  const login = readOAuthLogin(row);
+  if (!login) return { state: "none" };
+  if (login.state === "failed") return { state: "failed", error: login.error };
+  if (!login.accessToken) return { state: "none" };
+  return { state: "configured", accessToken: login.accessToken, expiresAt: login.expiresAt };
 }
 
 /**
@@ -99,7 +84,7 @@ function resolveXaiOAuth(auth: AuthData | null | undefined): ResolvedXaiOAuth {
  */
 async function readXaiLogins(): Promise<XaiLogin[]> {
   return (await readCredentialRows(["xai"], { methods: ["oauth"] })).flatMap((row) => {
-    const auth = resolveXaiOAuth(credentialRowAuthData(row));
+    const auth = resolveXaiOAuth(row);
     return auth.state === "none" ? [] : [{ row, auth }];
   });
 }

@@ -21,9 +21,14 @@ import {
   type OpenAIOAuthLogin,
   openaiLoginsIdentity,
   queryOpenAIQuota,
+  readOpenAIAuthCached,
   readOpenAILogins,
-  resolveOpenAIOAuth,
 } from "../src/lib/openai.js";
+import {
+  bindCredentialSource,
+  clearCredentialRowCacheForTests,
+  type CredentialRow,
+} from "../src/lib/opencode-auth.js";
 
 const POSIX_IDENTITY_STORAGE = process.platform !== "win32" && typeof process.getuid === "function";
 const LOGIN: OpenAIOAuthLogin = { state: "configured", sourceKey: "openai", accessToken: "a.b.c" };
@@ -78,7 +83,30 @@ afterEach(() => {
   vi.useRealTimers();
 });
 
-describe("resolveOpenAIOAuth", () => {
+describe("readOpenAIAuthCached", () => {
+  /**
+   * The active login of each integration id in `logins`: its stored value, with OpenCode's
+   * resolve error when the value names one.
+   */
+  function bindActiveLogins(logins: Record<string, Record<string, unknown>>) {
+    const rows: CredentialRow[] = Object.entries(logins).map(
+      ([integrationId, { resolveError, ...value }]) => ({
+        id: integrationId,
+        integrationId,
+        label: "",
+        active: true,
+        value,
+        ...(typeof resolveError === "string" ? { resolveError } : {}),
+      }),
+    );
+    clearCredentialRowCacheForTests();
+    return bindCredentialSource({
+      kind: "sqlite",
+      readRows: async ({ integrationIds }) =>
+        rows.filter((row) => integrationIds.includes(row.integrationId)),
+    });
+  }
+
   it.each([
     ["no supported entry", {}, { state: "none" }],
     [
@@ -145,8 +173,10 @@ describe("resolveOpenAIOAuth", () => {
         accountId: "acct_stored",
       },
     ],
-  ])("resolves %s", (_name, auth, expected) => {
-    expect(resolveOpenAIOAuth(auth as never)).toEqual(expected);
+  ])("resolves %s", async (_name, logins, expected) => {
+    const unbind = bindActiveLogins(logins);
+    await expect(readOpenAIAuthCached()).resolves.toEqual(expected);
+    unbind();
   });
 });
 

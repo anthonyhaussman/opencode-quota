@@ -4,7 +4,7 @@ import { homedir, platform } from "os";
 import { join } from "path";
 import { getPluginSpecFromEntry } from "./config-file-utils.js";
 import { asRecord, isRecord } from "./json-guards.js";
-import { getCredentialDatabasePaths, readAuthFile } from "./opencode-auth.js";
+import { getCredentialDatabasePaths, readCredentialRows } from "./opencode-auth.js";
 import { parseConfigDocument } from "./opencode-config-editor.js";
 import { getOpencodeRuntimeDirs } from "./opencode-runtime-paths.js";
 import { getQuotaProviderRuntimeIds } from "./provider-metadata.js";
@@ -82,14 +82,16 @@ export async function inspectCursorAuthPresence(): Promise<CursorAuthPresence> {
   let invalidPath: string | undefined;
   let invalidError: string | undefined;
 
-  const cursorAuth = (await readAuthFile({ integrationIds: ["cursor"] }))?.cursor;
-  if (cursorAuth) {
-    if (isValidCursorCredential(cursorAuth)) return present(credentialDatabasePath);
+  const [cursorLogin] = await readCredentialRows(["cursor"], { firstOnly: true });
+  if (cursorLogin) {
+    if (cursorLogin.resolveError === undefined && isValidCursorCredential(cursorLogin.value)) {
+      return present(credentialDatabasePath);
+    }
 
     invalidPath = credentialDatabasePath;
     invalidError =
-      cursorAuth.resolveError !== undefined
-        ? `OpenCode could not read this login: ${cursorAuth.resolveError}`
+      cursorLogin.resolveError !== undefined
+        ? `OpenCode could not read this login: ${cursorLogin.resolveError}`
         : "Cursor credential in the OpenCode database is missing a valid OAuth token or API key";
   }
 

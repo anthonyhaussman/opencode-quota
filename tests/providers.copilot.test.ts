@@ -406,10 +406,9 @@ describe("copilot provider", () => {
 
     const fetched = await fetchRows();
 
-    expect(vi.mocked(queryCopilotQuota).mock.calls.map(([options]) => options?.authData)).toEqual([
-      { "github-copilot": { type: "oauth", resolveError: "refresh_failed: HTTP 401" } },
-      { "github-copilot": { type: "oauth", access: "bob-token", enterpriseUrl: "acme.ghe.com" } },
-    ]);
+    expect(vi.mocked(queryCopilotQuota).mock.calls.map(([options]) => options?.login)).toEqual(
+      logins.oauth,
+    );
     expect(fetched.rows.map((row) => [row.id, row.account])).toEqual([
       ["copilot.allowance", "bob (enterprise)"],
     ]);

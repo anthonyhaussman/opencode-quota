@@ -13,10 +13,8 @@ import { resolveEnvTemplate } from "./env-template.js";
 import { asRecord } from "./json-guards.js";
 import {
   type CredentialRow,
-  credentialRowAuthData,
   getCredentialDatabasePaths,
-  readAuthFile,
-  readAuthFileCached,
+  readActiveCredentialRowsCached,
   readCredentialRows,
 } from "./opencode-auth.js";
 import {
@@ -112,11 +110,16 @@ export async function readConfigCandidate(candidate: ConfigCandidate): Promise<u
   return result.state === "parsed" ? result.value : undefined;
 }
 
-export function getFirstAuthEntryValue(auth: unknown, authKeys: readonly string[]): unknown {
-  const root = asRecord(auth);
-  if (!root) return undefined;
-  const authKey = authKeys.find((key) => Object.hasOwn(root, key));
-  return authKey === undefined ? undefined : root[authKey];
+/** The login of the first auth key, in order, that has one among `rows`. */
+export function firstLoginRow(
+  rows: readonly CredentialRow[],
+  authKeys: readonly string[],
+): CredentialRow | undefined {
+  for (const authKey of authKeys) {
+    const row = rows.find((candidate) => candidate.integrationId === authKey);
+    if (row) return row;
+  }
+  return undefined;
 }
 
 /**
@@ -202,11 +205,14 @@ function loginReadOptions(spec: ApiKeySpec) {
 }
 
 /** The first stored login among `authKeys` that is a usable API key; others are skipped. */
-function extractStoredApiKey(auth: unknown, authKeys: readonly string[]): string | null {
+function extractStoredApiKey(
+  rows: readonly CredentialRow[],
+  authKeys: readonly string[],
+): string | null {
   for (const authKey of authKeys) {
-    const record = asRecord(getFirstAuthEntryValue(auth, [authKey]));
-    const key = record?.key;
-    if (record?.type === "api" && typeof key === "string" && key.trim().length > 0) {
+    const value = rows.find((row) => row.integrationId === authKey)?.value;
+    const key = value?.key;
+    if (value?.type === "api" && typeof key === "string" && key.trim().length > 0) {
       return key.trim();
     }
   }
@@ -217,42 +223,42 @@ export async function resolveApiKey(spec: ApiKeySpec): Promise<ApiKeyResult | nu
   const fromEnvOrConfig = await resolveApiKeyFromEnvAndConfig(spec);
   if (fromEnvOrConfig) return fromEnvOrConfig;
 
-  const auth = await readAuthFile(loginReadOptions(spec));
-  const key = extractStoredApiKey(auth, spec.authKeys ?? spec.providerKeys);
+  const { integrationIds, ...options } = loginReadOptions(spec);
+  const rows = await readCredentialRows(integrationIds, { ...options, firstOnly: true });
+  const key = extractStoredApiKey(rows, spec.authKeys ?? spec.providerKeys);
   return key ? { key, source: "opencode.db" } : null;
 }
 
-/** Read the vendor's stored logins (cached for 5 seconds). */
-export async function readApiKeyLoginAuth(spec: ApiKeyLoginSpec): Promise<unknown> {
-  return readAuthFileCached({
+/** The vendor's stored login that decides: the active one of its first auth key (cached 5 s). */
+export async function readApiKeyLoginRow(
+  spec: ApiKeyLoginSpec,
+): Promise<CredentialRow | undefined> {
+  const rows = await readActiveCredentialRowsCached({
     maxAgeMs: API_KEY_LOGIN_CACHE_MAX_AGE_MS,
     ...loginReadOptions(spec),
   });
+  return firstLoginRow(rows, spec.authKeys);
 }
 
-/** The first stored login among `authKeys` decides: a broken one is `invalid`, not skipped. */
-export function parseApiKeyLogin(spec: ApiKeyLoginSpec, auth: unknown): ApiKeyLoginResult {
-  const entry = getFirstAuthEntryValue(auth, spec.authKeys);
-  if (entry === null || entry === undefined) return { state: "none" };
-  if (typeof entry !== "object") {
-    return { state: "invalid", error: `${spec.displayName} auth entry has invalid shape` };
+/** A stored login as an API key: `none` without one, `invalid` when it is not a usable key. */
+export function parseApiKeyLogin(
+  spec: ApiKeyLoginSpec,
+  row: CredentialRow | undefined,
+): ApiKeyLoginResult {
+  if (!row) return { state: "none" };
+  if (row.resolveError !== undefined) {
+    return { state: "invalid", error: `OpenCode could not read this login: ${row.resolveError}` };
   }
 
-  const record = entry as Record<string, unknown>;
-  if (typeof record.resolveError === "string") {
-    return {
-      state: "invalid",
-      error: `OpenCode could not read this login: ${record.resolveError}`,
-    };
-  }
-  if (typeof record.type !== "string") {
+  const { type, key } = row.value;
+  if (typeof type !== "string") {
     return {
       state: "invalid",
       error: `${spec.displayName} auth entry present but type is missing or invalid`,
     };
   }
-  if (record.type !== "api") {
-    const sanitized = sanitizeDisplayText(record.type).replace(/\s+/g, " ").trim();
+  if (type !== "api") {
+    const sanitized = sanitizeDisplayText(type).replace(/\s+/g, " ").trim();
     return {
       state: "invalid",
       error:
@@ -261,7 +267,7 @@ export function parseApiKeyLogin(spec: ApiKeyLoginSpec, auth: unknown): ApiKeyLo
     };
   }
 
-  const apiKey = typeof record.key === "string" ? record.key.trim() : "";
+  const apiKey = typeof key === "string" ? key.trim() : "";
   return apiKey
     ? { state: "configured", apiKey }
     : { state: "invalid", error: `${spec.displayName} auth entry present but key is empty` };
@@ -273,7 +279,7 @@ export async function resolveApiKeyLoginWithDiagnostics(
   const fromEnvOrConfig = await resolveApiKeyFromEnvAndConfig(spec);
   const auth: ApiKeyLoginResult = fromEnvOrConfig
     ? { state: "configured", apiKey: fromEnvOrConfig.key }
-    : parseApiKeyLogin(spec, await readApiKeyLoginAuth(spec));
+    : parseApiKeyLogin(spec, await readApiKeyLoginRow(spec));
   const paths = {
     checkedPaths: getApiKeyCheckedPaths(spec),
     credentialDatabasePaths: getCredentialDatabasePaths(),
@@ -299,7 +305,7 @@ export async function resolveApiKeyLoginWithDiagnostics(
 export async function resolveApiKeyLogin(spec: ApiKeyLoginSpec): Promise<ApiKeyLoginResult> {
   const fromEnvOrConfig = await resolveApiKeyFromEnvAndConfig(spec);
   if (fromEnvOrConfig) return { state: "configured", apiKey: fromEnvOrConfig.key };
-  return parseApiKeyLogin(spec, await readApiKeyLoginAuth(spec));
+  return parseApiKeyLogin(spec, await readApiKeyLoginRow(spec));
 }
 
 export async function getApiKeyLoginDiagnostics(
@@ -326,7 +332,7 @@ export async function readKeyLogins(
   );
   const rows = options.selectRows ? options.selectRows(vendorRows) : vendorRows;
   return rows.flatMap((row) => {
-    const auth = parseApiKeyLogin(spec, credentialRowAuthData(row));
+    const auth = parseApiKeyLogin(spec, row);
     if (auth.state === "none") return [];
     if (auth.state === "invalid" && spec.skipBrokenLogins) return [];
     return [{ row, auth }];
@@ -353,7 +359,7 @@ export async function readVendorKeys(
   if (envOrConfig) return { envOrConfig, logins: [], broken: null };
   const logins = await readKeyLogins(spec, options);
   if (logins.length > 0 || spec.skipBrokenLogins) return { envOrConfig, logins, broken: null };
-  const first = parseApiKeyLogin(spec, await readApiKeyLoginAuth(spec));
+  const first = parseApiKeyLogin(spec, await readApiKeyLoginRow(spec));
   return { envOrConfig, logins, broken: first.state === "invalid" ? first.error : null };
 }
 

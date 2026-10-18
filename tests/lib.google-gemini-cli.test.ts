@@ -17,11 +17,12 @@ vi.mock("../src/lib/google-companion-credentials.js", () => ({
 
 import { GEMINI_CLI_FLAVOR } from "../src/lib/google-gemini-cli.js";
 import { queryGoogleQuota } from "../src/lib/google-oauth-quota.js";
-import type { AuthData } from "../src/lib/types.js";
-
-/** The Gemini CLI query of the logins in `authData`. */
-function queryGeminiCliQuota(authData: unknown) {
-  return queryGoogleQuota(GEMINI_CLI_FLAVOR, { authData: authData as AuthData });
+/** The Gemini CLI query of the one login in `logins`, written as `{ integration id: value }`. */
+function queryGeminiCliQuota(logins: Record<string, Record<string, unknown>>) {
+  const [[integrationId, value]] = Object.entries(logins);
+  return queryGoogleQuota(GEMINI_CLI_FLAVOR, {
+    login: { id: "login", integrationId, label: "", active: true, value },
+  });
 }
 
 /** The quota reply, as each `fetch` answers. */

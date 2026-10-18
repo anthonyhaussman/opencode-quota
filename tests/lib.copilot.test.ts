@@ -8,7 +8,7 @@ import {
   queryCopilotQuota,
   readCopilotLogins,
 } from "../src/lib/copilot.js";
-import { type CredentialRow, credentialRowAuthData } from "../src/lib/opencode-auth.js";
+import type { CredentialRow } from "../src/lib/opencode-auth.js";
 import type { CopilotResult } from "../src/lib/types.js";
 
 const mocks = vi.hoisted(() => ({
@@ -73,7 +73,7 @@ async function query(options: { requestTimeoutMs?: number } = {}): Promise<Copil
   const [login] = await mocks.readCredentialRows();
   return queryCopilotQuota({
     ...options,
-    ...(login ? { authData: credentialRowAuthData(login) } : {}),
+    ...(login ? { login } : {}),
   });
 }
 

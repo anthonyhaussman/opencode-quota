@@ -5,7 +5,7 @@
  */
 import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
 import type { ProviderSnapshot, QuotaSnapshot, ResetNotice } from "../src/core/types.js";
-import { readAuthFile, readAuthFileCached, readCredentialRows } from "../src/lib/opencode-auth.js";
+import { readActiveCredentialRowsCached, readCredentialRows } from "../src/lib/opencode-auth.js";
 import type { QuotaClient } from "../src/tui/client.js";
 import { type DisplaySettings, defaultDisplaySettings } from "../src/tui/display.js";
 import plugin from "../src/tui/index.tsx";
@@ -28,8 +28,7 @@ vi.mock("../src/lib/opencode-auth.js", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../src/lib/opencode-auth.js")>();
   return {
     ...actual,
-    readAuthFile: vi.fn(actual.readAuthFile),
-    readAuthFileCached: vi.fn(actual.readAuthFileCached),
+    readActiveCredentialRowsCached: vi.fn(actual.readActiveCredentialRowsCached),
     readCredentialRows: vi.fn(actual.readCredentialRows),
   };
 });
@@ -459,8 +458,7 @@ describe("commands of the TUI plugin", () => {
       { reason: "turn", sessionID: "ses_1" },
     ]);
     expect(rpc.notices).toHaveBeenCalledOnce();
-    expect(readAuthFile).not.toHaveBeenCalled();
-    expect(readAuthFileCached).not.toHaveBeenCalled();
+    expect(readActiveCredentialRowsCached).not.toHaveBeenCalled();
     expect(readCredentialRows).not.toHaveBeenCalled();
   });
 

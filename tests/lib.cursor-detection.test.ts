@@ -43,7 +43,23 @@ vi.mock("os", async () => {
 
 vi.mock("../src/lib/opencode-auth.js", () => ({
   getCredentialDatabasePaths: () => [testPaths.credentialDatabase],
-  readAuthFile: vi.fn(async () => mockAuth.value),
+  // The active Cursor login, written as `{ cursor: value }` (a value's `resolveError` is
+  // OpenCode's resolve error), as one credential row.
+  readCredentialRows: vi.fn(async () => {
+    const stored = mockAuth.value?.cursor as Record<string, unknown> | undefined;
+    if (!stored) return [];
+    const { resolveError, ...value } = stored;
+    return [
+      {
+        id: "cursor",
+        integrationId: "cursor",
+        label: "",
+        active: true,
+        value,
+        ...(typeof resolveError === "string" ? { resolveError } : {}),
+      },
+    ];
+  }),
 }));
 
 vi.mock("../src/lib/opencode-runtime-paths.js", () => ({

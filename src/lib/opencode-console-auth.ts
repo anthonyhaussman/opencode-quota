@@ -17,7 +17,8 @@
  */
 
 import { safeErrorText } from "../core/redact.js";
-import { readCredentialRows } from "./opencode-auth.js";
+import { isRecord } from "./json-guards.js";
+import { readCredentialRows, readOAuthLogin } from "./opencode-auth.js";
 import { deriveResolvedAuthIdentity, type ResolvedAuthIdentity } from "./resolved-auth-identity.js";
 
 const OPENCODE_CONSOLE_BASE_URL = "https://opencode.ai/console";
@@ -49,26 +50,27 @@ export async function resolveOpenCodeConsoleAuth(params?: {
   if (!row) return { state: "none" };
   if (row.resolveError !== undefined) return { state: "invalid", error: row.resolveError };
 
-  const value = row.value;
   // An API key under `opencode` (service account or workspace key) is not a sign-in.
-  if (value.type !== "oauth") return { state: "none", reason: "not_oauth" };
+  const login = readOAuthLogin(row);
+  if (login?.state !== "signed-in") return { state: "none", reason: "not_oauth" };
 
-  const accessToken = typeof value.access === "string" ? value.access.trim() : "";
+  const { accessToken } = login;
   if (!accessToken) {
     return { state: "invalid", error: "OpenCode Console credential has no access token" };
   }
 
-  const metadata = (value.metadata ?? null) as Record<string, unknown> | null;
+  const metadata = login.fields.metadata;
+  const text = (key: string) =>
+    isRecord(metadata) && typeof metadata[key] === "string" ? metadata[key] : undefined;
   const credential: OpenCodeConsoleCredential = {
     accessToken,
-    refreshToken:
-      typeof value.refresh === "string" && value.refresh.trim() ? value.refresh : undefined,
-    expiresAt: typeof value.expires === "number" ? value.expires : undefined,
-    accountId: typeof metadata?.accountID === "string" ? metadata.accountID : undefined,
-    orgId: typeof metadata?.orgID === "string" ? metadata.orgID : undefined,
-    orgName: typeof metadata?.orgName === "string" ? metadata.orgName : undefined,
-    email: typeof metadata?.email === "string" ? metadata.email : undefined,
-    server: typeof metadata?.server === "string" ? metadata.server : undefined,
+    refreshToken: login.refreshToken,
+    expiresAt: login.expiresAt,
+    accountId: text("accountID"),
+    orgId: text("orgID"),
+    orgName: text("orgName"),
+    email: text("email"),
+    server: text("server"),
   };
 
   const nowMs = params?.nowMs ?? Date.now();
