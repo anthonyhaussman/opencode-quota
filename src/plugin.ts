@@ -10,6 +10,7 @@ import { Plugin } from "@opencode/plugin";
 import { quotaAgentTools } from "./agent-tools.js";
 import { snapshotFilePath } from "./core/persist.js";
 import {
+  customRowPrefix,
   loadProviderSource,
   loadServerSettings,
   type ProviderSourceHost,
@@ -37,7 +38,6 @@ import {
 } from "./lib/opencode-auth.js";
 import { reconcileDetectedProvidersInGlobalConfig } from "./lib/opencode-config-providers.js";
 import { statusReport } from "./lib/quota-dialog-commands.js";
-import { QUOTA_PROVIDERS_AGGREGATE_ID } from "./lib/quota-providers.js";
 import {
   containsQuotaReport,
   formatQuotaReportMessage,
@@ -192,10 +192,7 @@ export const QuotaToastPlugin = Plugin.define({
         ...(custom.length > 0
           ? {
               customRowProviders: Object.fromEntries(
-                custom.map((one) => [
-                  `${QUOTA_PROVIDERS_AGGREGATE_ID}.custom.${one.id}.`,
-                  one.providerId,
-                ]),
+                custom.map((one) => [customRowPrefix(one.id), one.providerId]),
               ),
             }
           : {}),

@@ -693,6 +693,25 @@ describe("quota store", () => {
     expect(await store.snapshot({ model: {} })).not.toHaveProperty("currentModelProviderIds");
   });
 
+  it("refreshes only the providers serving the model when asked to", async () => {
+    const copilot = fakeProvider("copilot");
+    const openai = fakeProvider("openai");
+    const forModel = (model: SessionModel) => (model.providerID === "openai" ? ["openai"] : []);
+    const store = makeStore([copilot.provider, openai.provider], 0, file, forModel);
+    const onlyModelProviders = true;
+    const answered = await store.refresh({
+      reason: "retry",
+      model: { id: "gpt-5", providerID: "openai" },
+      onlyModelProviders,
+    });
+    expect(answered.currentModelProviderIds).toEqual(["openai"]);
+    expect([copilot.fetch.mock.calls.length, openai.fetch.mock.calls.length]).toEqual([0, 1]);
+
+    await store.refresh({ reason: "retry", model: { id: "other" }, onlyModelProviders });
+    await store.refresh({ reason: "retry", onlyModelProviders });
+    expect([copilot.fetch.mock.calls.length, openai.fetch.mock.calls.length]).toEqual([0, 1]);
+  });
+
   it("never answers a refresh with the old login's rows after a login change", async () => {
     const copilot = fakeProvider();
     const identity = vi.fn(async (): Promise<ProviderIdentity> => ({

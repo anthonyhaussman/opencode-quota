@@ -41,15 +41,16 @@ export type ProviderSourceHost = {
 /** The settings the server reads besides the providers themselves. */
 export type ServerSettings = {
   waitForQuotaReset: boolean;
-  /** The enabled providers that serve `model`. */
-  providerIdsForModel: (model: SessionModel) => string[];
-  /** The custom definitions (rows `quota-providers.custom.<id>.*`) that serve `model`. */
-  customDefinitionIdsForModel: (model: SessionModel) => string[];
   /** The export file, written after each snapshot change when on. */
   export: { enabled: boolean; path: string };
   /** Quota gauges through the host's OpenTelemetry MeterProvider. */
   telemetry: boolean;
 };
+
+/** The start of every row id of the custom definition `definitionId`. */
+export function customRowPrefix(definitionId: string): string {
+  return `${QUOTA_PROVIDERS_AGGREGATE_ID}.custom.${definitionId}.`;
+}
 
 /** All registered providers except the ids switched off, with custom mapped to its registry id. */
 function registryProviderIds(off: Settings["providers"]["off"]): string[] {
@@ -110,8 +111,8 @@ async function openCodeProviderIds(ctx: QuotaProviderContext): Promise<ReadonlyS
 }
 
 /**
- * The custom definitions (rows `quota-providers.custom.<id>.*`) that serve `model`; without
- * OpenCode's provider list none can be matched to a model.
+ * The custom definitions (rows `customRowPrefix(id)`) that serve `model`; without OpenCode's
+ * provider list none can be matched to a model.
  */
 function customDefinitionIdsForModel(
   ctx: QuotaProviderContext,
@@ -267,21 +268,15 @@ export async function loadProviderSource(host: ProviderSourceHost): Promise<Stor
         ctx,
         availableProviderIds,
         model,
-      ).map((id) => `${QUOTA_PROVIDERS_AGGREGATE_ID}.custom.${id}.`),
+      ).map(customRowPrefix),
     }),
   };
 }
 
 export async function loadServerSettings(host: ProviderSourceHost): Promise<ServerSettings> {
-  const loaded = host.settings();
-  const { settings } = loaded;
-  const ctx = providerContext(host, loaded);
-  const availableProviderIds = await openCodeProviderIds(ctx);
+  const { settings } = host.settings();
   return {
     waitForQuotaReset: settings.providers.checking.waitForQuotaReset,
-    providerIdsForModel: (model) => providerIdsForModel(ctx, model),
-    customDefinitionIdsForModel: (model) =>
-      customDefinitionIdsForModel(ctx, availableProviderIds, model),
     export: { enabled: settings.system.exportFile, path: settings.system.exportPath },
     telemetry: settings.system.telemetry,
   };

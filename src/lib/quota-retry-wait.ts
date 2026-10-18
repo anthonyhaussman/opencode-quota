@@ -5,8 +5,7 @@
  */
 import type { ServerSettings } from "../core/provider-source.js";
 import type { QuotaStore } from "../core/store.js";
-import type { QuotaRow } from "../core/types.js";
-import { QUOTA_PROVIDERS_AGGREGATE_ID } from "./quota-providers.js";
+import type { ProviderSnapshot, QuotaRow, QuotaSnapshot } from "../core/types.js";
 
 /** Extra wait after the reset time, so the provider has reset the window when the retry runs. */
 export const QUOTA_RESET_RETRY_BUFFER_MS = 60_000;
@@ -22,12 +21,7 @@ export type QuotaRetryEvent = {
 /** Where the retry decision reads quota and settings from. */
 type QuotaRetryHost = {
   store: Pick<QuotaStore, "refresh">;
-  loadSettings: () => Promise<
-    Pick<
-      ServerSettings,
-      "waitForQuotaReset" | "providerIdsForModel" | "customDefinitionIdsForModel"
-    >
-  >;
+  loadSettings: () => Promise<Pick<ServerSettings, "waitForQuotaReset">>;
 };
 
 /** OpenCode's error types for a provider rate limit or used-up quota, or any HTTP 429. */
@@ -62,19 +56,19 @@ export function getQuotaResetRetryDelayMs(
 }
 
 /**
- * True when `row` belongs to the model: custom sources all come from one provider, so their
- * rows count only for the definitions that serve the model.
+ * The provider's rows that serve the snapshot's model: a provider whose rows serve different
+ * models (the custom providers) has only those under its `currentModelRowPrefixes`.
  */
-function servesModel(row: QuotaRow, customDefinitionIds: readonly string[]): boolean {
-  if (row.providerId !== QUOTA_PROVIDERS_AGGREGATE_ID) return true;
-  return customDefinitionIds.some((id) =>
-    row.id.startsWith(`${QUOTA_PROVIDERS_AGGREGATE_ID}.custom.${id}.`),
-  );
+function modelRows(snapshot: QuotaSnapshot, provider: ProviderSnapshot): QuotaRow[] {
+  const prefixes = snapshot.currentModelRowPrefixes?.[provider.providerId];
+  if (prefixes === undefined) return provider.rows;
+  return provider.rows.filter((row) => prefixes.some((prefix) => row.id.startsWith(prefix)));
 }
 
 /**
  * The retry delay for a limit error on `event.model`, or undefined to keep OpenCode's decision.
- * The store asks the model's providers again at once (a retry refresh has no minimum interval):
+ * The store asks the providers serving the model again at once (a retry refresh has no minimum
+ * interval), and its answer names them and the rows that serve the model:
  * the limit error itself shows the quota changed, so only rows read for this retry count. A
  * provider with an error counts not at all: the rows it kept for a failed login are old.
  */
@@ -85,19 +79,20 @@ export async function resolveQuotaResetRetryDelayMs(
   if (!isQuotaLimitError(event.error)) return undefined;
   const settings = await host.loadSettings();
   if (!settings.waitForQuotaReset) return undefined;
-  const providerIds = settings.providerIdsForModel(event.model);
-  if (providerIds.length === 0) return undefined;
-  const customDefinitionIds = settings.customDefinitionIdsForModel(event.model);
   const startedAtMs = Date.now();
-  const snapshot = await host.store.refresh({ reason: "retry", providerIds });
+  const snapshot = await host.store.refresh({
+    reason: "retry",
+    model: event.model,
+    onlyModelProviders: true,
+  });
+  const servingIds = snapshot.currentModelProviderIds ?? [];
   const freshRows = snapshot.providers
     .filter(
       (provider) =>
-        providerIds.includes(provider.providerId) &&
+        servingIds.includes(provider.providerId) &&
         (provider.okAtMs ?? 0) >= startedAtMs &&
         provider.error === undefined,
     )
-    .flatMap((provider) => provider.rows)
-    .filter((row) => servesModel(row, customDefinitionIds));
+    .flatMap((provider) => modelRows(snapshot, provider));
   return getQuotaResetRetryDelayMs(freshRows, Date.now());
 }

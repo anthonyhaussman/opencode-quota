@@ -117,6 +117,8 @@ type RefreshOptions = {
   model?: SessionModel;
   reason: RefreshReason;
   providerIds?: readonly string[];
+  /** Refreshes only the providers serving `model` (the snapshot's `currentModelProviderIds`). */
+  onlyModelProviders?: boolean;
 };
 
 type QuotaStoreDeps = {
@@ -499,13 +501,21 @@ export function createQuotaStore(deps: QuotaStoreDeps): QuotaStore {
       serverId,
       revision,
     };
-    const { providerIdsForModel, rowPrefixesForModel } = operation.source;
-    if (model && (model.id || model.providerID) && providerIdsForModel) {
-      const shown = new Set(providers.map((provider) => provider.providerId));
-      snapshot.currentModelProviderIds = providerIdsForModel(model).filter((id) => shown.has(id));
+    const modelProviderIds = model ? providerIdsServing(operation, model) : undefined;
+    if (model && modelProviderIds) {
+      snapshot.currentModelProviderIds = modelProviderIds;
+      const { rowPrefixesForModel } = operation.source;
       if (rowPrefixesForModel) snapshot.currentModelRowPrefixes = rowPrefixesForModel(model);
     }
     return snapshot;
+  }
+
+  /** The operation's providers that serve `model`; undefined when that can't be told. */
+  function providerIdsServing(operation: Operation, model: SessionModel): string[] | undefined {
+    const { providers, providerIdsForModel } = operation.source;
+    if (!(model.id || model.providerID) || !providerIdsForModel) return undefined;
+    const shown = new Set(providers.map((provider) => provider.id));
+    return providerIdsForModel(model).filter((id) => shown.has(id));
   }
 
   function providerIdsOf(operation: Operation): string {
@@ -623,10 +633,21 @@ export function createQuotaStore(deps: QuotaStoreDeps): QuotaStore {
     return run;
   }
 
+  /** The providers a refresh asks: all of them, `providerIds`, or those serving `model`. */
+  function providersToRefresh(operation: Operation, options: RefreshOptions): StoreProvider[] {
+    const { providers } = operation.source;
+    if (options.onlyModelProviders) {
+      const ids = options.model ? providerIdsServing(operation, options.model) : undefined;
+      return providers.filter((provider) => ids?.includes(provider.id));
+    }
+    const { providerIds } = options;
+    return providerIds
+      ? providers.filter((provider) => providerIds.includes(provider.id))
+      : providers;
+  }
+
   async function runRefresh(operation: Operation, options: RefreshOptions): Promise<void> {
-    const providers = options.providerIds
-      ? operation.source.providers.filter((provider) => options.providerIds?.includes(provider.id))
-      : operation.source.providers;
+    const providers = providersToRefresh(operation, options);
     await Promise.all(
       providers.map((provider) => refreshProvider(operation, provider, options.reason)),
     );
