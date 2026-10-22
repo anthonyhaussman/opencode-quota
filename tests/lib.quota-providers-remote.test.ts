@@ -579,7 +579,7 @@ describe("json-v1", () => {
         }),
         expect.objectContaining({ key: "Used_percent.2", type: "budget", percentRemaining: -25 }),
         expect.objectContaining({ key: "Spend_budget.2", percentRemaining: -20 }),
-        expect.objectContaining({ key: "Balance", type: "balance", text: "$-3.5" }),
+        expect.objectContaining({ key: "Balance", type: "balance", text: "-$3.50" }),
         expect.objectContaining({ key: "Spend", type: "usage" }),
         expect.objectContaining({ key: "Requests", type: "quota" }),
         expect.objectContaining({ key: "Status", type: "status", text: "Ready" }),
@@ -666,9 +666,60 @@ describe("json-v1", () => {
   });
 
   it.each([
-    ["95.50", "450", ["95.5 USD", "4.5"]],
-    [" -3 ", "0", ["-3 USD", "0"]],
-    ["0.25", 450, ["0.25 USD", "4.5"]],
+    ["$", "prefix", 0.313942875, "$0.31"],
+    ["$", "suffix", 1234.567, "$1,234.57"],
+    ["USD", "suffix", -3.5, "-$3.50"],
+    ["USD", "prefix", 0.001, "$0.00"],
+  ] as const)(
+    "shows a value in %j (%s) as money, like built-in money",
+    async (unit, unitPosition, balance, expected) => {
+      const adapter: JsonV1Source["adapter"] = {
+        mappings: [
+          {
+            resultType: "balance",
+            name: "Balance",
+            unit,
+            unitPosition,
+            metric: { type: "value", valueType: "balance", value: { path: ["balance"] } },
+          },
+        ],
+      };
+      await expect(fetchBody({ balance }, jsonSource(adapter))).resolves.toEqual({
+        success: true,
+        rows: [expect.objectContaining({ key: "Balance", text: expected })],
+      });
+    },
+  );
+
+  it.each([
+    ["tokens", "suffix", { path: ["used"] }, 0.30000000000000004, "0.3 tokens"],
+    ["tokens", "suffix", { path: ["used"], divideBy: 100 }, 0.7, "0.007 tokens"],
+    ["€", "prefix", { path: ["used"] }, 0.313942875, "€0.313942875"],
+    [undefined, undefined, { path: ["used"] }, 1e-7, "0.0000001"],
+  ] as const)(
+    "shows a value in %j (%s) without float noise",
+    async (unit, unitPosition, value, used, expected) => {
+      const adapter: JsonV1Source["adapter"] = {
+        mappings: [
+          {
+            resultType: "usage",
+            name: "Used",
+            ...(unit && unitPosition ? { unit, unitPosition } : {}),
+            metric: { type: "value", valueType: "used", value },
+          },
+        ],
+      };
+      await expect(fetchBody({ used }, jsonSource(adapter))).resolves.toEqual({
+        success: true,
+        rows: [expect.objectContaining({ key: "Used", text: expected })],
+      });
+    },
+  );
+
+  it.each([
+    ["95.50", "450", ["$95.50", "4.5"]],
+    [" -3 ", "0", ["-$3.00", "0"]],
+    ["0.25", 450, ["$0.25", "4.5"]],
   ] as const)("reads plain decimal text %j as a number", async (balance, totalUsed, expected) => {
     const adapter: JsonV1Source["adapter"] = {
       mappings: [
