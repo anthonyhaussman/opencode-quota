@@ -48,8 +48,8 @@ const QUOTA_V1_ROW_KEYS = [
   "observedAtIso",
 ];
 const JSON_V1_DECIMAL_TEXT_RE = /^-?\d+(?:\.\d+)?$/;
-/** Units that mark a json-v1 value as US dollars. */
-const JSON_V1_USD_UNITS = new Set(["$", "USD"]);
+/** Units that mark a json-v1 value as US dollars, in lower case: the match ignores case. */
+const JSON_V1_USD_UNITS = new Set(["$", "usd"]);
 /**
  * Every decimal of up to 15 significant digits survives a trip through a float, so a value
  * shown to 15 digits loses float noise such as 0.7 / 100 = 0.006999999999999999.
@@ -314,15 +314,15 @@ function jsonV1CandidateError(
 }
 
 /**
- * A value row's text. A value in US dollars (unit `$` or `USD`, either position) is written
- * like built-in money ("$1,234.57", "-$3.50"); any other value as its number without float
+ * A value row's text. A value in US dollars (unit `$` or `USD` in any case, either position) is
+ * written like built-in money ("$1,234.57", "-$3.50"); any other value as its number without float
  * noise ("0.007", not "0.006999999999999999"), with its unit where the mapping puts it.
  */
 function formatJsonV1Value(value: number, mapping: JsonV1Mapping): string {
   const decimal = accountingDecimalFromNumber(
     Number(value.toPrecision(JSON_V1_SHOWN_SIGNIFICANT_DIGITS)),
   );
-  if (mapping.unit !== undefined && JSON_V1_USD_UNITS.has(mapping.unit)) {
+  if (mapping.unit !== undefined && JSON_V1_USD_UNITS.has(mapping.unit.toLowerCase())) {
     return amountText({ decimal, unit: { kind: "currency", code: "USD" } });
   }
   if (!mapping.unit) return decimal;

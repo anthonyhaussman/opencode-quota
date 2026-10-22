@@ -670,6 +670,8 @@ describe("json-v1", () => {
     ["$", "suffix", 1234.567, "$1,234.57"],
     ["USD", "suffix", -3.5, "-$3.50"],
     ["USD", "prefix", 0.001, "$0.00"],
+    ["usd", "suffix", 95.5, "$95.50"],
+    ["Usd", "suffix", 95.5, "$95.50"],
   ] as const)(
     "shows a value in %j (%s) as money, like built-in money",
     async (unit, unitPosition, balance, expected) => {
