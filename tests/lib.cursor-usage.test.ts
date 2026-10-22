@@ -73,11 +73,47 @@ describe("getCurrentCursorUsageSummary", () => {
       "cursor-opencode-provider fast and 1m entries",
       [
         message("cursor", "composer-2.5-fast", 1_000_000, 1_000_000),
-        message("cursor", "grok-4.7", 1_000_000, 500_000),
+        message("cursor", "grok-4.7", 100_000, 500_000),
         message("cursor", "claude-opus-4-8-1m", 1_000_000, 1_000_000),
         message("cursor", "gpt-5.5-1m", 10, 20),
       ],
-      { auto: [2, 23], api: [1, 30], total: 4, unknown: ["gpt-5.5-1m"] },
+      { auto: [2, 21.2], api: [1, 30], total: 4, unknown: ["gpt-5.5-1m"] },
+    ],
+    [
+      // The last step of a turn, as cursor-opencode-provider's `shapeStepUsage` (billing.js)
+      // shapes it: cache writes Cursor has no rate for, so OpenCode bills each the $0.001 Cursor did.
+      "turns cursor-opencode-provider settled at what Cursor billed",
+      [
+        {
+          providerID: "cursor",
+          modelID: "gemini-4-argon",
+          tokens: { output: 1, cacheRead: 9_900, cacheWrite: 90_100 },
+        },
+        {
+          providerID: "cursor",
+          modelID: "kimi-k3",
+          tokens: { output: 1, cacheRead: 3_283, cacheWrite: 96_717 },
+        },
+        {
+          providerID: "cursor",
+          modelID: "grok-4.7",
+          tokens: { output: 1, cacheRead: 1_988, cacheWrite: 98_012 },
+        },
+      ],
+      { auto: [1, 0.001], api: [2, 0.002], total: 3, unknown: [] },
+    ],
+    [
+      "Grok 4.7 prompts over 200k tokens, which Cursor bills at a rate the table does not hold",
+      [
+        message("cursor", "grok-4.7", 200_000, 0),
+        {
+          providerID: "cursor",
+          modelID: "grok-4.7",
+          tokens: { input: 50_000, cacheRead: 150_001 },
+        },
+        message("cursor", "grok-4.7-fast", 250_000, 0),
+      ],
+      { auto: [1, 0.4], api: [0, 0], total: 3, unknown: ["grok-4.7", "grok-4.7-fast"] },
     ],
     [
       "models outside Cursor's alias list at their models.dev price, as the Usage tab prices them",

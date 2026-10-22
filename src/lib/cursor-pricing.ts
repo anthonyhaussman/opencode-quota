@@ -39,6 +39,18 @@ const CURSOR_LOCAL_PRICING = {
 
 type CursorLocalPricingModel = keyof typeof CURSOR_LOCAL_PRICING;
 
+// Cursor bills a request whose prompt passes this many tokens at a higher rate than the table
+// holds, so such a request has no price here.
+const CURSOR_LOCAL_PRICED_PROMPT_TOKENS: Readonly<
+  Partial<Record<CursorLocalPricingModel, number>>
+> = {
+  "grok-4.7": 200_000,
+  "grok-4.7-fast": 200_000,
+};
+
+// models.dev lists a cache-write rate for these that Cursor does not publish.
+const CURSOR_MODELS_WITHOUT_CACHE_WRITE_RATE = new Set(["kimi-k3", "kimi-k3-1m"]);
+
 export const CURSOR_OFFICIAL_MODEL_ALIASES: Readonly<
   Record<string, { providerHint: string; modelHint: string }>
 > = {
@@ -155,15 +167,40 @@ export function lookupCursorLocalCost(model: string): CostBuckets | null {
     : null;
 }
 
-export function resolveCursorModel(rawModelId?: string): CursorResolvedModel {
-  if (!rawModelId || typeof rawModelId !== "string") return { kind: "unknown" };
+/** Whether the table's rates price a request of `model` with `promptTokens` of prompt. */
+export function cursorLocalCostCoversPrompt(model: string, promptTokens: number): boolean {
+  const limit = Object.hasOwn(CURSOR_LOCAL_PRICED_PROMPT_TOKENS, model)
+    ? CURSOR_LOCAL_PRICED_PROMPT_TOKENS[model as CursorLocalPricingModel]
+    : undefined;
+  return limit === undefined || promptTokens <= limit;
+}
 
-  // Ids may carry a provider prefix (`cursor/auto`); the last segment names the model.
+/**
+ * `rates` as OpenCode bills a Cursor model through cursor-opencode-provider: a cache write costs
+ * Cursor's cache-write rate, nothing when Cursor publishes none. The provider settles each turn
+ * at what Cursor billed partly with such free cache writes.
+ */
+export function cursorBilledRates(rawModelId: string | undefined, rates: CostBuckets): CostBuckets {
+  const model = rawModelId ? cursorModelName(rawModelId) : "";
+  const cacheWrite = CURSOR_MODELS_WITHOUT_CACHE_WRITE_RATE.has(model)
+    ? 0
+    : (rates.cache_write ?? 0);
+  return { ...rates, cache_write: cacheWrite };
+}
+
+/** Ids may carry a provider prefix (`cursor/auto`); the last segment names the model. */
+function cursorModelName(rawModelId: string): string {
   const trimmed = rawModelId.trim();
-  const model = trimmed
+  return trimmed
     .slice(trimmed.lastIndexOf("/") + 1)
     .trim()
     .toLowerCase();
+}
+
+export function resolveCursorModel(rawModelId?: string): CursorResolvedModel {
+  if (!rawModelId || typeof rawModelId !== "string") return { kind: "unknown" };
+
+  const model = cursorModelName(rawModelId);
 
   // `default[]` is another id for Cursor's Auto model.
   const localModel = model === "default[]" ? "auto" : model;

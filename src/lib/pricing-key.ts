@@ -3,6 +3,8 @@
  * key, and what one message of it costs (`priceMessage`).
  */
 import {
+  cursorBilledRates,
+  cursorLocalCostCoversPrompt,
   isCursorModelId,
   isCursorProviderId,
   lookupCursorLocalCost,
@@ -405,7 +407,7 @@ function resolveModelPricing(source: { providerID?: string; modelID?: string }):
     mapping.key.provider === "cursor"
       ? lookupCursorLocalCost(mapping.key.model)
       : lookupCost(mapping.key.provider, mapping.key.model);
-  if (rates) return { kind: "priced", key: mapping.key, rates };
+  if (rates) return { kind: "priced", key: mapping.key, rates: billedRates(source, rates) };
 
   const classification = classifyMissingPricing({
     mappedProvider: mapping.key.provider,
@@ -450,10 +452,20 @@ function classifyMissingPricing(params: {
   return { kind: "unknown" };
 }
 
+/** The rates OpenCode bills `source` at: a Cursor model's by Cursor's rules. */
+function billedRates(
+  source: { providerID?: string; modelID?: string },
+  rates: CostBuckets,
+): CostBuckets {
+  return isCursorProviderId(source.providerID) || isCursorModelId(source.modelID)
+    ? cursorBilledRates(source.modelID, rates)
+    : rates;
+}
+
 /**
  * What one message costs: in USD in all and per token kind, with what its cache reads saved
- * against the plain input price. "unpriced" is a known model without a price, "unknown" no
- * usable match.
+ * against the plain input price. "unpriced" is a known model without a price for this message,
+ * "unknown" no usable match.
  */
 export type MessagePrice =
   | {
@@ -519,7 +531,16 @@ export function priceMessage(
   options: { modelMap?: Readonly<Record<string, string>> } = {},
 ): MessagePrice {
   const pricing = cachedModelPricing(source);
-  if (pricing.kind === "priced") return pricedMessage(pricing.key, pricing.rates, tokens);
+  if (pricing.kind === "priced") {
+    const promptTokens = tokens.input + tokens.cache_read + tokens.cache_write;
+    if (
+      pricing.key.provider === "cursor" &&
+      !cursorLocalCostCoversPrompt(pricing.key.model, promptTokens)
+    ) {
+      return { kind: "unpriced", key: pricing.key };
+    }
+    return pricedMessage(pricing.key, pricing.rates, tokens);
+  }
 
   const { modelMap } = options;
   const target =
@@ -530,7 +551,7 @@ export function priceMessage(
   if (slash > 0) {
     const key = { provider: target.slice(0, slash), model: target.slice(slash + 1) };
     const rates = lookupCost(key.provider, key.model);
-    if (rates) return pricedMessage(key, rates, tokens);
+    if (rates) return pricedMessage(key, billedRates(source, rates), tokens);
   }
   return pricing.kind === "unpriced" ? { kind: "unpriced", key: pricing.key } : { kind: "unknown" };
 }

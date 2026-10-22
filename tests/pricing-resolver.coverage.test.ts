@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it } from "vite-plus/test";
 import { CURSOR_MODEL_COSTS } from "../scripts/upstream-plugins/cursor-opencode-provider/dist/pricing-data.js";
 import {
   CURSOR_OFFICIAL_MODEL_ALIASES,
+  cursorBilledRates,
   lookupCursorLocalCost,
   resolveCursorModel,
 } from "../src/lib/cursor-pricing.js";
@@ -88,8 +89,10 @@ describe("resolvePricingKey snapshot coverage", () => {
   });
 
   it("prices every synced upstream Cursor model at Cursor's published rates", () => {
-    const upstream: Record<string, { input: number; output: number; cache_read?: number }> =
-      CURSOR_MODEL_COSTS;
+    const upstream: Record<
+      string,
+      { input: number; output: number; cache_read?: number; cache_write?: number }
+    > = CURSOR_MODEL_COSTS;
     const stale = [...CURSOR_UPSTREAM_INTENTIONALLY_UNKNOWN_MODELS].filter((id) => !upstream[id]);
     expect(stale, "Remove ids upstream no longer prices from the unknown list").toEqual([]);
 
@@ -108,13 +111,16 @@ describe("resolvePricingKey snapshot coverage", () => {
           : model.kind === "official"
             ? lookupCost(model.providerHint, model.modelHint)
             : null;
-      const { input, output, cache_read } = cost ?? {};
+      const { input, output, cache_read, cache_write } = cost
+        ? cursorBilledRates(modelID, cost)
+        : {};
       if (!resolved.ok || resolved.method !== method) {
         failures.push(`${modelID} -> ${resolved.ok ? resolved.method : "unresolved"}`);
       } else if (
         input !== rates.input ||
         output !== rates.output ||
-        cache_read !== rates.cache_read
+        cache_read !== rates.cache_read ||
+        cache_write !== (rates.cache_write ?? 0)
       ) {
         failures.push(`${modelID} -> ${JSON.stringify(cost)} instead of ${JSON.stringify(rates)}`);
       }
