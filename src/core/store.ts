@@ -28,6 +28,8 @@
  *   keeps the last check's part in memory only, never in the file, like its debug details.
  * - Subscribers hear of every change: a fetch, the rows read from the file at the start, and a
  *   change in which providers are on.
+ * - Each snapshot write saves all the store keeps. A write that saved nothing (another process
+ *   kept the file's lock) is made up by the next one, and `dispose` tries once more.
  * - Reads from OpenCode and provider fetches have time limits, so `dispose` always ends.
  */
 import { createHash, randomUUID } from "node:crypto";
@@ -380,6 +382,8 @@ export function createQuotaStore(deps: QuotaStoreDeps): QuotaStore {
   let loaded: Promise<void> | undefined;
   let writing: Promise<void> | undefined;
   let writeAgain = false;
+  /** The last write saved nothing (another process kept the file's lock, say). */
+  let unsaved = false;
   /** Names this store in its snapshots, so a TUI can tell a restarted server apart. */
   const serverId = randomUUID();
   /** The last snapshot's revision; each next snapshot gets one more. */
@@ -460,9 +464,11 @@ export function createQuotaStore(deps: QuotaStoreDeps): QuotaStore {
       }
     }
     try {
-      const options = { nowMs: now(), noticeMaxAgeMs: RESET_NOTICE_KEEP_MS };
+      const options = { now, noticeMaxAgeMs: RESET_NOTICE_KEEP_MS };
       adopt(await writeSavedState(file, { entries: saved, lastChecks }, options));
+      unsaved = false;
     } catch (error) {
+      unsaved = true;
       log(`could not save the quota snapshot: ${errorMessage(error)}`);
     }
   }
@@ -795,6 +801,11 @@ export function createQuotaStore(deps: QuotaStoreDeps): QuotaStore {
       listeners.clear();
       while (tasks.size > 0) await Promise.allSettled(tasks);
       await flush();
+      // A write that saved nothing gets one more try; each write saves all the store keeps.
+      if (unsaved) {
+        persist();
+        await flush();
+      }
     },
   };
 }

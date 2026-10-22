@@ -3,10 +3,12 @@
  * reset observation times of every provider and account. Several OpenCode processes share it:
  * every write holds a lock file next to it (`withFileLock`) while it re-reads the file, merges
  * what the others saved (the newer check wins) and replaces it, and writes in this process run
- * one at a time. A write that gets no lock within 2 s writes without one rather than wait
- * longer or drop the save. Entries older than a week are dropped. A file that does not parse
- * is ignored; a bad entry or row is skipped on its own. Provider text is scrubbed and
- * credentials redacted again on read.
+ * one at a time. No write runs without the lock: one that gets no lock within 2 s writes
+ * nothing and fails (the store saves its state with its next write). A write reads the clock
+ * only after it took the lock and read the file, so a check saved meanwhile is not taken for
+ * one dated after now. Entries older than a week are dropped. A file that does not parse is
+ * ignored; a bad entry or row is skipped on its own. Provider text is scrubbed and credentials
+ * redacted again on read.
  * Each row is saved with its login (a hash), as the store numbers logins that share a name.
  * A provider whose login can't be saved keeps only its last check's times, by provider id.
  */
@@ -31,7 +33,7 @@ export function snapshotFilePath(): string {
 const LOGIN_RE = /^[0-9a-f]{0,64}$/u;
 const ENTRY_MAX_AGE_MS = 7 * 24 * 60 * 60_000;
 const DETAIL_MAX_LENGTH = 300;
-/** How long a write waits for another process's write before it writes without the lock. */
+/** How long a write waits for another process's write before it gives up and writes nothing. */
 const LOCK_WAIT_MS = 2_000;
 
 /**
@@ -228,10 +230,12 @@ export function joinNotices(
 async function mergeAndWrite(
   file: string,
   state: SavedState,
-  options: { nowMs: number; noticeMaxAgeMs: number },
+  options: { now: () => number; noticeMaxAgeMs: number },
   fence: LockFence,
 ): Promise<SavedState> {
   const merged = await readSavedState(file);
+  // After the read, so a check another process saved while this one waited is not after now.
+  const nowMs = options.now();
   for (const [key, entry] of state.entries) {
     const other = merged.entries.get(key);
     if (!other) {
@@ -243,18 +247,16 @@ async function mergeAndWrite(
     }
   }
   for (const [key, entry] of merged.entries) {
-    if (options.nowMs - (entry.checkedAtMs ?? 0) > ENTRY_MAX_AGE_MS) {
+    if (nowMs - (entry.checkedAtMs ?? 0) > ENTRY_MAX_AGE_MS) {
       merged.entries.delete(key);
       continue;
     }
-    entry.notices = entry.notices.filter(
-      (notice) => options.nowMs - notice.atMs <= options.noticeMaxAgeMs,
-    );
+    entry.notices = entry.notices.filter((notice) => nowMs - notice.atMs <= options.noticeMaxAgeMs);
   }
   // A last check dated after now (the clock went back) would be due at once yet win every
   // merge: it goes, so a check made since replaces it.
   for (const [providerId, lastCheck] of merged.lastChecks) {
-    if (lastCheck.checkedAtMs > options.nowMs) merged.lastChecks.delete(providerId);
+    if (lastCheck.checkedAtMs > nowMs) merged.lastChecks.delete(providerId);
   }
   for (const [providerId, lastCheck] of state.lastChecks) {
     const other = merged.lastChecks.get(providerId);
@@ -263,7 +265,7 @@ async function mergeAndWrite(
     }
   }
   for (const [providerId, lastCheck] of merged.lastChecks) {
-    if (options.nowMs - lastCheck.checkedAtMs > ENTRY_MAX_AGE_MS) {
+    if (nowMs - lastCheck.checkedAtMs > ENTRY_MAX_AGE_MS) {
       merged.lastChecks.delete(providerId);
     }
   }
@@ -279,38 +281,27 @@ async function mergeAndWrite(
   return merged;
 }
 
-/** `mergeAndWrite` holding the file's lock; without it when the lock can't be had in time. */
-async function lockedMergeAndWrite(
-  file: string,
-  state: SavedState,
-  options: { nowMs: number; noticeMaxAgeMs: number },
-): Promise<SavedState> {
-  const lock = `${file}.lock`;
-  try {
-    return await withFileLock(lock, (fence) => mergeAndWrite(file, state, options, fence), {
-      waitMs: LOCK_WAIT_MS,
-      busyMessage: `another process holds ${lock}`,
-    });
-  } catch {
-    // Another process kept the lock, or none could be made: the write goes on without it.
-    return mergeAndWrite(file, state, options, async () => {});
-  }
-}
-
 /**
  * Merges `state` into the file (per entry and per last check the newer check wins; notices are
  * joined by id), drops entries and last checks older than a week, saved last checks dated after
- * `nowMs` and notices older than `noticeMaxAgeMs`, writes it atomically (owner-only), and
- * returns the merged state.
+ * now and notices older than `noticeMaxAgeMs`, writes it atomically (owner-only), and returns
+ * the merged state. It holds the file's lock throughout and reads `now` under it; when another
+ * process keeps the lock 2 s, it writes nothing and rejects.
  */
 export function writeSavedState(
   file: string,
   state: SavedState,
-  options: { nowMs: number; noticeMaxAgeMs: number },
+  options: { now: () => number; noticeMaxAgeMs: number },
 ): Promise<SavedState> {
+  const lock = `${file}.lock`;
   // Writes of one process run one at a time, so each re-reads what the previous one wrote.
   const previous = writeQueues.get(file) ?? Promise.resolve();
-  const write = previous.then(() => lockedMergeAndWrite(file, state, options));
+  const write = previous.then(() =>
+    withFileLock(lock, (fence) => mergeAndWrite(file, state, options, fence), {
+      waitMs: LOCK_WAIT_MS,
+      busyMessage: `another process holds ${lock}; nothing was saved`,
+    }),
+  );
   const settled = write.then(
     () => {},
     () => {},

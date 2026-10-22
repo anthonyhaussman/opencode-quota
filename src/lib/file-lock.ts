@@ -1,15 +1,23 @@
 /**
  * A lock file next to a file that several OpenCode processes change: it holds its owner's pid
- * and a random token. Only one process at a time creates it; a lock whose owner is gone is taken
- * over in one atomic rename. The settings file uses it, so a read, change and write never
- * interleaves with another one.
+ * and a random token. The settings file and the store's snapshot use it, so a read, change and
+ * write never interleaves with another one. What it guarantees:
  *
- * A waiter that saw an abandoned lock and stalled can rename a lock another process has just
- * created. So the holder's write checks its token right before it commits (the fence): a holder
- * that lost its lock writes nothing and redoes its read, change and write under a new lock.
+ * - One holder at a time: a waiter holds the lock only once it created the lock file itself, and
+ *   `work` never runs without it. After `waitMs` without the lock the call fails with
+ *   `busyMessage`.
+ * - A lock is taken over only when its owner is gone: the pid it names is not running, or it
+ *   names none and is older than 10 s. A lock that names a running process is never taken over,
+ *   however old.
+ * - A takeover never removes a lock created since it saw the abandoned one. The waiter that
+ *   removes a lock holds `<lock>.claim` while it checks the owner again, so no other waiter can
+ *   remove it meanwhile. A claim whose waiter died is removed the same way.
+ * - The holder's write checks its token right before it commits (the fence), for a holder that
+ *   stalled over 10 s between creating the lock file and writing its pid into it: one that lost
+ *   its lock writes nothing and redoes its read, change and write under a new lock.
  */
 import { randomUUID } from "node:crypto";
-import { lstat, mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
+import { lstat, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
 
 const LOCK_STALE_MS = 10_000;
@@ -62,22 +70,26 @@ function isAbandoned(lock: LockFile): boolean {
 }
 
 /**
- * Takes over an abandoned lock in one atomic step, a rename: only one waiter's rename finds it.
- * It never enters the lock itself; the caller then tries to create a lock of its own. A lock
- * renamed that is not the one seen abandoned was just created by another process: it is not put
- * back (that owner's fence makes it redo its work), because a lock put back after a third
- * process entered and left would let that owner's fence pass on data read before.
+ * Removes the lock file `path` when its owner is gone. Only the waiter that creates
+ * `<path>.claim` may remove it, after it checks the owner again: no other waiter removes it
+ * meanwhile, and a lock another waiter created since has a live owner, so it stays.
  */
-async function claimAbandoned(lock: string, token: string): Promise<void> {
-  const seen = await readLock(lock);
+async function removeAbandoned(path: string, token: string): Promise<void> {
+  const seen = await readLock(path);
   if (!seen || !isAbandoned(seen)) return;
-  const claimed = `${lock}.stale-${token}`;
-  const lost = await rename(lock, claimed).then(
-    () => false,
-    () => true,
-  );
-  if (lost) return; // Another waiter renamed it first.
-  await rm(claimed, { force: true });
+  const claim = `${path}.claim`;
+  const mine = lockOwnerText(token);
+  if (!(await createExclusive(claim, mine))) {
+    // Another waiter is removing it; or that waiter died and its claim goes first.
+    await removeAbandoned(claim, token);
+    return;
+  }
+  try {
+    const now = await readLock(path);
+    if (now && isAbandoned(now)) await rm(path, { force: true });
+  } finally {
+    await releaseLock(claim, mine);
+  }
 }
 
 /** Removes the lock only while it is still ours. */
@@ -93,9 +105,7 @@ export class LockLostError extends Error {}
 
 /**
  * Throws when the lock no longer holds our token. Call it right before the write that commits
- * (the atomic rename over the file). A takeover between this check and that rename still slips
- * through: a window of microseconds that also needs a waiter that stalled since it saw an
- * abandoned lock.
+ * (the atomic rename over the file).
  */
 export type LockFence = () => Promise<void>;
 
@@ -127,7 +137,7 @@ export async function withFileLock<T>(
         await releaseLock(lock, mine);
       }
     } else {
-      await claimAbandoned(lock, token);
+      await removeAbandoned(lock, token);
     }
     if (Date.now() - start > options.waitMs) throw new Error(options.busyMessage);
     await sleep(20);

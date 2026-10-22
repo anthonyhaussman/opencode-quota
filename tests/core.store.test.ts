@@ -504,7 +504,7 @@ describe("quota store", () => {
     const writing = writeSavedState(
       file,
       { entries: new Map(), lastChecks: new Map([["copilot", ours]]) },
-      { nowMs: START_MS, noticeMaxAgeMs: HOUR },
+      { now: () => START_MS, noticeMaxAgeMs: HOUR },
     ).then(() => {
       written = true;
     });
@@ -522,16 +522,60 @@ describe("quota store", () => {
     expect(existsSync(lock)).toBe(false);
   });
 
-  it("writes the snapshot without the lock when another process keeps it", async () => {
+  it("keeps a newer check another process saved while this one waited for the lock", async () => {
     await mkdir(dirname(file), { recursive: true });
-    await writeFile(`${file}.lock`, JSON.stringify({ pid: process.pid, token: "other" }));
-    const ours = { checkedAtMs: START_MS, failures: 0 };
-    await writeSavedState(
+    const lock = `${file}.lock`;
+    await writeFile(lock, JSON.stringify({ pid: process.pid, token: "other" }));
+    const copilot = fakeProvider();
+    copilot.signInAs("settings-only", false);
+    const store = makeStore([copilot.provider]);
+    const checked = deferred<void>();
+    store.subscribe((snapshot) => {
+      if (only(snapshot).checkedAtMs !== undefined) checked.resolve();
+    });
+    const refreshing = store.refresh({ reason: "poll" });
+    await checked.promise;
+
+    // While this store waits to write its check, the other process saves a later 429 and lets go.
+    clock += MINUTE;
+    const theirs = { checkedAtMs: clock, failures: 1, retryAtMs: clock + HOUR };
+    await writeFile(
       file,
-      { entries: new Map(), lastChecks: new Map([["copilot", ours]]) },
-      { nowMs: START_MS, noticeMaxAgeMs: HOUR },
+      JSON.stringify({ version: 2, entries: {}, lastChecks: { anthropic: theirs } }),
     );
-    expect((await savedFile()).lastChecks).toEqual({ copilot: ours });
+    clock += MINUTE;
+    await rm(lock);
+    await refreshing;
+    expect((await savedFile()).lastChecks).toEqual({
+      anthropic: theirs,
+      copilot: { checkedAtMs: START_MS, failures: 0 },
+    });
+  });
+
+  it("writes nothing while another process keeps the lock, and saves it all later", async () => {
+    await mkdir(dirname(file), { recursive: true });
+    // Another process holds the lock: it read the file and stalls before its write.
+    const lock = `${file}.lock`;
+    await writeFile(lock, JSON.stringify({ pid: process.pid, token: "other" }));
+    const copilot = fakeProvider();
+    copilot.signInAs("settings-only", false);
+    const store = makeStore([copilot.provider]);
+    // After 2 s this store gives up on the lock.
+    await store.refresh({ reason: "poll" });
+    expect(existsSync(file)).toBe(false);
+
+    // The other process writes what it read and its own check, and lets go.
+    const theirs = { checkedAtMs: START_MS, failures: 1, retryAtMs: START_MS + HOUR };
+    await writeFile(
+      file,
+      JSON.stringify({ version: 2, entries: {}, lastChecks: { anthropic: theirs } }),
+    );
+    await rm(lock);
+    await store.dispose();
+    expect((await savedFile()).lastChecks).toEqual({
+      anthropic: theirs,
+      copilot: { checkedAtMs: START_MS, failures: 0 },
+    });
   });
 
   it("records a reset notice once when a window refills", async () => {
