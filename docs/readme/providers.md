@@ -259,7 +259,7 @@ For `metric.type: "value"`:
 
 Pair denominators (`limit` and pair-form `budget`) must be greater than zero. Remaining values cannot exceed their denominator; used and spend may exceed it, so the calculated remaining percentage may be negative. A direct remaining percentage may be negative but cannot exceed 100; a direct used percentage must be non-negative and may exceed 100. Values are never clamped.
 
-`unit` and `unitPosition` must appear together. Units are forbidden for `percentage` and `status`, and show only on `value` rows: prefix like `$2`, suffix like `2 tokens`.
+`unit` and `unitPosition` must appear together. Units are forbidden for `percentage` and `status`, and show only on `value` rows: prefix like `€2`, suffix like `2 tokens`. A value with unit `$` or `USD` (in any case, such as `usd`) is money and shows like built-in money, `$1,234.57` or `-$3.50`, in either position. Other values show at most 15 significant digits, so `0.7` with `divideBy: 100` shows as `0.007`.
 
 **Never put secrets in adapter display configuration.** Static `name`, `label`, and `unit` fields and every `literal` can appear in written configuration, cache identity, rendered quota rows, or exports.
 

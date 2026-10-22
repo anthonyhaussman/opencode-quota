@@ -1,6 +1,8 @@
 import type { ErrorFacts } from "../core/errors.js";
 import { codePointLength, isIsoTime, LABEL_MAX_CODE_POINTS } from "../core/validate.js";
+import { accountingDecimalFromNumber } from "../providers/accounting-decimal.js";
 import type { ProviderRow } from "../providers/contract.js";
+import { amountText } from "../view/format.js";
 import { type ApiKeySpec, getApiKeyCheckedPaths, resolveApiKey } from "./api-key-resolver.js";
 import { sanitizeSingleLineDisplayText } from "./display-sanitize.js";
 import { fmtUsdAmount } from "./format-utils.js";
@@ -46,6 +48,13 @@ const QUOTA_V1_ROW_KEYS = [
   "observedAtIso",
 ];
 const JSON_V1_DECIMAL_TEXT_RE = /^-?\d+(?:\.\d+)?$/;
+/** Units that mark a json-v1 value as US dollars, in lower case: the match ignores case. */
+const JSON_V1_USD_UNITS = new Set(["$", "usd"]);
+/**
+ * Every decimal of up to 15 significant digits survives a trip through a float, so a value
+ * shown to 15 digits loses float noise such as 0.7 / 100 = 0.006999999999999999.
+ */
+const JSON_V1_SHOWN_SIGNIFICANT_DIGITS = 15;
 
 export type QuotaProviderAuthSource = "env" | "opencode.json" | "opencode.jsonc" | "opencode.db";
 
@@ -304,9 +313,22 @@ function jsonV1CandidateError(
   return `adapter.mappings[${mappingIndex}].${field} ${issue} at row ${rowIndex}`;
 }
 
+/**
+ * A value row's text. A value in US dollars (unit `$` or `USD` in any case, either position) is
+ * written like built-in money ("$1,234.57", "-$3.50"); any other value as its number without float
+ * noise ("0.007", not "0.006999999999999999"), with its unit where the mapping puts it.
+ */
 function formatJsonV1Value(value: number, mapping: JsonV1Mapping): string {
-  if (!mapping.unit) return `${value}`;
-  return mapping.unitPosition === "prefix" ? `${mapping.unit}${value}` : `${value} ${mapping.unit}`;
+  const decimal = accountingDecimalFromNumber(
+    Number(value.toPrecision(JSON_V1_SHOWN_SIGNIFICANT_DIGITS)),
+  );
+  if (mapping.unit !== undefined && JSON_V1_USD_UNITS.has(mapping.unit.toLowerCase())) {
+    return amountText({ decimal, unit: { kind: "currency", code: "USD" } });
+  }
+  if (!mapping.unit) return decimal;
+  return mapping.unitPosition === "prefix"
+    ? `${mapping.unit}${decimal}`
+    : `${decimal} ${mapping.unit}`;
 }
 
 /**
