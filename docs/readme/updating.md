@@ -14,16 +14,14 @@ A `settings.jsonc` written by 6.0.0-beta.1 sets every setting, so a later change
 
 ## Moving from 5.x
 
-Update as above; you don't need to edit your settings. On the first start, OpenCode Quota converts your old global settings automatically:
+Update as above; you don't need to edit your settings. On the first start, OpenCode Quota converts the 4.x or 5.x global settings you set (`opencode-quota/quota-toast.jsonc`, or `experimental.quotaToast` in `opencode.json`) into `opencode-quota/settings.jsonc` ([Configuration](configuration.md)) and leaves the old file in place. From then on, only `settings.jsonc` is read. The TUI shows a conversion toast once, and `/quota_status` lists what was converted, what was dropped, and why. Project settings files (`<your-repo>/opencode-quota/quota-toast.jsonc`) are not read; `/quota_status` lists any it finds.
 
-- It reads `opencode-quota/quota-toast.jsonc` or `.json` in the global OpenCode folder, or `experimental.quotaToast` in the global `opencode.json` or `opencode.jsonc` when there is no such file.
-- When the global OpenCode folder has neither, it reads them in the first older folder 4.x also read that has them: `~/.config/opencode`, on macOS `~/Library/Application Support/opencode`, on Windows `%APPDATA%\opencode` and `%LOCALAPPDATA%\opencode`. With `OPENCODE_CONFIG_DIR` set, it reads only that folder.
-- It writes the settings you set there, converted, to `opencode-quota/settings.jsonc` (see [Configuration](configuration.md)) and leaves the old file in place. A setting you set to what is now the default is written too. From then on, only `settings.jsonc` is read.
-- Display choices, words, provider checks and system switches share that file, each in its own section.
-- The TUI shows a conversion toast once. `/quota_status` lists what was converted, what was dropped, and why in the server session that performs the conversion.
-- Settings you never set are not written, so they use the 6.x defaults, now and after later changes: the status line shows only when the sidebar is not on screen, a toast follows a reply only once a limit is getting low, no toast follows a question, toasts use the grouped layout (`toast.layout: "detailed"` is the 5.x look), and the sidebar and toasts show "runs out in" when a limit, used at your pace, runs out before it resets.
+The `init`, `update`, and `provider add` terminal commands are gone; `show` and `status` stay. Use `opencode plugin add @slkiser/opencode-quota` and `opencode plugin update` instead, and ask your agent to add a [custom provider](providers.md#custom-providers).
 
-Your `/tokens_*` commands keep working; they are on for everyone. Turn them off or on with **Old command names** on the Plugin tab (`/quota_status`), or with `"system": { "oldCommands": false }` in `settings.jsonc`. The "/" list in an open TUI shows the change after OpenCode restarts.
+<details>
+<summary><strong>Old <code>/tokens_*</code> commands</strong></summary>
+
+They keep working, for everyone. Turn them off or on with **Old command names** on the Plugin tab (`/quota_status`), or with `"system": { "oldCommands": false }` in `settings.jsonc`. The "/" list in an open TUI shows the change after OpenCode restarts.
 
 | 4.x and 5.x | Same as |
 | --- | --- |
@@ -38,32 +36,19 @@ Your `/tokens_*` commands keep working; they are on for everyone. Turn them off 
 | `/quota_announcements` | The notices on the Plugin tab (`/quota_status`) |
 | `/pricing_refresh` | `p` in the Usage tab (`/quota_usage`); once per OpenCode run, prices older than 7 days also download on their own |
 
-Project settings files (`<your-repo>/opencode-quota/quota-toast.jsonc`) are not read; `/quota_status` lists any it finds. Put what you still need in `settings.jsonc`.
-
-The `init`, `update`, and `provider add` terminal commands are gone; `show` and `status` stay:
-
-| Instead of                                 | Use                                                                                            |
-| ------------------------------------------ | ---------------------------------------------------------------------------------------------- |
-| `npx @slkiser/opencode-quota init`         | `opencode plugin add @slkiser/opencode-quota`                                                  |
-| `npx @slkiser/opencode-quota update`       | `opencode plugin update`                                                                       |
-| `npx @slkiser/opencode-quota provider add` | Ask your agent to add a custom provider: see [Custom providers](providers.md#custom-providers) |
+</details>
 
 ## Moving to OpenCode 2
 
-`5.0.0` and newer run only on OpenCode 2; this version needs OpenCode `2.0.26` or newer.
+`5.0.0` and newer run only on OpenCode 2; this version needs OpenCode `2.0.26` or newer. On OpenCode 1, stay on 4.x: `"plugin": ["@slkiser/opencode-quota@4"]`.
 
 1. Install OpenCode 2 ([OpenCode docs](https://opencode.ai/docs/)) and start it once. On first start it copies your old `auth.json` logins into its database, `opencode.db`. It does this only once.
 2. In your OpenCode config, change the OpenCode Quota entry to `@slkiser/opencode-quota` (drop any `@4` pin), then restart OpenCode.
 3. Run `/quota_status`. If a provider is missing, log in to it again in OpenCode 2 (`/connect`, or `opencode auth login <provider>`).
 
-Your 4.x global settings convert on the first start, as in [Moving from 5.x](#moving-from-5x).
+Your 4.x global settings convert on the first start, as in [Moving from 5.x](#moving-from-5x). On OpenCode 2:
 
-What changed in `5.0.0`:
-
-- **OpenCode 1 is no longer supported.** On OpenCode 1, stay on 4.x: `"plugin": ["@slkiser/opencode-quota@4"]`.
-- **Logins come only from OpenCode 2.** Inside OpenCode, logins come through OpenCode 2's plugin API; the terminal command reads `opencode.db` read-only. Neither reads `auth.json`.
-- **Quota runs in OpenCode's background service.** Inside OpenCode, `PATH`, environment variables, and the working folder (your home folder) come from the service, not your terminal. See [Service environment](troubleshooting.md#service-environment).
-- **Web and Desktop get slash commands, but no toasts or panels,** because OpenCode 2 gives plugins no Web UI hooks. See [Web and Desktop notes](manual-install.md#web-and-desktop-notes).
-- **One plugin entry.** One `"plugin"` entry in `opencode.json` loads the server and the TUI; no `tui.json` entry is needed.
-- **TUI reports open in the quota window** and leave no chat message.
-- **OpenCode Zen uses your OpenCode Console sign-in; OpenCode Go uses it or an API key.** Their old workspace/cookie settings are no longer read. See [OpenCode Go](providers.md#opencode-go) and [OpenCode Zen](providers.md#opencode-zen).
+- **Logins come only from OpenCode 2,** never from `auth.json`.
+- **Quota runs in OpenCode's background service,** with the service's `PATH` and environment. See [Service environment](troubleshooting.md#service-environment).
+- **Web and Desktop get the slash commands, but no toasts or panels.**
+- **OpenCode Zen uses your OpenCode Console sign-in; OpenCode Go uses it or an API key.** See [OpenCode Go](providers.md#opencode-go) and [OpenCode Zen](providers.md#opencode-zen).
