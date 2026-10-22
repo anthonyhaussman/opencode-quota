@@ -127,9 +127,10 @@ describe("package manifest compatibility", () => {
       ["devDependencies", "husky", undefined],
       ["devDependencies", "lint-staged", undefined],
       ["scripts", "prepare", "lefthook install"],
-      // The OpenTelemetry API ships; the metrics SDK stays host-owned.
+      // The OpenTelemetry API ships; the metrics SDK stays host-owned. The API stays
+      // on 1.9.x so it uses a host provider registered by API 1.9 or newer.
       ["optionalDependencies", null, undefined],
-      ["dependencies", "@opentelemetry/api", "^1.9.1"],
+      ["dependencies", "@opentelemetry/api", "~1.9.1"],
       ["devDependencies", "@opentelemetry/api", undefined],
       ["peerDependencies", "@opentelemetry/api", undefined],
       ["peerDependenciesMeta", "@opentelemetry/api", undefined],
@@ -248,7 +249,7 @@ describe("package manifest compatibility", () => {
         "dist\\\\/tui\\\\.js",
         'const { metrics } = await import("@opentelemetry/api");',
         'assert.equal(typeof metrics.getMeter, "function");',
-        'assert.equal(pkg.dependencies?.["@opentelemetry/api"], "^1.9.1");',
+        'assert.equal(pkg.dependencies?.["@opentelemetry/api"], "~1.9.1");',
         '["devDependencies", "optionalDependencies", "peerDependencies"]',
         'assert.equal(pkg.peerDependenciesMeta?.["@opentelemetry/api"], undefined);',
         'rootPackage.devDependencies?.["@opentelemetry/sdk-metrics"]',
