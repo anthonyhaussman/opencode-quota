@@ -826,6 +826,19 @@ describe("usageView", () => {
         { text: " (a-1, …)", role: "muted" },
       ],
     },
+    {
+      name: "a model priced for only some of its messages",
+      report: {
+        ...unpricedReport(),
+        models: [{ ...unpricedReport().models[0], unpricedTokens: M }],
+      },
+      width: 64,
+      note: [
+        { text: "Unpriced tokens excluded: ", role: "muted" },
+        { text: "20.0%", role: "warning" },
+        { text: " (claude-test)", role: "muted" },
+      ],
+    },
   ])("one unpriced note line at the bottom: $name", ({ report, width, note }) => {
     const lines = usageView(report, { mode: "cost", breakdown: "model", width }).lines;
     const notes = lines.filter((line) => line.some((part) => part.role === "warning"));

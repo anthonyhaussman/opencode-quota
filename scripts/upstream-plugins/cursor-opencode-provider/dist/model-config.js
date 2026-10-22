@@ -1,4 +1,4 @@
-import { CURSOR_VARIANT_PARAMETERS_KEY, CURSOR_WIRE_MODEL_ID_KEY, parseCursorContextLimit, } from "./models.js";
+import { CURSOR_VARIANT_PARAMETERS_KEY, CURSOR_WIRE_MODEL_ID_KEY, findDefaultVariant, parseCursorContextLimit, } from "./models.js";
 import { applyCursorModelCost, hasCursorFastPricing } from "./pricing.js";
 import { getDocumentedCursorModelContext, resolveCursorModelSupportsImages, } from "./model-metadata.js";
 /**
@@ -112,8 +112,23 @@ function isLongContextVariant(v) {
 function isFastVariant(v) {
     return v.parameterValues.some((p) => p.id === "fast" && p.value === "true");
 }
+function variantContext(v) {
+    return parseCursorContextLimit(v.parameterValues.find((p) => p.id === "context")?.value);
+}
+function isSeparateContext(mi, v) {
+    const context = variantContext(v);
+    return isLongContextVariant(v) ||
+        (v.isMaxMode === true && context !== undefined && context !== mi.maxContext);
+}
+function contextSuffix(context) {
+    return context % 1_000_000 === 0 ? `${context / 1_000_000}m` : `${context / 1_000}k`;
+}
 function variantsForTier(mi, tier) {
-    return mi.variants.filter((v) => isLongContextVariant(v) === (tier === "long"));
+    return mi.variants.filter((v) => tier === "base"
+        ? !isSeparateContext(mi, v)
+        : tier === "long"
+            ? isLongContextVariant(v)
+            : isSeparateContext(mi, v) && variantContext(v) === tier);
 }
 /**
  * Display names shared by both a thinking and a non-thinking model. A thinking
@@ -171,6 +186,8 @@ export function modelInfoToConfig(mi, options = {}) {
         name += " Fast";
     if (contextTier === "long")
         name += " 1M";
+    if (typeof contextTier === "number")
+        name += ` ${contextSuffix(contextTier).toUpperCase()}`;
     // OpenCode's context limit is static per model entry, while Cursor's context
     // tier is a variant parameter. Long-context choices are therefore emitted as
     // separate OpenCode entries by modelsToConfig.
@@ -179,9 +196,12 @@ export function modelInfoToConfig(mi, options = {}) {
     // live checkpoints report 256k for the base tier — the previous 200k
     // fallback made the host context meter disagree with Cursor.
     const fallbackContext = mi.id === "default" ? 256_000 : 200_000;
-    const context = contextTier === "long"
-        ? (mi.maxContextForMaxMode ?? documentedContext?.maxContextForMaxMode ?? 1_000_000)
-        : (mi.maxContext ?? documentedContext?.maxContext ?? fallbackContext);
+    const context = typeof contextTier === "number"
+        ? contextTier
+        : contextTier === "long"
+            ? (variants.some(isLongContextVariant) ? 1_000_000
+                : (mi.maxContextForMaxMode ?? documentedContext?.maxContextForMaxMode ?? 1_000_000))
+            : (mi.maxContext ?? documentedContext?.maxContext ?? fallbackContext);
     // OpenCode's overflow/compaction/UI use limit.context; generation and
     // thinking budgets use limit.output. models.dev 1M peers advertise
     // 64k–128k output — a tiny cap makes long-context sessions feel broken
@@ -212,10 +232,8 @@ export function modelInfoToConfig(mi, options = {}) {
     const variantConfig = modelInfoVariants(mi, variants);
     if (variantConfig)
         config.variants = variantConfig;
-    if (contextTier === "long" || options.fast) {
-        const defaultVariant = contextTier === "long"
-            ? (variants.find((v) => v.isDefaultMax) ?? variants[0])
-            : (variants.find((v) => v.isDefaultNonMax) ?? variants[0]);
+    if (contextTier !== "base" || options.fast) {
+        const defaultVariant = findDefaultVariant(mi, variants, contextTier !== "base") ?? variants[0];
         if (defaultVariant) {
             config.options = {
                 [CURSOR_WIRE_MODEL_ID_KEY]: mi.id,
@@ -245,11 +263,9 @@ function uniqueCatalogId(usedIds, modelId, suffix) {
     }
     let n = 2;
     while (true) {
-        const candidate = suffix === "-fast"
-            ? `${modelId}-fast-${n}`
-            : suffix === "-1m-fast"
-                ? `${modelId}-1m-${n}-fast`
-                : `${modelId}-1m-${n}`;
+        const candidate = suffix !== "-fast" && suffix.endsWith("-fast")
+            ? `${modelId}${suffix.slice(0, -5)}-${n}-fast`
+            : `${modelId}${suffix}-${n}`;
         if (!usedIds.has(candidate)) {
             usedIds.add(candidate);
             return candidate;
@@ -265,13 +281,28 @@ export function modelsToConfig(models) {
         const thinkingSuffix = !!m.supportsThinking && ambiguous.has(baseName(m));
         const splitFast = hasCursorFastPricing(m.id);
         const groups = [];
-        for (const contextTier of ["base", "long"]) {
-            const suffixFor = (fast) => contextTier === "long" ? (fast ? "-1m-fast" : "-1m") : (fast ? "-fast" : "");
-            for (const group of speedGroups(variantsForTier(m, contextTier), splitFast)) {
+        const extraContexts = new Set(m.variants
+            .filter((v) => isSeparateContext(m, v) && !isLongContextVariant(v))
+            .map(variantContext)
+            .filter((context) => context !== undefined));
+        const tiers = ["base", "long", ...extraContexts];
+        for (const contextTier of tiers) {
+            const tierSuffix = contextTier === "base" ? ""
+                : contextTier === "long" ? "-1m" : `-${contextSuffix(contextTier)}`;
+            const suffixFor = (fast) => `${tierSuffix}${fast ? "-fast" : ""}`;
+            const tierVariants = new Set(variantsForTier(m, contextTier));
+            // Base/Fast ids and labels are persisted by the host. Keep their pre-split
+            // non-1M variants available while dedicated entries supply accurate limits.
+            const advertised = contextTier === "base"
+                ? m.variants.filter((variant) => !isLongContextVariant(variant))
+                : [...tierVariants];
+            for (const group of speedGroups(advertised, splitFast)) {
+                const tierGroup = group.variants.filter((variant) => tierVariants.has(variant));
                 groups.push({
                     contextTier,
                     fast: group.fast,
-                    variants: group.variants,
+                    variants: tierGroup.length > 0 ? tierGroup : group.variants,
+                    advertisedVariants: group.variants,
                     suffix: suffixFor(group.fast),
                 });
             }
@@ -293,17 +324,7 @@ export function modelsToConfig(models) {
                 variants: group.variants,
                 fast: group.fast,
             });
-            if (catalogId !== m.id && !config.options) {
-                const defaultVariant = (group.contextTier === "long"
-                    ? group.variants.find((v) => v.isDefaultMax)
-                    : group.variants.find((v) => v.isDefaultNonMax)) ?? group.variants[0];
-                if (defaultVariant) {
-                    config.options = {
-                        [CURSOR_WIRE_MODEL_ID_KEY]: m.id,
-                        [CURSOR_VARIANT_PARAMETERS_KEY]: defaultVariant.parameterValues.map((p) => ({ ...p })),
-                    };
-                }
-            }
+            config.variants = modelInfoVariants(m, group.advertisedVariants);
             out[catalogId] = applyCursorModelCost(pricingId, config);
         }
     }

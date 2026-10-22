@@ -21,7 +21,7 @@ export declare const AVAILABLE_MODELS_PATH = "/aiserver.v1.AiService/AvailableMo
 export declare const SERVER_CONFIG_PATH = "/aiserver.v1.ServerConfigService/GetServerConfig";
 export declare const MODEL_CACHE_FILE = "cursor-models.json";
 /** Bumped when the on-disk model cache shape/semantics change (forces refetch). */
-export declare const MODEL_CACHE_SCHEMA_VERSION = 3;
+export declare const MODEL_CACHE_SCHEMA_VERSION = 6;
 export declare const MODEL_CACHE_TTL_MS = 86400000;
 export declare const CONVERSATION_CACHE_DIR = "cursor-conversations";
 export declare const CONVERSATION_CACHE_SCHEMA_VERSION = 4;

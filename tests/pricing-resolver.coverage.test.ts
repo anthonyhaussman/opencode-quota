@@ -10,13 +10,12 @@ import { priceMessage, resolvePricingKey } from "../src/lib/pricing-key.js";
 import { SHIPPED_PRICE_LIST } from "./helpers/shipped-price-list.js";
 
 // Price not confirmed, so these stay unknown: models.dev rates differ from Cursor's for the
-// Gemini Flash and GLM 5.3 Flash ids, and muse-spark (meta) is not a pricing snapshot provider.
+// Gemini 3.6 Flash and GLM 5.3 Flash ids, and the Muse models (meta) are not in the snapshot.
 const CURSOR_UPSTREAM_INTENTIONALLY_UNKNOWN_MODELS = new Set<string>([
   "gemini-3.6-flash",
-  "gemini-3.7-flash",
-  "gemini-3.8-flash",
   "glm-5.3-flash",
   "muse-spark-1.3",
+  "muse-wonder-1.0",
 ]);
 
 /** "provider/model" of the price `resolvePricingKey` picks, or null when it finds none. */
@@ -88,40 +87,70 @@ describe("resolvePricingKey snapshot coverage", () => {
     expect(lookupCursorLocalCost(model)).toEqual(rates);
   });
 
-  it("prices every synced upstream Cursor model at Cursor's published rates", () => {
-    const upstream: Record<string, { input: number; output: number; cache_read?: number }> =
+  it("prices every synced upstream Cursor model's messages at Cursor's published rates", () => {
+    type UpstreamRates = {
+      input: number;
+      output: number;
+      cache_read: number;
+      cache_write?: number;
+    };
+    const upstream: Record<string, UpstreamRates & { context_over_200k?: UpstreamRates }> =
       CURSOR_MODEL_COSTS;
     const stale = [...CURSOR_UPSTREAM_INTENTIONALLY_UNKNOWN_MODELS].filter((id) => !upstream[id]);
     expect(stale, "Remove ids upstream no longer prices from the unknown list").toEqual([]);
 
+    // Each token kind at its own rate. At most 200k tokens of prompt is the base tier; over
+    // 200k, Cursor bills a model with a long-context tier at rates no price here holds.
+    const base = {
+      input: 70_000,
+      output: 30_000,
+      reasoning: 0,
+      cache_read: 90_000,
+      cache_write: 40_000,
+    };
+    const long = { ...base, input: base.input + 1 };
+    const usd = (rates: UpstreamRates, tokens: typeof base) =>
+      (tokens.input * rates.input +
+        tokens.output * rates.output +
+        tokens.cache_read * rates.cache_read +
+        tokens.cache_write * (rates.cache_write ?? 0)) /
+      1_000_000;
+    const outcome = (price: ReturnType<typeof priceMessage>) =>
+      price.kind === "priced"
+        ? `${price.key.provider}/${price.key.model} $${price.usd.toFixed(9)}`
+        : price.kind;
+
     const failures: string[] = [];
     for (const [modelID, rates] of Object.entries(upstream)) {
-      const model = resolveCursorModel(`cursor/${modelID}`);
-      const resolved = resolvePricingKey({ providerID: "cursor", modelID: `cursor/${modelID}` });
-      if (CURSOR_UPSTREAM_INTENTIONALLY_UNKNOWN_MODELS.has(modelID)) {
-        if (model.kind !== "unknown") failures.push(`${modelID} -> priced but listed as unknown`);
-        continue;
-      }
-      const method = model.kind === "local" ? "cursor_local" : "cursor_api_alias";
-      const cost =
-        model.kind === "local"
-          ? lookupCursorLocalCost(model.model)
-          : model.kind === "official"
-            ? lookupCost(model.providerHint, model.modelHint)
-            : null;
-      const { input, output, cache_read } = cost ?? {};
-      if (!resolved.ok || resolved.method !== method) {
-        failures.push(`${modelID} -> ${resolved.ok ? resolved.method : "unresolved"}`);
-      } else if (
-        input !== rates.input ||
-        output !== rates.output ||
-        cache_read !== rates.cache_read
-      ) {
-        failures.push(`${modelID} -> ${JSON.stringify(cost)} instead of ${JSON.stringify(rates)}`);
+      const source = { providerID: "cursor", modelID: `cursor/${modelID}` };
+      const alias = CURSOR_OFFICIAL_MODEL_ALIASES[modelID];
+      const key = lookupCursorLocalCost(modelID)
+        ? `cursor/${modelID}`
+        : `${alias?.providerHint}/${alias?.modelHint}`;
+      const expected = CURSOR_UPSTREAM_INTENTIONALLY_UNKNOWN_MODELS.has(modelID)
+        ? ["unknown", "unknown"]
+        : [
+            `${key} $${usd(rates, base).toFixed(9)}`,
+            rates.context_over_200k ? "unpriced" : `${key} $${usd(rates, long).toFixed(9)}`,
+          ];
+      const actual = [base, long].map((tokens) => outcome(priceMessage(source, tokens)));
+      if (actual.join() !== expected.join()) {
+        failures.push(`${modelID} -> ${actual.join(", ")} instead of ${expected.join(", ")}`);
       }
     }
     expect(failures).toEqual([]);
   });
+
+  it.each(["gpt-5.4-high", "gpt-5.4-medium", "cursor-acp/gpt-5.4"])(
+    "leaves a request over 200k tokens of %s, a model with a long-context tier, unpriced",
+    (modelID) => {
+      const tokens = { input: 200_001, output: 1, reasoning: 0, cache_read: 0, cache_write: 0 };
+      expect(priceMessage({ providerID: "cursor", modelID }, tokens)).toEqual({
+        kind: "unpriced",
+        key: { provider: "openai", model: "gpt-5.4" },
+      });
+    },
+  );
 
   it("prices -1m ids at the base rate only where Cursor documents no long-context surcharge", () => {
     const sameRate = [
@@ -153,6 +182,8 @@ describe("resolvePricingKey snapshot coverage", () => {
       "gpt-5.6-sol-1m",
       "grok-4.7-1m",
       "grok-4.7-1m-fast",
+      "grok-4.7-500k",
+      "grok-4.7-500k-fast",
     ];
     for (const modelID of unconfirmed) {
       expect(resolveCursorModel(`cursor/${modelID}`), modelID).toEqual({ kind: "unknown" });

@@ -43,8 +43,12 @@ export declare function snapshotConversationBlobs(conversationId: string): Conve
  * Keep only blobs reachable from the latest checkpoint and snapshot them.
  * Malformed/unknown state or a missing referenced hash falls back to retaining
  * every blob: cache size must never come at the cost of restart correctness.
+ * `keepInMemory`: snapshot only, for a Run still in progress, whose next
+ * checkpoint may reference blobs this one does not.
  */
-export declare function compactConversationBlobs(conversationId: string, checkpoint: Uint8Array | undefined): ConversationBlobCompaction;
+export declare function compactConversationBlobs(conversationId: string, checkpoint: Uint8Array | undefined, options?: {
+    keepInMemory?: boolean;
+}): ConversationBlobCompaction;
 /** Replace the in-memory blob bucket when restoring a persisted conversation. */
 export declare function restoreConversationBlobs(conversationId: string, blobs: readonly ConversationBlobSnapshot[]): void;
 /** Drop all blobs for a conversation (compaction conversation reset). */

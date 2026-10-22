@@ -1,13 +1,13 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { encodeMessage } from "./messages.js";
+import { encodeMessage, getMessageTypes } from "./messages.js";
 import { encodeJsonAsValue, decodeStructEntriesToJson, readAllFields } from "./struct.js";
 import { buildEnv } from "../context/env.js";
 import { ensureOpencodeProjectDir } from "../context/paths.js";
 import { trace, traceRequestContextPaths } from "../debug.js";
 import { cursorExecVariantByRequestName, FORCE_BACKGROUND_STATUS_ERROR, } from "./exec-variants.js";
-import { APPLY_PATCH_TOOL, buildAddFilePatch, buildUpdateFilePatch, planSubstringEdit, } from "./apply-patch.js";
+import { buildAddFilePatch, buildUpdateFilePatch, hostPatchTool, isHostPatchTool, planSubstringEdit, } from "./apply-patch.js";
 import { BACKGROUND_SHELL_MARKER, buildBackgroundShellCommand, } from "../shell-timeout.js";
 import { normalizeOpencodeQuestionArgs } from "./ask-question.js";
 import { normalizeOpencodeTodoArgs } from "../todo-store.js";
@@ -667,6 +667,46 @@ export function remapNativeSubagentForCatalog(parsed, advertisedToolNames, catal
 }
 /** Matches Cursor's own pre-write read threshold (`local-exec` 52428800). */
 const MAX_EDIT_SOURCE_BYTES = 50 * 1024 * 1024;
+export function cursorEditReadAnswer(absolutePath, workspaceRoot) {
+    try {
+        fs.lstatSync(absolutePath);
+    }
+    catch (error) {
+        return error.code === "ENOENT" ? "empty" : "host";
+    }
+    // Do not bypass OpenCode's external-directory permission boundary.
+    let relative;
+    try {
+        relative = path.relative(fs.realpathSync(workspaceRoot), fs.realpathSync(absolutePath));
+    }
+    catch {
+        return "external";
+    }
+    if (relative === ".." || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative))
+        return "external";
+    try {
+        const stat = fs.statSync(absolutePath);
+        if (!stat.isFile() || stat.size > MAX_EDIT_SOURCE_BYTES)
+            return "host";
+        fs.closeSync(fs.openSync(absolutePath, "r"));
+        return "complete";
+    }
+    catch {
+        return "host";
+    }
+}
+/**
+ * The edit's private read becomes its own host `read` call. A read the edit
+ * handshake leaves to the host can still be answered by the provider's
+ * missing-target validation (a dangling symlink, a directory); that read
+ * never reaches the host.
+ */
+export function cursorEditReadReachesHost(absolutePath, workspaceRoot) {
+    const answer = cursorEditReadAnswer(absolutePath, workspaceRoot);
+    if (answer !== "external" && answer !== "host")
+        return false;
+    return classifyMissingReadTarget(absolutePath) === undefined;
+}
 /**
  * Complete the private read inside Cursor's legacy edit transaction without
  * routing it through OpenCode's user-facing `read` tool. The latter caps every
@@ -705,6 +745,60 @@ export function buildCompleteEditReadMessages(execId, sourcePath, resultPath = s
     catch {
         return undefined;
     }
+}
+/** 1x1 transparent PNG: satisfies Cursor's binary-attachment check without file bytes. */
+const TASK_ATTACHMENT_PLACEHOLDER = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=", "base64");
+/**
+ * Answer Cursor's read of a Task attachment without the file's bytes. Cursor
+ * puts them only in SubagentArgs.selected_context, which OpenCode's subagent
+ * tools cannot take, yet refuses the Task unless the read returns binary data.
+ * The path reaches the subagent prompt instead ({@link appendTaskAttachments})
+ * and the child reads it under its own permissions. A missing or non-regular
+ * target gets the same typed rejection as any native read.
+ */
+export function buildTaskAttachmentReadMessages(execId, sourcePath, resultPath = sourcePath) {
+    // Unlike an ordinary host read, this path has no later executor to surface
+    // stat errors. Never mistake EACCES/ELOOP (or invalid input) for a real file.
+    try {
+        const rejected = classifyReadTargetStat(sourcePath, fs.statSync(sourcePath));
+        if (rejected)
+            return buildReadRejectionMessages(execId, rejected);
+    }
+    catch (error) {
+        const code = error.code;
+        const rejected = code === "ENOENT" || code === "ENOTDIR"
+            ? { file_not_found: { path: sourcePath } }
+            : undefined;
+        return buildReadRejectionMessages(execId, rejected ?? {
+            error: { path: resultPath, error: error instanceof Error ? error.message : String(error) },
+        });
+    }
+    return [
+        encodeMessage("AgentClientMessage", {
+            exec_client_message: {
+                id: execId,
+                local_execution_time_ms: 0,
+                read_result: {
+                    success: {
+                        path: resultPath,
+                        data: TASK_ATTACHMENT_PLACEHOLDER,
+                        total_lines: 0,
+                        file_size: TASK_ATTACHMENT_PLACEHOLDER.length,
+                        truncated: false,
+                    },
+                },
+            },
+        }),
+        buildExecStreamClose(execId),
+    ];
+}
+/** List Cursor's Task attachments at the end of the subagent prompt as absolute paths. */
+export function appendTaskAttachments(parsed, attachments, workspaceRoot) {
+    if (parsed.resultField !== "subagent_result" || attachments.length === 0)
+        return;
+    const prompt = str(parsed.args.prompt) ?? "";
+    const paths = attachments.map((item) => `- ${JSON.stringify(resolveReadTargetPath(item, workspaceRoot))}`);
+    parsed.args.prompt = `${prompt}\n\nAttached files (open them with your file tools):\n${paths.join("\n")}`;
 }
 /** Return the number of non-overlapping occurrences, stopping after ambiguity. */
 function replacementOccurrenceCount(source, needle) {
@@ -779,6 +873,41 @@ function planWholeFileEdit(source, target) {
     return result;
 }
 /**
+ * Host tool a Cursor edit announcement will become, using the same file facts
+ * as `remapCorrelatedEditWriteForCatalog` and `remapEditToolsForCatalog`. An
+ * existing file becomes `edit`, else the patch tool. A missing file is a
+ * creation, which stays `write`, else becomes the patch tool's Add File; so
+ * does an empty file, which has no text for an `edit` to replace. A name is
+ * withheld when those remaps would refuse the file or not produce that tool:
+ * no workspace for a relative path, not a regular file, too large,
+ * unreadable, or `patch` with carriage returns.
+ */
+export function hostToolForCursorEdit(filePath, catalog, workspaceRoot) {
+    const patchTool = hostPatchTool(catalog);
+    if (!path.isAbsolute(filePath) && !workspaceRoot)
+        return undefined;
+    const absolute = path.resolve(workspaceRoot ?? process.cwd(), filePath);
+    try {
+        const stat = fs.statSync(absolute);
+        if (!stat.isFile() || stat.size > MAX_EDIT_SOURCE_BYTES)
+            return undefined;
+        if (stat.size === 0)
+            return catalog.has("write") ? "write" : patchTool;
+        if (catalog.has("edit"))
+            return "edit";
+        if (!patchTool)
+            return undefined;
+        if (patchTool === "patch" && /\r(?:\n|$)/.test(fs.readFileSync(absolute, "utf8")))
+            return undefined;
+        return patchTool;
+    }
+    catch (error) {
+        if (error.code !== "ENOENT")
+            return undefined;
+        return catalog.has("write") ? "write" : patchTool;
+    }
+}
+/**
  * Preserve a legacy Cursor edit's intent when its internal executor follows
  * `edit_tool_call` with a whole-file `write_args` request.
  *
@@ -789,7 +918,7 @@ export function remapCorrelatedEditWriteForCatalog(parsed, advertisedToolNames, 
     if (parsed.resultField !== "write_result" || parsed.toolName !== "write")
         return false;
     const advertised = new Set(advertisedToolNames);
-    if (!advertised.has("edit") && !advertised.has(APPLY_PATCH_TOOL))
+    if (!advertised.has("edit") && !hostPatchTool(advertised))
         return false;
     const filePath = opencodePathArg(parsed.args);
     const content = stringValue(parsed.args.content);
@@ -828,93 +957,183 @@ export function remapCorrelatedEditWriteForCatalog(parsed, advertisedToolNames, 
     parsed.resultMetadata = { ...parsed.resultMetadata, path: filePath };
     return true;
 }
+/** Preserve file endings for direct dynamic patch calls as well as native edits. */
+function preserveDirectPatchLineEndings(parsed, workspaceRoot) {
+    const patchText = stringValue(parsed.args.patchText);
+    if (patchText === undefined)
+        return;
+    try {
+        if (parsed.toolName === "patch" && /\r(?:\n|$)/.test(patchText)) {
+            throw new Error("the patch tool strips carriage returns from line endings; this content cannot be preserved");
+        }
+        const lines = patchText.split("\n");
+        let crlf = false;
+        for (let index = 0; index < lines.length; index++) {
+            const line = lines[index];
+            if (line.startsWith("*** Update File:")) {
+                crlf = false;
+                const target = path.resolve(workspaceRoot ?? process.cwd(), line.slice("*** Update File:".length).trim());
+                let source;
+                try {
+                    const stat = fs.statSync(target);
+                    // Let the host report missing targets and wrong file kinds normally.
+                    if (!stat.isFile())
+                        continue;
+                    if (stat.size > MAX_EDIT_SOURCE_BYTES) {
+                        throw new Error("the target file is too large to inspect safely for patch newline preservation");
+                    }
+                    source = fs.readFileSync(target, "utf8");
+                }
+                catch (error) {
+                    if (error.code)
+                        continue;
+                    throw error;
+                }
+                if (source && !source.endsWith("\n")) {
+                    throw new Error("the patch tool cannot safely update content without a final newline");
+                }
+                crlf = source.includes("\r\n");
+                if (!crlf)
+                    continue;
+                if (parsed.toolName === "patch") {
+                    throw new Error("the patch tool strips carriage returns from line endings; the source content cannot be preserved");
+                }
+                if (/(^|[^\r])\n/.test(source)) {
+                    throw new Error("direct patch context has mixed line endings; use a Cursor-native targeted edit to preserve them");
+                }
+            }
+            else if (line.startsWith("***") && !line.startsWith("*** Move to:")) {
+                crlf = false;
+            }
+            else if (crlf && /^[ +\-]/.test(line)) {
+                // Context is copied into the result by the host, so it needs the same
+                // CRLF restoration as additions. File headers and Add File stay exact.
+                lines[index] = `${line.replace(/\r$/, "")}\r`;
+            }
+        }
+        parsed.args.patchText = lines.join("\n");
+    }
+    catch (error) {
+        parsed.args = {};
+        parsed.localError = `Cursor ${parsed.toolName} request cannot preserve file contents: ${error instanceof Error ? error.message : String(error)}.`;
+    }
+}
 /**
- * Express a native Cursor write/edit as `apply_patch` when the host swapped the
+ * Express a native Cursor write/edit as a patch call when the host swapped the
  * edit-tool family out from under us.
  *
- * OpenCode 1.x removes `edit` and `write` from the catalog for GPT models and
- * advertises `apply_patch` in their place — see the module comment in
- * `./apply-patch.ts` for the upstream reasoning and citations. Cursor keeps
- * using its native write/edit exec channel regardless, so without this the
- * request is refused as an unavailable tool and the model loses the ability to
- * change files at all.
+ * Both OpenCode majors remove `edit` and `write` from the catalog for GPT
+ * models and advertise a patch tool in their place (`apply_patch` on 1.x,
+ * `patch` on 2.0) — see the module comment in `./apply-patch.ts` for the
+ * upstream reasoning and citations. Cursor keeps using its native write/edit
+ * exec channel regardless, so without this the request is refused as an
+ * unavailable tool.
  *
  * Keyed purely off the advertised set: this is inert whenever the host offers
  * `write`/`edit` normally, and equally inert when it offers neither those nor
- * `apply_patch` (the caller's unavailable-tool rejection still applies).
+ * a patch tool (the caller's unavailable-tool rejection still applies).
  */
 export function remapEditToolsForCatalog(parsed, advertisedToolNames, workspaceRoot) {
+    const advertised = new Set(advertisedToolNames);
+    if (isHostPatchTool(parsed.toolName)) {
+        if (advertised.has(parsed.toolName))
+            preserveDirectPatchLineEndings(parsed, workspaceRoot);
+        return;
+    }
     if (parsed.toolName !== "write" && parsed.toolName !== "edit")
         return;
-    // `apply_patch` envelopes are text. A binary write has no patch form at all,
+    // Patch envelopes are text. A binary write has no patch form at all,
     // so it must stay a write and reach the byte-preserving path — converting it
     // here would drop the bytes and report a patch-translation failure instead of
     // the image Cursor asked to save.
     if (binaryWritePayload(parsed))
         return;
-    const advertised = new Set(advertisedToolNames);
-    if (advertised.has(parsed.toolName) || !advertised.has(APPLY_PATCH_TOOL))
+    const patchTool = hostPatchTool(advertised);
+    if (advertised.has(parsed.toolName) || !patchTool)
         return;
     const requested = parsed.toolName;
     const filePath = opencodePathArg(parsed.args);
     const refuse = (reason) => {
-        parsed.toolName = APPLY_PATCH_TOOL;
+        parsed.toolName = patchTool;
         parsed.args = {};
         parsed.localError =
-            `Cursor ${requested} request cannot be expressed as an apply_patch call: ${reason}. ` +
-                "The host advertises `apply_patch` instead of `edit`/`write` for this model.";
+            `Cursor ${requested} request cannot be expressed as a call to \`${patchTool}\`: ${reason}. ` +
+                `The host advertises \`${patchTool}\` instead of \`edit\`/\`write\` for this model.`;
     };
     if (!filePath) {
         refuse("no target path was provided");
         return;
     }
     let patchText;
-    if (requested === "write") {
-        const content = stringValue(parsed.args.content);
-        if (content === undefined) {
-            refuse("no file content was provided");
-            return;
-        }
-        // `*** Add File:` overwrites an existing target, so a whole-file write maps
-        // directly without reading the current contents or diffing.
-        patchText = buildAddFilePatch(filePath, content);
-    }
-    else {
-        const oldString = stringValue(parsed.args.oldString);
-        const newString = stringValue(parsed.args.newString);
-        if (oldString === undefined || newString === undefined) {
-            refuse("the replacement is missing its old or new text");
-            return;
-        }
-        // apply_patch matches whole lines, so a substring edit has to be widened to
-        // the lines it touches — which requires the file the model is editing.
-        const absolute = path.resolve(workspaceRoot ?? process.cwd(), filePath);
-        let source;
-        try {
-            // Bounded because this read is synchronous on the Run pump. Cursor's own
-            // executor uses the same 50 MB threshold before reading a file it is
-            // about to write.
-            const size = fs.statSync(absolute).size;
-            if (size > MAX_EDIT_SOURCE_BYTES) {
-                refuse(`the target file is ${Math.round(size / 1024 / 1024)} MB, too large to patch`);
+    try {
+        if (requested === "write") {
+            const content = stringValue(parsed.args.content);
+            if (content === undefined) {
+                refuse("no file content was provided");
                 return;
             }
-            source = fs.readFileSync(absolute, "utf8");
+            // `*** Add File:` overwrites an existing target, so a whole-file write maps
+            // directly without reading the current contents or diffing.
+            patchText = buildAddFilePatch(filePath, content, patchTool);
         }
-        catch (e) {
-            refuse(`the target file could not be read (${e.message})`);
-            return;
+        else {
+            const oldString = stringValue(parsed.args.oldString);
+            const newString = stringValue(parsed.args.newString);
+            if (oldString === undefined || newString === undefined) {
+                refuse("the replacement is missing its old or new text");
+                return;
+            }
+            // A patch matches whole lines, so a substring edit has to be widened to
+            // the lines it touches — which requires the file the model is editing.
+            const absolute = path.resolve(workspaceRoot ?? process.cwd(), filePath);
+            let source;
+            try {
+                // Bounded because this read is synchronous on the Run pump. Cursor's own
+                // executor uses the same 50 MB threshold before reading a file it is
+                // about to write.
+                const stat = fs.statSync(absolute);
+                if (!stat.isFile()) {
+                    refuse("the target is not a regular file");
+                    return;
+                }
+                const size = stat.size;
+                if (size > MAX_EDIT_SOURCE_BYTES) {
+                    refuse(`the target file is ${Math.round(size / 1024 / 1024)} MB, too large to patch`);
+                    return;
+                }
+                source = fs.readFileSync(absolute, "utf8");
+            }
+            catch (e) {
+                refuse(`the target file could not be read (${e.message})`);
+                return;
+            }
+            if (patchTool === "patch" && /\r(?:\n|$)/.test(source)) {
+                refuse("the patch tool strips carriage returns from line endings; the source content cannot be preserved");
+                return;
+            }
+            // Preserve native edit semantics rather than Cursor's whole-file wire
+            // representation. OpenCode 1.x normalizes both edit arguments to the
+            // source's newline convention; Cursor may send LF even after reading CRLF.
+            // https://github.com/anomalyco/opencode/blob/v1.19.1/packages/opencode/src/tool/edit.ts
+            const lineEnding = source.includes("\r\n") ? "\r\n" : "\n";
+            const editText = (value) => patchTool === "apply_patch"
+                ? value.replace(/\r\n/g, "\n").replace(/\n/g, lineEnding)
+                : value;
+            const plan = planSubstringEdit(source, editText(oldString), editText(newString), parsed.args.replaceAll === true);
+            if (!plan.ok) {
+                refuse(plan.reason);
+                return;
+            }
+            patchText = buildUpdateFilePatch(filePath, plan.chunks, patchTool);
         }
-        const plan = planSubstringEdit(source, oldString, newString, parsed.args.replaceAll === true);
-        if (!plan.ok) {
-            refuse(plan.reason);
-            return;
-        }
-        patchText = buildUpdateFilePatch(filePath, plan.chunks);
     }
-    parsed.toolName = APPLY_PATCH_TOOL;
+    catch (error) {
+        refuse(error instanceof Error ? error.message : String(error));
+        return;
+    }
+    parsed.toolName = patchTool;
     parsed.args = { patchText };
-    // apply_patch's output does not carry opencode `write`'s <path> tag, so keep
+    // Patch output does not carry opencode `write`'s <path> tag, so keep
     // the requested path for the typed Cursor result.
     parsed.resultMetadata = { ...parsed.resultMetadata, path: filePath };
 }
@@ -957,7 +1176,7 @@ export function rejectPartialReadMutation(parsed) {
     if (parsed.toolName === "write") {
         content = parsed.args.content;
     }
-    else if (parsed.toolName === APPLY_PATCH_TOOL) {
+    else if (isHostPatchTool(parsed.toolName)) {
         const patchText = parsed.args.patchText;
         if (typeof patchText !== "string" || !patchText.includes("*** Add File:"))
             return;
@@ -1026,6 +1245,7 @@ export function parseExecServerMessage(msg, dialect = OPENCODE_1_TOOL_DIALECT) {
                 background_shell_spawn: true,
                 command: command ?? "",
                 working_directory: workingDirectory,
+                ...(str(raw.description) ? { description: str(raw.description) } : {}),
             },
             localError: raw.enable_write_shell_stdin_tool === true
                 ? "Interactive background shells are not available through OpenCode's bash tool."
@@ -1125,7 +1345,9 @@ export function parseExecServerMessage(msg, dialect = OPENCODE_1_TOOL_DIALECT) {
                 ? writeRequestResultMetadata(rawArgs, mapped.args)
                 : execVariant === "grep_args"
                     ? grepRequestResultMetadata(rawArgs)
-                    : undefined;
+                    : execVariant === "delete_args" || execVariant === "ls_args"
+                        ? { path: str(rawArgs.path) ?? "" }
+                        : undefined;
     if (resultMetadata
         && resultMetadata.timeout_behavior !== 2
         && typeof resultMetadata.timeout_ms === "number") {
@@ -1168,6 +1390,7 @@ function shellStreamResultMetadata(raw) {
     return {
         shell_stream: true,
         command: str(raw.command) ?? "",
+        ...(str(raw.description) ? { description: str(raw.description) } : {}),
         working_directory: str(raw.working_directory) ?? "",
         timeout_ms: effectiveTimeout,
         timeout_behavior: timeoutBehavior,
@@ -1289,6 +1512,10 @@ export function mapCursorArgsToOpencode(toolName, raw, execVariant, dialect = OP
             const timeout = num(cleaned.timeout);
             if (timeout !== undefined)
                 args.timeout = timeout;
+            // The model only sends this when the host's advertised shell schema has
+            // it (OpenCode 2); the host then owns the background job and its notice.
+            if (cleaned.background === true)
+                args.background = true;
             return { toolName: dialect.shellTool, args };
         }
         case "grep": {
@@ -1573,6 +1800,9 @@ export function classifyMissingReadTarget(absolutePath) {
         }
         return undefined;
     }
+    return classifyReadTargetStat(absolutePath, stat);
+}
+function classifyReadTargetStat(absolutePath, stat) {
     if (stat.isDirectory()) {
         return { invalid_file: { path: absolutePath, reason: "Path is a directory, not a file" } };
     }
@@ -1627,20 +1857,28 @@ function mcpImageItems(images) {
  * shell execs hang on heartbeats forever).
  */
 export function buildExecClientMessages(input) {
+    if (input.error === "")
+        return buildExecClientMessages({ ...input, error: "OpenCode tool execution failed" });
     const resultField = input.resultField || "mcp_result";
     const frames = [];
-    if (resultField === "shell_stream") {
-        const stdout = groundShellPathText(input.output, shellPathRoot(input.resultMetadata, input.workspaceRoot));
+    const refused = refusedExecResult(input);
+    if (resultField === "shell_stream" && refused) {
+        frames.push(encodeShellStream(input.execId, input.executionTimeMs, refused));
+    }
+    else if (resultField === "shell_stream") {
         // Real clients always emit Start → Stdout/Stderr* → Exit (capture/tests).
         frames.push(encodeShellStream(input.execId, undefined, { start: {} }));
+        // Retain progress even when the host also reports a failure or interruption.
+        // A command may change directories; stdout must reach Cursor unchanged.
+        if (input.output) {
+            frames.push(encodeShellStream(input.execId, undefined, { stdout: { data: input.output } }));
+        }
         if (input.error) {
             frames.push(encodeShellStream(input.execId, undefined, { stderr: { data: input.error } }));
-            frames.push(encodeShellStream(input.execId, input.executionTimeMs, { exit: { code: 1, aborted: false } }));
+            frames.push(encodeShellStream(input.execId, input.executionTimeMs, { exit: input.interrupted || input.shellOutcome?.kind === "aborted"
+                    ? { code: 0, aborted: true, abort_reason: 1 } : { code: 1, aborted: false } }));
         }
         else {
-            if (stdout) {
-                frames.push(encodeShellStream(input.execId, undefined, { stdout: { data: stdout } }));
-            }
             if (input.shellOutcome?.kind === "backgrounded") {
                 frames.push(encodeShellStream(input.execId, input.executionTimeMs, {
                     backgrounded: {
@@ -1659,6 +1897,11 @@ export function buildExecClientMessages(input) {
                     exit: { code: 0, aborted: true, abort_reason: 2 },
                 }));
             }
+            else if (input.shellOutcome?.kind === "aborted") {
+                frames.push(encodeShellStream(input.execId, input.executionTimeMs, {
+                    exit: { code: 0, aborted: true, abort_reason: 1 },
+                }));
+            }
             else {
                 const exitCode = input.shellOutcome?.kind === "exit"
                     ? Math.max(0, Math.min(0xffff_ffff, input.shellOutcome.code))
@@ -1674,7 +1917,14 @@ export function buildExecClientMessages(input) {
             id: input.execId,
             local_execution_time_ms: input.executionTimeMs ?? 0,
         };
-        clientMsg[resultField] = buildTypedExecResult(resultField, input.output, input.error, input.toolName, input.resultMetadata, input.shellOutcome, input.workspaceRoot, execResultImages(resultField, input.images));
+        clientMsg[resultField] = refused ?? buildTypedExecResult(resultField, input.output, input.error, input.toolName, input.resultMetadata, input.shellOutcome, input.workspaceRoot, execResultImages(resultField, input.images));
+        if ((input.interrupted || input.shellOutcome?.kind === "aborted") && resultField === "shell_result") {
+            const failure = clientMsg[resultField].failure;
+            if (failure) {
+                failure.aborted = true;
+                failure.exit_code = 0;
+            }
+        }
         frames.push(encodeMessage("AgentClientMessage", {
             exec_client_message: clientMsg,
         }));
@@ -1683,6 +1933,47 @@ export function buildExecClientMessages(input) {
     frames.push(buildExecStreamClose(input.execId));
     return frames;
 }
+/**
+ * Attach host notes to an exec result as Cursor CLI postToolUse hook context:
+ * `ExecClientMessage.hook_additional_contexts` (#45) on a unary result, or a
+ * `ShellStream.hook_context` (#8) event after the stream's own events and
+ * before `stream_close` (CLI agent-exec hook wrapper). Cursor renders it as a
+ * system reminder on that tool result, so it never mixes into file content.
+ * Returns undefined when the frames carry no exec result (bridged
+ * interaction replies have no such field).
+ */
+export function attachHookAdditionalContexts(frames, contexts) {
+    const root = getMessageTypes();
+    const type = root.lookupType("AgentClientMessage");
+    const contextType = root.lookupType("HookAdditionalContext");
+    let shellStreamAt = -1;
+    let shellStreamId = 0;
+    for (let index = 0; index < frames.length; index++) {
+        const message = type.decode(frames[index]);
+        const exec = message.exec_client_message;
+        if (!exec?.result)
+            continue;
+        if (exec.result === "shell_stream") {
+            shellStreamAt = index;
+            shellStreamId = exec.id ?? 0;
+            continue;
+        }
+        exec.hook_additional_contexts = contexts.map((context) => contextType.fromObject(context));
+        const out = [...frames];
+        out[index] = type.encode(message).finish();
+        return out;
+    }
+    if (shellStreamAt === -1)
+        return undefined;
+    const out = [...frames];
+    out.splice(shellStreamAt + 1, 0, encodeMessage("AgentClientMessage", {
+        exec_client_message: {
+            id: shellStreamId,
+            shell_stream: { hook_context: { hook_additional_contexts: [...contexts] } },
+        },
+    }));
+    return out;
+}
 /** ACM #5 exec_client_control_message { stream_close { id } }. */
 export function buildExecStreamClose(execId) {
     return encodeMessage("AgentClientMessage", {
@@ -1690,6 +1981,38 @@ export function buildExecStreamClose(execId) {
             stream_close: { id: execId },
         },
     });
+}
+/** Refusal oneofs verified against the extracted agent.v1 protocol. */
+function refusedExecResult(input) {
+    if (!input.refusal || !input.error)
+        return undefined;
+    const denied = input.refusal === "permission_denied";
+    const reason = input.error;
+    const requested = str(input.resultMetadata?.path) ?? "";
+    const filePath = requested && input.workspaceRoot && !isUriReadTarget(requested)
+        ? resolveReadTargetPath(requested, input.workspaceRoot) : requested;
+    const command = str(input.resultMetadata?.command) ?? "";
+    const working_directory = str(input.resultMetadata?.working_directory) ?? "";
+    switch (input.resultField) {
+        case "shell_stream":
+        case "shell_result":
+        case "background_shell_spawn_result":
+            return denied ? { permission_denied: { command, working_directory, error: reason } }
+                : { rejected: { command, working_directory, reason } };
+        case "write_result":
+            return denied ? { permission_denied: { path: filePath, directory: filePath ? path.dirname(filePath) : "", operation: "write", error: reason, is_readonly: false } }
+                : { rejected: { path: filePath, reason } };
+        case "read_result":
+            return denied ? { permission_denied: { path: filePath } } : { rejected: { path: filePath, reason } };
+        case "ls_result": return { rejected: { path: filePath, reason } };
+        case "delete_result":
+            return denied ? { permission_denied: { path: filePath, client_visible_error: reason, is_readonly: false } }
+                : { rejected: { path: filePath, reason } };
+        case "mcp_result":
+            return denied ? { permission_denied: { error: reason, is_readonly: false } }
+                : { rejected: { reason, is_readonly: false } };
+        default: return undefined;
+    }
 }
 export function buildUnsupportedExecDeny(input) {
     const { execId, variant, reason } = input;
@@ -2086,21 +2409,6 @@ function splitForeignAbsolute(filePath, sep) {
         frozen: 0,
     };
 }
-function isRelativePathToken(token) {
-    if (!token || isAbsoluteToolPath(token))
-        return false;
-    // A slash alone does not make arbitrary shell output a path. In particular,
-    // compact JSON, quoted strings, package ids, and shell syntax must remain
-    // byte-for-byte model-visible rather than being prefixed with the workspace.
-    if (/[\0"'`{}\[\]<>|;]/.test(token) || token.startsWith("@"))
-        return false;
-    if (token.startsWith("./")
-        || token.startsWith("../")
-        || token.startsWith(".\\")
-        || token.startsWith("..\\"))
-        return true;
-    return token.includes("/") || (path.sep === "\\" && token.includes("\\"));
-}
 function resolveListedEntry(directory, entry) {
     if (!entry || isAbsoluteToolPath(entry))
         return entry;
@@ -2316,46 +2624,6 @@ function rewriteSearchPathLine(line, workspaceRoot) {
         return line;
     return resolveToolPath(line, workspaceRoot);
 }
-/**
- * Shell stdout is mixed prose. Rewrite only tokens that are clearly relative
- * paths, including `file:line` and `file:line:col`. Leave sentences, URLs, and
- * status words alone.
- */
-function groundShellPathText(output, root) {
-    if (!root || !output)
-        return output;
-    return normalizeToolText(output).split("\n").map((line) => rewriteShellPathLine(line, root)).join("\n");
-}
-function shellPathRoot(resultMetadata, workspaceRoot) {
-    const workingDirectory = str(resultMetadata?.working_directory)?.trim();
-    if (!workingDirectory)
-        return workspaceRoot;
-    if (isAbsoluteToolPath(workingDirectory))
-        return workingDirectory;
-    return workspaceRoot ? joinToolPath(workspaceRoot, workingDirectory) : undefined;
-}
-function rewriteShellPathLine(line, root) {
-    if (!line || line.startsWith(" ") || line.startsWith("\t"))
-        return line;
-    const trimmed = line.trimEnd();
-    if (trimmed.includes("://") || trimmed === "~" || trimmed.startsWith("~/") || trimmed.startsWith("~\\")) {
-        return line;
-    }
-    const located = /^(.+?):(\d+)(?::(\d+))?$/.exec(trimmed);
-    if (located && located[1] && isRelativePathToken(located[1])) {
-        const suffix = located[3] !== undefined ? `:${located[2]}:${located[3]}` : `:${located[2]}`;
-        return `${resolveToolPath(located[1], root)}${suffix}`;
-    }
-    if (/\s/.test(trimmed))
-        return line;
-    const header = /^(.*):$/.exec(trimmed);
-    if (header && header[1] && isRelativePathToken(header[1])) {
-        return `${resolveToolPath(header[1], root)}:`;
-    }
-    if (isRelativePathToken(trimmed))
-        return resolveToolPath(trimmed, root);
-    return line;
-}
 const OPENCODE_GREP_LINE = /^[ \t]+Line (\d+):[ \t]?(.*)$/;
 /**
  * OpenCode 1.x and 2.0 both render grep as `Found N matches`, a `path:` header,
@@ -2539,11 +2807,35 @@ export function unwrapReadOutput(output) {
     return raw.join("\n");
 }
 /**
+ * OpenCode's read tool appends newly discovered instructions after the
+ * envelope's unnumbered `</content>`, in one `<system-reminder>` block.
+ * The numbered-body parser stops before that block, so callers must lift it
+ * out before the file text is encoded.
+ */
+export function extractOpenCodeReadInstruction(output) {
+    if (!output.includes("<content>") || !output.includes("<system-reminder>"))
+        return undefined;
+    const contentHeaderIdx = output.indexOf("<content>");
+    const header = output.slice(0, contentHeaderIdx);
+    if (!header.includes("<path>") || !header.includes("<type>file</type>"))
+        return undefined;
+    const rest = output.slice(contentHeaderIdx + "<content>".length);
+    const closeAt = rest.search(/(?:^|\n)<\/content>(?:\n|$)/);
+    if (closeAt === -1)
+        return undefined;
+    const afterClose = rest.slice(closeAt).replace(/^(?:\n)?<\/content>/, "");
+    const match = /^\s*<system-reminder>\n([\s\S]*?)\n<\/system-reminder>/.exec(afterClose);
+    const body = match?.[1]?.trim();
+    return body ? body : undefined;
+}
+/**
  * Map OpenCode tool text into the agent.v1 result oneof for each exec variant.
  * OpenCode returns free-form text; we wrap it in the minimal success shape the
  * server accepts (verified against agent.v1 wire captures).
  */
 export function buildTypedExecResult(resultField, output, error, toolName, resultMetadata, shellOutcome, workspaceRoot, images = []) {
+    if (error === "")
+        error = "OpenCode tool execution failed";
     // Prefer the session workspace; never advertise the host process cwd (daemon
     // often starts in $HOME) as the path Cursor shows the model for glob/ls.
     const trimmedRoot = typeof workspaceRoot === "string" ? workspaceRoot.trim() : "";
@@ -2664,7 +2956,7 @@ export function buildTypedExecResult(resultField, output, error, toolName, resul
             };
         }
         case "write_result": {
-            // Prefer the path recorded from WriteArgs / a remapped apply_patch write.
+            // Prefer the path recorded from WriteArgs / a remapped patch write.
             // Host write output is not a `<path>` envelope, and Cursor's GetMcpTools
             // spill copies WriteSuccess.path into the model-visible filePath.
             const remappedPath = str(resultMetadata?.path);
@@ -2695,16 +2987,15 @@ export function buildTypedExecResult(resultField, output, error, toolName, resul
         case "shell_result": {
             const command = str(resultMetadata?.command) ?? "";
             const workingDirectory = str(resultMetadata?.working_directory) ?? "";
-            const stdout = groundShellPathText(output, shellPathRoot(resultMetadata, resultRoot));
-            if (error) {
+            if (error || shellOutcome?.kind === "aborted") {
                 return {
                     failure: {
                         command,
                         working_directory: workingDirectory,
-                        exit_code: 1,
-                        stdout: stdout || "",
-                        stderr: error,
-                        aborted: false,
+                        exit_code: shellOutcome?.kind === "aborted" ? 0 : 1,
+                        stdout: output || "",
+                        stderr: error || "Shell execution interrupted",
+                        aborted: shellOutcome?.kind === "aborted",
                     },
                 };
             }
@@ -2723,7 +3014,7 @@ export function buildTypedExecResult(resultField, output, error, toolName, resul
                         command: shellOutcome.command || command,
                         working_directory: shellOutcome.workingDirectory || workingDirectory,
                         exit_code: 0,
-                        stdout: stdout,
+                        stdout: output,
                         shell_id: shellOutcome.shellId,
                         pid: shellOutcome.pid,
                         ms_to_wait: shellOutcome.msToWait,
@@ -2741,14 +3032,11 @@ export function buildTypedExecResult(resultField, output, error, toolName, resul
                     command,
                     working_directory: workingDirectory,
                     exit_code: exitCode,
-                    stdout: stdout,
+                    stdout: output,
                 },
             };
         }
         case "pi_bash_result":
-            if (error)
-                return { error: { error } };
-            return { success: { output: groundShellPathText(output, shellPathRoot(resultMetadata, resultRoot)) } };
         case "pi_edit_result":
             if (error)
                 return { error: { error } };
@@ -2766,13 +3054,13 @@ export function buildTypedExecResult(resultField, output, error, toolName, resul
         }
         case "delete_result":
             if (error)
-                return { error: { path: "", error } };
-            return { success: { path: "", deleted_file: "" } };
+                return { error: { path: resolveToolPath(str(resultMetadata?.path) ?? "", resultRoot), error } };
+            return { success: { path: resolveToolPath(str(resultMetadata?.path) ?? "", resultRoot), deleted_file: "" } };
         case "background_shell_spawn_result": {
             const command = str(resultMetadata?.command) ?? "";
             const workingDirectory = str(resultMetadata?.working_directory) ?? "";
-            if (error)
-                return { error: { command, working_directory: workingDirectory, error } };
+            if (error || shellOutcome?.kind === "aborted")
+                return { error: { command, working_directory: workingDirectory, error: error || "Shell execution interrupted" } };
             // Prefer the structured outcome captured by the plugin after-hook; markers
             // are already stripped from the stored/rendered OpenCode output by then.
             if (shellOutcome?.kind === "backgrounded") {
@@ -2786,8 +3074,10 @@ export function buildTypedExecResult(resultField, output, error, toolName, resul
                 };
             }
             // Fallback when no plugin hook ran: parse the private spawn marker inline.
-            const match = new RegExp(`${BACKGROUND_SHELL_MARKER}(\\d+):([^\\r\\n]+)`).exec(output);
-            const pid = match ? Number(match[1]) : 0;
+            // A managed spawn reports `shell-id:pid:file`; the unmanaged wrapper `pid:file`.
+            const match = new RegExp(`${BACKGROUND_SHELL_MARKER}(\\d+):(?:(\\d+):)?([^\\r\\n]+)`).exec(output);
+            const shellId = match ? Number(match[1]) : 0;
+            const pid = match ? Number(match[2] || match[1]) : 0;
             if (!Number.isSafeInteger(pid) || pid <= 0 || pid > 0xffff_ffff) {
                 return {
                     error: {
@@ -2799,7 +3089,7 @@ export function buildTypedExecResult(resultField, output, error, toolName, resul
             }
             return {
                 success: {
-                    shell_id: pid,
+                    shell_id: shellId,
                     command,
                     working_directory: workingDirectory,
                     pid,
@@ -2808,7 +3098,7 @@ export function buildTypedExecResult(resultField, output, error, toolName, resul
         }
         case "ls_result": {
             if (error)
-                return { error: { path: "", error } };
+                return { error: { path: resolveToolPath(str(resultMetadata?.path) ?? "", resultRoot), error } };
             const listing = parseOpenCode2DirectoryListing(output, resultRoot);
             const rootPath = listing?.directory || resultRoot || "";
             const entries = listing ? listing.entries : extractGroundedPaths(output, resultRoot);

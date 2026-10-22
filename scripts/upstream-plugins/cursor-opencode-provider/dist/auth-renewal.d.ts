@@ -33,7 +33,7 @@ export type SessionRenewal = {
  * older stored credential (persisting failed, or a host that persists only
  * later) gets the newest token instead of renewing again.
  */
-export declare function latestSessionTokens(tokens: SessionTokens): SessionTokens;
+export declare function latestSessionTokens(tokens: SessionTokens, baseUrl?: string): SessionTokens;
 export declare function isSessionRenewalDue(token: string, now?: number): boolean;
 /**
  * Return a usable session token, renewing it first when it is due (or when

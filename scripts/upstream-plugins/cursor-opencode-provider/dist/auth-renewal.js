@@ -4,6 +4,7 @@ import { AuthExchangeError, decodeJwtPayload, exchangeApiKey, isExchangeableApiK
 // OpenCode's SessionRetry keys off such words in provider error messages.
 import { CursorAuthError, CursorServerError, sanitizeHostTerminalMessage } from "./errors.js";
 import { errorMessage, trace } from "./debug.js";
+import { processShared } from "./process-shared.js";
 // Credential renewal policy. The two Cursor credential kinds are renewed by
 // independent paths and never stand in for each other:
 //
@@ -76,6 +77,12 @@ function isoTime(ms) {
 function backoffMs(failures) {
     return Math.min(BACKOFF_MAX_MS, BACKOFF_INITIAL_MS * 2 ** Math.max(0, failures - 1));
 }
+function terminalError(failure) {
+    return new CursorAuthError(failure.message, {
+        code: failure.code,
+        ...(failure.statusCode !== undefined ? { statusCode: failure.statusCode } : {}),
+    });
+}
 function stateFor(map, key) {
     let state = map.get(key);
     if (!state) {
@@ -94,27 +101,34 @@ function recordSuccess(state) {
     state.retryAt = undefined;
     state.lastFailure = undefined;
 }
-const sessionStates = new Map();
-/** Stored refresh token → newer session token this process obtained for it. */
-const sessionSuccessors = new Map();
+// Per credential, not per module copy: every location OpenCode 2 serves loads
+// its own copy, and each would otherwise renew the same login separately.
+const sessionStates = processShared("auth-renewal.session-states.v1", () => new Map());
+/** API base + stored refresh token → newer session token obtained there. */
+const sessionSuccessors = processShared("auth-renewal.session-successors.v2", () => new Map());
 /**
  * Follow renewals this process already made, so a caller still holding an
  * older stored credential (persisting failed, or a host that persists only
  * later) gets the newest token instead of renewing again.
  */
-export function latestSessionTokens(tokens) {
+export function latestSessionTokens(tokens, baseUrl = API_BASE) {
     let current = tokens;
     for (let hops = 0; hops < MAX_SESSION_SUCCESSORS; hops++) {
-        const next = sessionSuccessors.get(current.refreshToken);
+        const next = sessionSuccessors.get(`${baseUrl}\0${current.refreshToken}`);
         if (!next || next === current.refreshToken)
             break;
         current = { accessToken: next, refreshToken: next };
     }
+    // A verified successor replaces the token it renewed even when issued in
+    // the same expiry second. A separately stored newer access token still wins.
+    if (tokens.accessToken === tokens.refreshToken)
+        return current;
     return longerLived(tokens.accessToken, current.accessToken) === current.accessToken ? current : tokens;
 }
-function rememberSuccessor(refreshToken, accessToken) {
-    sessionSuccessors.delete(refreshToken);
-    sessionSuccessors.set(refreshToken, accessToken);
+function rememberSuccessor(baseUrl, refreshToken, accessToken) {
+    const key = `${baseUrl}\0${refreshToken}`;
+    sessionSuccessors.delete(key);
+    sessionSuccessors.set(key, accessToken);
     while (sessionSuccessors.size > MAX_SESSION_SUCCESSORS) {
         const oldest = sessionSuccessors.keys().next().value;
         if (oldest === undefined)
@@ -134,22 +148,24 @@ export function isSessionRenewalDue(token, now = Date.now()) {
  */
 export async function renewSessionIfDue(tokens, options = {}) {
     const baseUrl = options.baseUrl ?? API_BASE;
-    const base = latestSessionTokens(tokens);
+    const base = latestSessionTokens(tokens, baseUrl);
     const fromMemory = base.accessToken !== tokens.accessToken;
-    if (!options.force && !isSessionRenewalDue(base.accessToken)) {
+    const state = stateFor(sessionStates, `${baseUrl}\0${base.refreshToken}`);
+    if (state.terminal)
+        throw terminalError(state.terminal);
+    if (!options.force && !isSessionRenewalDue(base.accessToken) && !state.inflight) {
         return { accessToken: base.accessToken, renewed: fromMemory };
     }
-    const state = stateFor(sessionStates, `${baseUrl}\0${base.refreshToken}`);
-    if (!state.terminal && (options.force || state.retryAt === undefined || Date.now() >= state.retryAt)) {
+    if (state.inflight || options.force || state.retryAt === undefined || Date.now() >= state.retryAt) {
         state.inflight ??= (async () => {
             const result = await refreshCursorSession(base.refreshToken, baseUrl);
             if (result.ok) {
                 const { expiresAtMs } = tokenTimes(result.accessToken);
-                if (expiresAtMs === undefined) {
-                    recordTransientFailure(state, "session refresh returned a token without expiry");
+                if (expiresAtMs === undefined || !isUsable(result.accessToken, Date.now())) {
+                    recordTransientFailure(state, "session refresh returned an unusable token");
                 }
                 else {
-                    rememberSuccessor(base.refreshToken, result.accessToken);
+                    rememberSuccessor(baseUrl, base.refreshToken, result.accessToken);
                     recordSuccess(state);
                     trace(`auth: session renewed exp=${isoTime(expiresAtMs)}`);
                     return;
@@ -159,9 +175,13 @@ export async function renewSessionIfDue(tokens, options = {}) {
                 recordTransientFailure(state, result.message);
             }
             else {
-                state.terminal = new CursorAuthError(result.kind === "policy"
-                    ? `Cursor sign-in policy blocks this login (sign_in_policy_violation); ${SIGN_IN_AGAIN} with an allowed account`
-                    : `Cursor ended this login session; ${SIGN_IN_AGAIN}`, { code: result.kind === "policy" ? "sign_in_policy_violation" : "session_logout", statusCode: result.status });
+                state.terminal = {
+                    message: result.kind === "policy"
+                        ? `Cursor sign-in policy blocks this login (sign_in_policy_violation); ${SIGN_IN_AGAIN} with an allowed account`
+                        : `Cursor ended this login session; ${SIGN_IN_AGAIN}`,
+                    code: result.kind === "policy" ? "sign_in_policy_violation" : "session_logout",
+                    ...(result.status !== undefined ? { statusCode: result.status } : {}),
+                };
                 trace(`auth: session renewal final failure kind=${result.kind}`);
                 return;
             }
@@ -172,12 +192,12 @@ export async function renewSessionIfDue(tokens, options = {}) {
         });
         await state.inflight;
     }
-    const renewed = latestSessionTokens(base);
+    const renewed = latestSessionTokens(base, baseUrl);
     if (renewed.accessToken !== base.accessToken) {
         return { accessToken: renewed.accessToken, renewed: true };
     }
     if (state.terminal)
-        throw state.terminal;
+        throw terminalError(state.terminal);
     if (!isUsable(base.accessToken, Date.now())) {
         throw new CursorAuthError(`Cursor login expired and could not be renewed (${sanitizeHostTerminalMessage(state.lastFailure ?? "no renewal attempt allowed yet")}); ${SIGN_IN_AGAIN}`, { code: "session_expired" });
     }
@@ -188,7 +208,7 @@ export async function renewSessionIfDue(tokens, options = {}) {
     };
 }
 // ── API key ──
-const apiKeyStates = new Map();
+const apiKeyStates = processShared("auth-renewal.api-key-states.v1", () => new Map());
 /**
  * JWT for a raw `crsr_` API key: the cached or `seed` JWT while it is not
  * within five minutes of expiry, otherwise a fresh exchange. Cached per API
@@ -213,7 +233,15 @@ export async function resolveApiKeyToken(apiKey, options = {}) {
         state.inflight ??= (async () => {
             try {
                 const pair = await exchangeApiKey(apiKey, baseUrl);
-                state.token = state.token ? longerLived(state.token, pair.accessToken) : pair.accessToken;
+                if (isExchangeableApiKey(pair.accessToken) || tokenTimes(pair.accessToken).expiresAtMs === undefined ||
+                    !isUsable(pair.accessToken, Date.now())) {
+                    throw new AuthExchangeError("API key exchange returned an unusable token");
+                }
+                // A forced exchange follows a server rejection: keeping the rejected
+                // JWT on an expiry tie would retry the request with that same token.
+                state.token = options.force || !state.token
+                    ? pair.accessToken
+                    : longerLived(state.token, pair.accessToken);
                 recordSuccess(state);
                 trace(`auth: API key exchanged exp=${isoTime(tokenTimes(pair.accessToken).expiresAtMs)}`);
             }
@@ -225,9 +253,13 @@ export async function resolveApiKeyToken(apiKey, options = {}) {
                 }
                 else {
                     const status = error instanceof AuthExchangeError ? error.status : undefined;
-                    state.terminal = new CursorAuthError(kind === "policy"
-                        ? "Cursor sign-in policy blocks this API key (sign_in_policy_violation); use an allowed account"
-                        : `Cursor rejected the API key${status ? ` (HTTP ${status})` : ""}; create a new key and sign in with it`, { code: kind === "policy" ? "sign_in_policy_violation" : "api_key_rejected", ...(status ? { statusCode: status } : {}) });
+                    state.terminal = {
+                        message: kind === "policy"
+                            ? "Cursor sign-in policy blocks this API key (sign_in_policy_violation); use an allowed account"
+                            : `Cursor rejected the API key${status ? ` (HTTP ${status})` : ""}; create a new key and sign in with it`,
+                        code: kind === "policy" ? "sign_in_policy_violation" : "api_key_rejected",
+                        ...(status ? { statusCode: status } : {}),
+                    };
                     trace(`auth: API key exchange final failure kind=${kind} status=${status ?? "none"}`);
                 }
             }
@@ -240,7 +272,7 @@ export async function resolveApiKeyToken(apiKey, options = {}) {
     if (state.token && isUsable(state.token, Date.now()))
         return result(state.token);
     if (state.terminal)
-        throw state.terminal;
+        throw terminalError(state.terminal);
     throw new CursorServerError(`Cursor API key exchange failed (${sanitizeHostTerminalMessage(state.lastFailure ?? "waiting before the next attempt")}); it is retried automatically`, { transient: true, replaySafe: true });
 }
 /**

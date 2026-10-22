@@ -1,21 +1,46 @@
 import { trace } from "./debug.js";
 import { readAllFieldsStrict } from "./protocol/struct.js";
+/** Host output without execution authority: sending the turn again repeats no side effect. */
+const OUTPUT_ONLY_BARRIERS = new Set([
+    "visible-text", "visible-reasoning", "visible-tool-row",
+]);
 export class AttemptReplaySafety {
     sessionId;
+    state;
     barrierReason;
-    constructor(sessionId) {
+    stateful = false;
+    constructor(sessionId, state = {}) {
         this.sessionId = sessionId;
+        this.state = state;
+        this.stateful = state.statefulBarrier !== undefined;
     }
     markBarrier(reason) {
+        if (!OUTPUT_ONLY_BARRIERS.has(reason)) {
+            this.stateful = true;
+            this.state.statefulBarrier ??= reason;
+            if (reason !== "non-control-exec")
+                this.state.historyRebaseUnsafe = true;
+        }
         if (this.barrierReason)
             return;
         this.barrierReason = reason;
         trace(`replay barrier: reason=${reason} sessionId=${this.sessionId}`);
     }
+    recordExec(id) {
+        const execs = this.state.execs ??= [];
+        if (typeof id !== "number" || !Number.isSafeInteger(id)
+            || execs.some(exec => exec.sessionId === this.sessionId && exec.id === id)) {
+            this.state.historyRebaseUnsafe = true;
+            return;
+        }
+        execs.push({ sessionId: this.sessionId, id });
+    }
     applyTo(failure) {
-        failure.replaySafe = this.barrierReason === undefined && failure.replaySafe;
+        failure.replaySafe = this.barrierReason === undefined && !this.stateful && failure.replaySafe;
         if (this.barrierReason) {
-            trace(`replay suppressed: reason=${this.barrierReason} sessionId=${this.sessionId}`);
+            failure.replayBarrier = this.stateful ? "stateful" : "output-only";
+            trace(`replay suppressed: reason=${this.barrierReason} barrier=${failure.replayBarrier} ` +
+                `sessionId=${this.sessionId}`);
         }
         return failure;
     }
@@ -25,9 +50,11 @@ export class AttemptReplaySafety {
 // `InteractionUpdate` oneof members this client recognizes. Besides the
 // declared ones: `thinking_completed` #5 (duration), `token_delta` #8 (count),
 // `tool_call_delta` #15 (argument stream, like `partial_tool_call` #7),
-// `routed_model` #24 (display name) and `tool_requests_listed` #27 (count)
-// carry no output and no state. Other members stay barriers.
-const INTERACTION_UPDATE_FIELDS = new Set([1, 2, 3, 4, 5, 7, 8, 13, 14, 15, 16, 17, 24, 27]);
+// `context_injection_state` #23 (status of a client injection, which Cursor
+// CLI only shows for queued steers), `routed_model` #24 (display name) and
+// `tool_requests_listed` #27 (count) carry no output and no state. Other
+// members stay barriers.
+const INTERACTION_UPDATE_FIELDS = new Set([1, 2, 3, 4, 5, 7, 8, 13, 14, 15, 16, 17, 23, 24, 27]);
 /** `InteractionUpdate.message_started_at_ms` #25: a timestamp beside the oneof member. */
 const INTERACTION_UPDATE_STARTED_AT = 25;
 const INTERACTION_QUERY_FIELDS = new Set([2, 3, 4, 7, 8, 9, 10, 11, 12, 13, 14]);
@@ -112,21 +139,6 @@ function decodedMatchesWire(topLevel, decoded) {
         || (topLevel?.fn === 5 && !decoded.execControl)
         || (topLevel?.fn === 7 && !decoded.interactionQuery));
 }
-function hasSemanticProgress(decoded) {
-    const update = decoded.interactionUpdate;
-    const text = update?.text_delta?.text;
-    const thinking = update?.thinking_delta?.text;
-    return (typeof text === "string" && text.length > 0)
-        || (typeof thinking === "string" && thinking.length > 0)
-        || !!update?.turn_ended
-        || !!update?.tool_call_started
-        || !!update?.tool_call_completed
-        || !!decoded.exec
-        || !!decoded.kv
-        || !!decoded.execControl
-        || !!decoded.interactionQuery
-        || !!decoded.checkpointBytes?.length;
-}
 /**
  * Field numbers and wire types of a frame, nested three levels, without any
  * payload bytes: `1:2{16:2{1:0}}`. Compare it with `agent.proto` when a frame
@@ -169,8 +181,5 @@ export function analyzeReplayFrame(payload, decoded) {
     else if (topLevel.fn === 2 && !exec.exactRequestContext && !exec.exactMcpState) {
         barrier = "non-control-exec";
     }
-    return {
-        semanticProgress: hasSemanticProgress(decoded),
-        barrier,
-    };
+    return { barrier };
 }

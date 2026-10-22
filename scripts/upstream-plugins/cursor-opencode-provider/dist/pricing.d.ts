@@ -40,7 +40,7 @@ export declare function validateOpenCodeModelCost(value: unknown, path?: string)
     errors: string[];
 };
 export declare function isOpenCodeModelCost(value: unknown): value is OpenCodeModelCost;
-/** Strip synthetic OpenCode suffixes (`…-1m`, `…-1m-2`, `…-1m-fast`, …). */
+/** Strip synthetic context suffixes (`…-1m`, `…-500k`, `…-500k-2-fast`, …). */
 export declare function wireModelIdForPricing(modelId: string): {
     baseId: string;
     longContextEntry: boolean;

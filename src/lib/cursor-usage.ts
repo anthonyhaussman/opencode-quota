@@ -28,6 +28,8 @@ interface CursorUsageSummary {
   autoComposer: CursorUsageBucket;
   total: CursorUsageBucket;
   unknownModels: Array<{ sourceModelID: string; messageCount: number; tokens: TokenBuckets }>;
+  /** Requests of known models without a price: prompts past Cursor's long-context threshold. */
+  unpricedRequestCount: number;
 }
 
 function emptyUsageBucket(): CursorUsageBucket {
@@ -80,6 +82,7 @@ export async function getCurrentCursorUsageSummary(params?: {
   const autoComposer = emptyUsageBucket();
   const total = emptyUsageBucket();
   const unknownModels = new Map<string, CursorUsageSummary["unknownModels"][number]>();
+  let unpricedRequestCount = 0;
 
   for (const msg of messages) {
     if (!isCursorProviderId(msg.providerID) && !isCursorModelId(msg.modelID)) continue;
@@ -95,9 +98,13 @@ export async function getCurrentCursorUsageSummary(params?: {
       continue;
     }
 
-    // Unknown models count toward the total messages and tokens, but have no cost.
+    // Requests without a price count toward the total messages and tokens, but have no cost.
     total.tokens = addTokenBuckets(total.tokens, tokens);
     total.messageCount += 1;
+    if (price.kind === "unpriced") {
+      unpricedRequestCount += 1;
+      continue;
+    }
     const unknown = unknownModels.get(sourceModelID);
     if (unknown) {
       unknown.tokens = addTokenBuckets(unknown.tokens, tokens);
@@ -114,5 +121,6 @@ export async function getCurrentCursorUsageSummary(params?: {
     autoComposer,
     total,
     unknownModels: [...unknownModels.values()].sort((a, b) => b.messageCount - a.messageCount),
+    unpricedRequestCount,
   };
 }

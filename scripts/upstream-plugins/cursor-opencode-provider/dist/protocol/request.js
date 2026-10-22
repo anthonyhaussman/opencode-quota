@@ -1,35 +1,42 @@
 import { encodeMessage, getMessageTypes } from "./messages.js";
 /**
- * Seed ConversationStateStructure for the first turn (no checkpoint yet).
+ * Empty ConversationStateStructure for a Run without a checkpoint (turn 1,
+ * compaction, rebase, reseed). After the first checkpoint arrives we stop
+ * inventing state and echo the server's opaque structure instead (CLI behavior).
  *
- * After the first checkpoint arrives we stop inventing state and echo the
- * server's opaque structure instead (CLI behavior). Compaction resets and
- * rebases also use this seed, with `history` carrying OpenCode's prompt turns
- * so Cursor can continue without the old checkpoint.
- *
- * No `system` entry is seeded: Cursor does not follow a client-authored
- * `system` root message, and neither Cursor client writes
- * `root_prompt_messages_json`. Host system context travels as the
- * system-instructions rule in RequestContext (`systemInstructionsRule`), so
- * `system` history entries are dropped here rather than duplicated.
+ * Nothing goes in `root_prompt_messages_json` (#1). Neither Cursor client
+ * writes it: Cursor checkpoints fill it with references to the conversation's
+ * own rendered root prompt. A client-written entry stands in for that prompt,
+ * so Cursor stops rendering RequestContext rules, skills and subagents — the
+ * host system-instructions rule included. Verified live 2026-10-09
+ * (claude-sonnet-5-5): two seeded history messages there gave checkpoint
+ * categories `rules:0, subagents:0` and a reply that ignored the rule; the same
+ * history in the user text kept both. History therefore travels in the user
+ * text ({@link seedHistoryUserText}).
  *
  * We deliberately do NOT use `AgentRunRequest.custom_system_prompt` (#8): that
  * field is the internal `--system-prompt` CLI override and the server rejects
  * it for normal accounts.
  */
-export function buildSeedConversationState(input) {
-    const root = getMessageTypes();
-    const type = root.lookupType("ConversationStateStructure");
-    const messages = [];
-    for (const entry of input?.history ?? []) {
-        if (!entry.content || entry.role === "system")
-            continue;
-        messages.push(JSON.stringify({ role: entry.role, content: entry.content }));
-    }
-    const obj = {};
-    if (messages.length > 0)
-        obj.root_prompt_messages_json = messages;
-    return type.encode(type.fromObject(obj)).finish();
+export function buildSeedConversationState() {
+    const type = getMessageTypes().lookupType("ConversationStateStructure");
+    return type.encode(type.fromObject({})).finish();
+}
+const SEED_HISTORY_TAGS = /<\/(conversation_history|user|assistant)>/gi;
+/**
+ * Prior turns of a Run without a checkpoint, as a transcript ahead of the live
+ * user text. `system` entries are dropped: host system context travels as the
+ * system-instructions rule in RequestContext. Closing tags inside a message are
+ * escaped so a message cannot end its own block early.
+ */
+export function seedHistoryUserText(text, history) {
+    const entries = (history ?? []).filter((entry) => entry.content && entry.role !== "system");
+    if (entries.length === 0)
+        return text;
+    const transcript = entries
+        .map((entry) => `<${entry.role}>\n${entry.content.replace(SEED_HISTORY_TAGS, "<\\/$1>")}\n</${entry.role}>`)
+        .join("\n\n");
+    return `<conversation_history>\n${transcript}\n</conversation_history>\n\n${text}`;
 }
 /**
  * Build an AgentClientMessage{run_request} for a conversation turn.
@@ -43,8 +50,9 @@ export function buildRunRequest(input) {
     // mcp_meta_tool_options. AgentRunRequest.mcp_tools (#4) stays empty on real
     // turns (CLI prewarm-only). Full defs are session.toolDescriptors + exec #36.
     const requestContext = input.requestContext;
+    const seeded = !(input.conversationState && input.conversationState.length > 0);
     const userMessage = {
-        text: input.text,
+        text: seeded ? seedHistoryUserText(input.text, input.history) : input.text,
         message_id: msgId,
     };
     if (input.mode !== undefined)
@@ -65,9 +73,9 @@ export function buildRunRequest(input) {
     const action = input.action === "resume"
         ? { resume_action: {} }
         : { user_message_action: userMessageAction };
-    const conversationState = input.conversationState && input.conversationState.length > 0
-        ? input.conversationState
-        : buildSeedConversationState({ history: input.history });
+    const conversationState = seeded
+        ? buildSeedConversationState()
+        : input.conversationState;
     const runRequest = {
         conversation_id: input.conversationId,
         conversation_group_id: input.conversationGroupId ?? input.conversationId,
@@ -96,5 +104,22 @@ export function buildRunRequest(input) {
 export function buildHeartbeat() {
     return encodeMessage("AgentClientMessage", {
         client_heartbeat: {},
+    });
+}
+/**
+ * ACM #5 `exec_client_control_message.heartbeat{id}`: Cursor CLI sends it every
+ * 3 s for each exec it is still running, keyed by the exec message id. The CLI
+ * leaves a zero id out, as proto3 does for a default scalar; protobufjs would
+ * write it explicitly, so it is omitted here to send the CLI's exact bytes.
+ */
+export function buildExecHeartbeat(execId) {
+    return encodeMessage("AgentClientMessage", {
+        exec_client_control_message: { heartbeat: execId === 0 ? {} : { id: execId } },
+    });
+}
+/** Stops the live Run, as Cursor CLI does on a user Stop before it closes the stream. */
+export function buildCancelAction(reason) {
+    return encodeMessage("AgentClientMessage", {
+        conversation_action: { cancel_action: { reason } },
     });
 }

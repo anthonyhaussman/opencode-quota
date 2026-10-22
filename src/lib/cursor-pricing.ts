@@ -3,9 +3,11 @@ import { getQuotaProviderRuntimeIds } from "./provider-metadata.js";
 
 export type CursorQuotaPlan = "none" | "pro" | "pro-plus" | "ultra";
 
+/** "unpriced": Cursor's own price, which no table here holds. */
 type CursorResolvedModel =
   | { kind: "local"; model: CursorLocalPricingModel; pool: "auto_composer" }
   | { kind: "official"; providerHint: string; modelHint: string; pool: "api" }
+  | { kind: "unpriced" }
   | { kind: "unknown" };
 
 const CURSOR_INCLUDED_API_USD_BY_PLAN: Readonly<Record<Exclude<CursorQuotaPlan, "none">, number>> =
@@ -38,6 +40,33 @@ const CURSOR_LOCAL_PRICING = {
 } satisfies Record<string, CostBuckets>;
 
 type CursorLocalPricingModel = keyof typeof CURSOR_LOCAL_PRICING;
+
+// Cursor bills a request of these models whose prompt passes 200k tokens at a long-context rate
+// that no price here holds, so such a request has no price.
+const CURSOR_LONG_CONTEXT_PROMPT_TOKENS = 200_000;
+const CURSOR_MODELS_WITH_LONG_CONTEXT_RATE = new Set([
+  "claude-sonnet-4",
+  "gpt-5.4",
+  "gpt-5.4-high",
+  "gpt-5.4-medium",
+  "gpt-5.5",
+  "gpt-5.6-luna",
+  "gpt-5.6-sol",
+  "gpt-5.6-terra",
+  "grok-4.7",
+  "grok-4.7-fast",
+]);
+
+// Cursor's price for these differs from models.dev's, or models.dev has none.
+const CURSOR_MODELS_WITH_OWN_PRICE = new Set([
+  "gemini-3.6-flash",
+  "glm-5.3-flash",
+  "muse-spark-1.3",
+  "muse-wonder-1.0",
+]);
+
+// models.dev lists a cache-write rate for these that Cursor does not publish.
+const CURSOR_MODELS_WITHOUT_CACHE_WRITE_RATE = new Set(["kimi-k3", "kimi-k3-1m"]);
 
 export const CURSOR_OFFICIAL_MODEL_ALIASES: Readonly<
   Record<string, { providerHint: string; modelHint: string }>
@@ -78,6 +107,9 @@ export const CURSOR_OFFICIAL_MODEL_ALIASES: Readonly<
   "gemini-3-pro": { providerHint: "google", modelHint: "gemini-3-pro-preview" },
   "gemini-3.1-pro": { providerHint: "google", modelHint: "gemini-3.1-pro-preview" },
   "gemini-3.5-flash": { providerHint: "google", modelHint: "gemini-3.5-flash" },
+  "gemini-3.7-flash": { providerHint: "google", modelHint: "gemini-3.7-flash" },
+  "gemini-3.8-flash": { providerHint: "google", modelHint: "gemini-3.8-flash" },
+  "gemini-4-argon": { providerHint: "google", modelHint: "gemini-4-argon" },
   "glm-5.2": { providerHint: "zai", modelHint: "glm-5.2" },
   "glm-5.3": { providerHint: "zai", modelHint: "glm-5.3" },
   "gpt-5-mini": { providerHint: "openai", modelHint: "gpt-5-mini" },
@@ -152,15 +184,41 @@ export function lookupCursorLocalCost(model: string): CostBuckets | null {
     : null;
 }
 
-export function resolveCursorModel(rawModelId?: string): CursorResolvedModel {
-  if (!rawModelId || typeof rawModelId !== "string") return { kind: "unknown" };
+/** Whether Cursor bills a request of `rawModelId` with `promptTokens` of prompt at base rates. */
+export function cursorBaseRatesCoverPrompt(
+  rawModelId: string | undefined,
+  promptTokens: number,
+): boolean {
+  if (promptTokens <= CURSOR_LONG_CONTEXT_PROMPT_TOKENS) return true;
+  return !CURSOR_MODELS_WITH_LONG_CONTEXT_RATE.has(rawModelId ? cursorModelName(rawModelId) : "");
+}
 
-  // Ids may carry a provider prefix (`cursor/auto`); the last segment names the model.
+/**
+ * `rates` as OpenCode bills a Cursor model through cursor-opencode-provider: a cache write costs
+ * Cursor's cache-write rate, nothing when Cursor publishes none. The provider settles each turn
+ * at what Cursor billed partly with such free cache writes.
+ */
+export function cursorBilledRates(rawModelId: string | undefined, rates: CostBuckets): CostBuckets {
+  const model = rawModelId ? cursorModelName(rawModelId) : "";
+  const cacheWrite = CURSOR_MODELS_WITHOUT_CACHE_WRITE_RATE.has(model)
+    ? 0
+    : (rates.cache_write ?? 0);
+  return { ...rates, cache_write: cacheWrite };
+}
+
+/** Ids may carry a provider prefix (`cursor/auto`); the last segment names the model. */
+function cursorModelName(rawModelId: string): string {
   const trimmed = rawModelId.trim();
-  const model = trimmed
+  return trimmed
     .slice(trimmed.lastIndexOf("/") + 1)
     .trim()
     .toLowerCase();
+}
+
+export function resolveCursorModel(rawModelId?: string): CursorResolvedModel {
+  if (!rawModelId || typeof rawModelId !== "string") return { kind: "unknown" };
+
+  const model = cursorModelName(rawModelId);
 
   // `default[]` is another id for Cursor's Auto model.
   const localModel = model === "default[]" ? "auto" : model;
@@ -168,7 +226,8 @@ export function resolveCursorModel(rawModelId?: string): CursorResolvedModel {
     return { kind: "local", model: localModel as CursorLocalPricingModel, pool: "auto_composer" };
   }
 
-  return Object.hasOwn(CURSOR_OFFICIAL_MODEL_ALIASES, model)
-    ? { kind: "official", ...CURSOR_OFFICIAL_MODEL_ALIASES[model]!, pool: "api" }
-    : { kind: "unknown" };
+  if (Object.hasOwn(CURSOR_OFFICIAL_MODEL_ALIASES, model)) {
+    return { kind: "official", ...CURSOR_OFFICIAL_MODEL_ALIASES[model]!, pool: "api" };
+  }
+  return CURSOR_MODELS_WITH_OWN_PRICE.has(model) ? { kind: "unpriced" } : { kind: "unknown" };
 }

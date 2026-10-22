@@ -14,7 +14,10 @@ export type GitRepoInfo = {
     branch_name: string;
     remote_url?: string;
 };
-export declare function collectGit(workspaceRoot: string): Promise<{
+export type GitFacts = {
     repositoryInfo: RepoInfo[];
     gitRepos: GitRepoInfo[];
-}>;
+    /** False when `git status` failed or timed out, so the status is not the real one. */
+    statusComplete: boolean;
+};
+export declare function collectGit(workspaceRoot: string): Promise<GitFacts>;

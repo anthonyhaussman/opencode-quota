@@ -135,6 +135,7 @@ export function createMessageTypes() {
         { id: 4, name: "model", type: "string" },
         { id: 5, name: "resume", type: "string" },
         { id: 6, name: "agent_id", type: "string" },
+        { id: 7, name: "attachments", type: "string", repeated: true },
     ]);
     addType(root, "TaskToolCall", [{ id: 1, name: "args", type: "TaskToolArgs" }]);
     // Native subagent execution is separate from the display-only TaskToolCall.
@@ -427,8 +428,33 @@ export function createMessageTypes() {
         { id: 15, name: "tool_call_delta", type: "ToolCallDeltaUpdate" },
         { id: 16, name: "step_started", type: "StepStarted" },
         { id: 17, name: "step_completed", type: "StepCompleted" },
+        { id: 23, name: "context_injection_state", type: "ContextInjectionStateUpdate" },
         { id: 27, name: "tool_requests_listed", type: "ToolRequestsListedUpdate" },
-    ], [{ name: "update", fields: ["text_delta", "tool_call_started", "tool_call_completed", "thinking_delta", "partial_tool_call", "heartbeat", "turn_ended", "tool_call_delta", "step_started", "step_completed", "tool_requests_listed"] }]);
+    ], [{ name: "update", fields: ["text_delta", "tool_call_started", "tool_call_completed", "thinking_delta", "partial_tool_call", "heartbeat", "turn_ended", "tool_call_delta", "step_started", "step_completed", "context_injection_state", "tool_requests_listed"] }]);
+    // Server status for an `inject_context_action` (InteractionUpdate #23).
+    // Cursor CLI only tracks it to show queued steer delivery; it carries no output.
+    addType(root, "ContextInjectionQueued", []);
+    addType(root, "ContextInjectionQueuedForNextTurn", []);
+    addType(root, "ContextInjectionCancelled", []);
+    addType(root, "ContextInjectionDelivered", [
+        { id: 1, name: "step", type: "int32" },
+        { id: 2, name: "delivery_batch_id", type: "string" },
+        { id: 3, name: "delivered_at_ms", type: "int64" },
+    ]);
+    addType(root, "ContextInjectionRejected", [
+        { id: 1, name: "reason", type: "string" },
+    ]);
+    addType(root, "ContextInjectionState", [
+        { id: 1, name: "queued", type: "ContextInjectionQueued" },
+        { id: 2, name: "delivered", type: "ContextInjectionDelivered" },
+        { id: 3, name: "queued_for_next_turn", type: "ContextInjectionQueuedForNextTurn" },
+        { id: 4, name: "cancelled", type: "ContextInjectionCancelled" },
+        { id: 5, name: "rejected", type: "ContextInjectionRejected" },
+    ], [{ name: "state", fields: ["queued", "delivered", "queued_for_next_turn", "cancelled", "rejected"] }]);
+    addType(root, "ContextInjectionStateUpdate", [
+        { id: 1, name: "injection_id", type: "string" },
+        { id: 2, name: "state", type: "ContextInjectionState" },
+    ]);
     // ── Exec channel ──
     // Field numbers match agent.v1. Extra fields we don't use are still declared
     // so protobufjs doesn't drop them on decode.
@@ -465,16 +491,21 @@ export function createMessageTypes() {
         { id: 1, name: "path", type: "string" },
         { id: 2, name: "reason", type: "string" },
     ]);
+    addType(root, "ReadRejected", [
+        { id: 1, name: "path", type: "string" },
+        { id: 2, name: "reason", type: "string" },
+    ]);
     addType(root, "ReadResult", [
         { id: 1, name: "success", type: "ReadSuccess" },
         { id: 2, name: "error", type: "ReadError" },
+        { id: 3, name: "rejected", type: "ReadRejected" },
         { id: 4, name: "file_not_found", type: "ReadFileNotFound" },
         { id: 5, name: "permission_denied", type: "ReadPermissionDenied" },
         { id: 6, name: "invalid_file", type: "ReadInvalidFile" },
     ], [
         {
             name: "result",
-            fields: ["success", "error", "file_not_found", "permission_denied", "invalid_file"],
+            fields: ["success", "error", "rejected", "file_not_found", "permission_denied", "invalid_file"],
         },
     ]);
     addType(root, "GrepArgs", [
@@ -554,11 +585,16 @@ export function createMessageTypes() {
         { id: 4, name: "error", type: "string" },
         { id: 5, name: "is_readonly", type: "bool" },
     ]);
+    addType(root, "WriteRejected", [
+        { id: 1, name: "path", type: "string" },
+        { id: 2, name: "reason", type: "string" },
+    ]);
     addType(root, "WriteResult", [
         { id: 1, name: "success", type: "WriteSuccess" },
         { id: 3, name: "permission_denied", type: "WritePermissionDenied" },
         { id: 5, name: "error", type: "WriteError" },
-    ], [{ name: "result", fields: ["success", "permission_denied", "error"] }]);
+        { id: 6, name: "rejected", type: "WriteRejected" },
+    ], [{ name: "result", fields: ["success", "permission_denied", "error", "rejected"] }]);
     // agent.v1 Pi exec results. Cursor places Pi requests at ExecServerMessage
     // fields #45..#51 and their corresponding ExecClientMessage results at
     // #46..#52 (the result fields are deliberately offset by one).
@@ -634,10 +670,21 @@ export function createMessageTypes() {
         { id: 1, name: "path", type: "string" },
         { id: 2, name: "error", type: "string" },
     ]);
+    addType(root, "DeletePermissionDenied", [
+        { id: 1, name: "path", type: "string" },
+        { id: 2, name: "client_visible_error", type: "string" },
+        { id: 3, name: "is_readonly", type: "bool" },
+    ]);
+    addType(root, "DeleteRejected", [
+        { id: 1, name: "path", type: "string" },
+        { id: 2, name: "reason", type: "string" },
+    ]);
     addType(root, "DeleteResult", [
         { id: 1, name: "success", type: "DeleteSuccess" },
+        { id: 4, name: "permission_denied", type: "DeletePermissionDenied" },
+        { id: 6, name: "rejected", type: "DeleteRejected" },
         { id: 7, name: "error", type: "DeleteError" },
-    ], [{ name: "result", fields: ["success", "error"] }]);
+    ], [{ name: "result", fields: ["success", "permission_denied", "rejected", "error"] }]);
     addType(root, "LsArgs", [
         { id: 1, name: "path", type: "string" },
         { id: 2, name: "ignore", type: "string", repeated: true },
@@ -657,10 +704,15 @@ export function createMessageTypes() {
         { id: 1, name: "path", type: "string" },
         { id: 2, name: "error", type: "string" },
     ]);
+    addType(root, "LsRejected", [
+        { id: 1, name: "path", type: "string" },
+        { id: 2, name: "reason", type: "string" },
+    ]);
     addType(root, "LsResult", [
         { id: 1, name: "success", type: "LsSuccess" },
         { id: 2, name: "error", type: "LsError" },
-    ], [{ name: "result", fields: ["success", "error"] }]);
+        { id: 3, name: "rejected", type: "LsRejected" },
+    ], [{ name: "result", fields: ["success", "error", "rejected"] }]);
     addType(root, "ShellArgs", [
         { id: 1, name: "command", type: "string" },
         { id: 2, name: "working_directory", type: "string" },
@@ -670,6 +722,7 @@ export function createMessageTypes() {
         // foreground cancellation deadline from a soft background handoff.
         { id: 13, name: "timeout_behavior", type: "uint32" },
         { id: 14, name: "hard_timeout", type: "uint32" },
+        { id: 15, name: "description", type: "string" },
     ]);
     addType(root, "ShellStreamStart", []); // optional SandboxPolicy only; empty is valid
     addType(root, "ShellStreamStdout", [{ id: 1, name: "data", type: "string" }]);
@@ -740,9 +793,10 @@ export function createMessageTypes() {
         { id: 2, name: "failure", type: "ShellFailure" },
         { id: 3, name: "timeout", type: "ShellTimeout" },
         { id: 4, name: "rejected", type: "ShellRejected" },
+        { id: 7, name: "permission_denied", type: "ShellPermissionDenied" },
         { id: 102, name: "is_background", type: "bool" },
         { id: 104, name: "pid", type: "uint32" },
-    ], [{ name: "result", fields: ["success", "failure", "timeout", "rejected"] }]);
+    ], [{ name: "result", fields: ["success", "failure", "timeout", "rejected", "permission_denied"] }]);
     addType(root, "DiagnosticsError", [
         { id: 1, name: "path", type: "string" },
         { id: 2, name: "error", type: "string" },
@@ -924,6 +978,15 @@ export function createMessageTypes() {
         { id: 3, name: "rejected", type: "ShellRejected" },
         { id: 4, name: "permission_denied", type: "ShellPermissionDenied" },
     ], [{ name: "result", fields: ["success", "error", "rejected", "permission_denied"] }]);
+    // Cursor CLI postToolUse hook context: ExecClientMessage #45 on a unary
+    // result, ShellStream #8 on a shell stream (agent.v1 hook_additional_context).
+    addType(root, "HookAdditionalContext", [
+        { id: 1, name: "hook_event_name", type: "string" },
+        { id: 2, name: "content", type: "string" },
+    ]);
+    addType(root, "ShellStreamHookContext", [
+        { id: 1, name: "hook_additional_contexts", type: "HookAdditionalContext", repeated: true },
+    ]);
     addType(root, "ShellStream", [
         { id: 1, name: "stdout", type: "ShellStreamStdout" },
         { id: 2, name: "stderr", type: "ShellStreamStderr" },
@@ -932,7 +995,8 @@ export function createMessageTypes() {
         { id: 5, name: "rejected", type: "ShellRejected" },
         { id: 6, name: "permission_denied", type: "ShellPermissionDenied" },
         { id: 7, name: "backgrounded", type: "ShellStreamBackgrounded" },
-    ], [{ name: "event", fields: ["stdout", "stderr", "exit", "start", "rejected", "permission_denied", "backgrounded"] }]);
+        { id: 8, name: "hook_context", type: "ShellStreamHookContext" },
+    ], [{ name: "event", fields: ["stdout", "stderr", "exit", "start", "rejected", "permission_denied", "backgrounded", "hook_context"] }]);
     addType(root, "GlobArgs", [
         { id: 1, name: "target_directory", type: "string" },
         { id: 2, name: "glob_pattern", type: "string" },
@@ -962,6 +1026,14 @@ export function createMessageTypes() {
         { id: 1, name: "text", type: "McpTextContent" },
         { id: 2, name: "image", type: "McpImageContent" },
     ], [{ name: "content", fields: ["text", "image"] }]);
+    addType(root, "McpRejected", [
+        { id: 1, name: "reason", type: "string" },
+        { id: 2, name: "is_readonly", type: "bool" },
+    ]);
+    addType(root, "McpPermissionDenied", [
+        { id: 1, name: "error", type: "string" },
+        { id: 2, name: "is_readonly", type: "bool" },
+    ]);
     addType(root, "McpSuccess", [
         { id: 1, name: "content", type: "McpToolResultContentItem", repeated: true },
         { id: 2, name: "is_error", type: "bool" },
@@ -974,7 +1046,9 @@ export function createMessageTypes() {
     addType(root, "McpResult", [
         { id: 1, name: "success", type: "McpSuccess" },
         { id: 2, name: "error", type: "McpError" },
-    ], [{ name: "result", fields: ["success", "error"] }]);
+        { id: 3, name: "rejected", type: "McpRejected" },
+        { id: 4, name: "permission_denied", type: "McpPermissionDenied" },
+    ], [{ name: "result", fields: ["success", "error", "rejected", "permission_denied"] }]);
     // McpToolDefinition — agent.v1 shape for RequestContext.tools (#7) and
     // AgentRunRequest.mcp_tools (#4). Defined early so RequestContext* can
     // reference it.
@@ -1259,6 +1333,7 @@ export function createMessageTypes() {
         { id: 49, name: "pi_grep_args", type: "PiGrepToolArgs" },
         { id: 50, name: "pi_find_args", type: "PiFindToolArgs" },
         { id: 51, name: "pi_ls_args", type: "PiLsToolArgs" },
+        { id: 55, name: "accept_hook_additional_contexts", type: "bool" },
     ], [{ name: "args", fields: [
                 "shell_args", "write_args", "delete_args", "grep_args", "read_args", "ls_args",
                 "request_context_args", "mcp_args", "shell_stream_args", "background_shell_spawn_args",
@@ -1272,6 +1347,7 @@ export function createMessageTypes() {
         { id: 1, name: "id", type: "uint32" },
         { id: 15, name: "exec_id", type: "string" },
         { id: 39, name: "local_execution_time_ms", type: "uint64" },
+        { id: 45, name: "hook_additional_contexts", type: "HookAdditionalContext", repeated: true },
         { id: 2, name: "shell_result", type: "ShellResult" },
         { id: 3, name: "write_result", type: "WriteResult" },
         { id: 4, name: "delete_result", type: "DeleteResult" },
@@ -1452,9 +1528,16 @@ export function createMessageTypes() {
         { id: 1, name: "producer", type: "string" },
         { id: 2, name: "content", type: "string" },
     ]);
+    // Cursor SDK `Run.steer` / CLI steering payload: a user message added to the
+    // running turn. `request_context` is optional and unused by the SDK.
+    addType(root, "UserContextInjection", [
+        { id: 1, name: "user_message", type: "UserMessage" },
+        { id: 2, name: "request_context", type: "RequestContext" },
+    ]);
     addType(root, "InjectContextAction", [
         { id: 1, name: "injection_id", type: "string" },
         { id: 2, name: "expected_run_id", type: "string" },
+        { id: 3, name: "user_context", type: "UserContextInjection" },
         { id: 4, name: "system_context", type: "SystemContextInjection" },
     ]);
     addType(root, "ConversationAction", [

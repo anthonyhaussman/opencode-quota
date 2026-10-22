@@ -140,13 +140,18 @@ export declare const CURSOR_MODEL_COSTS: {
     };
     readonly "gemini-3.7-flash": {
         readonly input: 0.75;
-        readonly output: 3.5;
+        readonly output: 3.75;
         readonly cache_read: 0.075;
     };
     readonly "gemini-3.8-flash": {
         readonly input: 0.75;
-        readonly output: 3.5;
+        readonly output: 3.75;
         readonly cache_read: 0.075;
+    };
+    readonly "gemini-4-argon": {
+        readonly input: 2;
+        readonly output: 10;
+        readonly cache_read: 0.1;
     };
     readonly "glm-5.2": {
         readonly input: 1.4;
@@ -304,6 +309,11 @@ export declare const CURSOR_MODEL_COSTS: {
         readonly output: 4.25;
         readonly cache_read: 0.15;
     };
+    readonly "muse-wonder-1.0": {
+        readonly input: 4;
+        readonly output: 20;
+        readonly cache_read: 0.2;
+    };
 };
 export declare const CURSOR_MODEL_CONTEXTS: {
     readonly "claude-fable-5": {
@@ -396,6 +406,10 @@ export declare const CURSOR_MODEL_CONTEXTS: {
         readonly maxContext: 200000;
         readonly maxContextForMaxMode: 1000000;
     };
+    readonly "gemini-4-argon": {
+        readonly maxContext: 200000;
+        readonly maxContextForMaxMode: 1000000;
+    };
     readonly "glm-5.2": {
         readonly maxContext: 200000;
     };
@@ -461,6 +475,10 @@ export declare const CURSOR_MODEL_CONTEXTS: {
         readonly maxContextForMaxMode: 1000000;
     };
     readonly "muse-spark-1.3": {
+        readonly maxContext: 300000;
+        readonly maxContextForMaxMode: 1000000;
+    };
+    readonly "muse-wonder-1.0": {
         readonly maxContext: 300000;
         readonly maxContextForMaxMode: 1000000;
     };
@@ -535,6 +553,9 @@ export declare const CURSOR_MODEL_CAPABILITIES: {
     readonly "gemini-3.8-flash": {
         readonly supportsImages: true;
     };
+    readonly "gemini-4-argon": {
+        readonly supportsImages: true;
+    };
     readonly "glm-5.2": {
         readonly supportsImages: false;
     };
@@ -593,6 +614,9 @@ export declare const CURSOR_MODEL_CAPABILITIES: {
         readonly supportsImages: true;
     };
     readonly "muse-spark-1.3": {
+        readonly supportsImages: true;
+    };
+    readonly "muse-wonder-1.0": {
         readonly supportsImages: true;
     };
 };

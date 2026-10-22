@@ -12,6 +12,11 @@ export type ModelVariant = {
     displayName: string;
     isDefaultNonMax: boolean;
     isDefaultMax: boolean;
+    /**
+     * Cursor's `AvailableModelVariant.is_max_mode`: this tuple runs only with
+     * request-level max mode. Absent when discovery omits the marker.
+     */
+    isMaxMode?: boolean;
 };
 export type ModelInfo = {
     id: string;
@@ -24,6 +29,11 @@ export type ModelInfo = {
     /** Context window when max-mode is on (proto field 16). */
     maxContextForMaxMode?: number;
     supportsMaxMode?: boolean;
+    /**
+     * `AvailableModel.supports_non_max_mode`; `false` means every variant runs
+     * in max mode. Absent when discovery omits it.
+     */
+    supportsNonMaxMode?: boolean;
     variants: ModelVariant[];
 };
 export type ModelCache = {
@@ -45,17 +55,30 @@ export declare function normalizeModelCache(value: unknown): ModelCache | null;
  */
 export declare function extractCursorVariantParameters(providerOptions: Record<string, unknown> | undefined): ModelParameterValue[] | undefined;
 export declare function resolveCursorWireModelId(providerOptions: Record<string, unknown> | undefined, fallback: string): string;
-/** True when resolved params select the long-context (1m) tier. */
+/**
+ * True when resolved params select the long-context (1m) tier. Fallback for
+ * variants without Cursor's `isMaxMode` marker.
+ */
 export declare function paramsImplyMaxMode(params: ModelParameterValue[]): boolean;
 /**
- * Resolve the request-level max_mode bit. An explicit variant pick owns the
- * context tier; otherwise a standalone maxMode hint may select max mode.
+ * Resolve the request-level max_mode bit. Like Cursor CLI, a cataloged variant
+ * requires max mode when Cursor marks it `isMaxMode` (Grok 4.7's 500k tier as
+ * well as 1m tiers) or the model does not support non-max mode. An explicit
+ * variant pick owns the context tier; otherwise a standalone maxMode hint may
+ * select max mode.
  */
 export declare function resolveVariantMaxMode(params: ModelParameterValue[], opts?: {
     picked?: ModelParameterValue[];
     maxMode?: boolean;
+    model?: ModelInfo;
 }): boolean;
 export declare function parseCursorContextLimit(value: unknown): number | undefined;
+/**
+ * Find Cursor's declared default within a catalog subset, retaining its effort:
+ * the declared variant, else its speed twin, else its twin in another context
+ * tier (a 500k entry when the declared max default is 1m).
+ */
+export declare function findDefaultVariant(model: ModelInfo, candidates: ModelVariant[], maxMode: boolean): ModelVariant | undefined;
 export declare function isCacheFresh(cache: ModelCache, ttlMs?: number): boolean;
 export declare function cacheFilePath(cacheDir: string): string;
 export declare function readCache(cacheDir: string): Promise<ModelCache | null>;

@@ -1,4 +1,5 @@
 import { type ModelInfo, type ModelVariant } from "./models.js";
+type ContextTier = "base" | "long" | number;
 /**
  * Display names shared by both a thinking and a non-thinking model. A thinking
  * model with such a name needs a "Thinking" tag to disambiguate it from its
@@ -19,8 +20,9 @@ export declare function thinkingSuffixBaseNames(models: ModelInfo[]): Set<string
 export declare function cursorModelFamily(id: string): string | undefined;
 export declare function modelInfoToConfig(mi: ModelInfo, options?: {
     thinkingSuffix?: boolean;
-    contextTier?: "base" | "long";
+    contextTier?: ContextTier;
     variants?: ModelVariant[];
     fast?: boolean;
 }): Record<string, any>;
 export declare function modelsToConfig(models: ModelInfo[]): Record<string, any>;
+export {};

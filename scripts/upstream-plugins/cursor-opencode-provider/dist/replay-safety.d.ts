@@ -1,10 +1,24 @@
 import type { CursorProviderError } from "./errors.js";
-export type ReplayBarrierReason = "visible-text" | "visible-reasoning" | "display-tool-lifecycle" | "non-control-exec" | "stateful-interaction" | "unknown-or-malformed-frame";
+export type ReplayBarrierReason = "visible-text" | "visible-reasoning" | "visible-tool-row" | "display-tool-lifecycle" | "non-control-exec" | "stateful-interaction" | "unknown-or-malformed-frame";
+/** Plain Run-owned state retained across host tool-step pump calls. */
+export type ReplaySafetyState = {
+    statefulBarrier?: ReplayBarrierReason;
+    /** Every exec needs its owner's host result; ids can restart on a resumed Run. */
+    execs?: Array<{
+        sessionId: string;
+        id: number;
+    }>;
+    /** History cannot represent opaque interactions, unknown frames or started display work. */
+    historyRebaseUnsafe?: boolean;
+};
 export declare class AttemptReplaySafety {
     private readonly sessionId;
+    private readonly state;
     private barrierReason;
-    constructor(sessionId: string);
+    private stateful;
+    constructor(sessionId: string, state?: ReplaySafetyState);
     markBarrier(reason: ReplayBarrierReason): void;
+    recordExec(id: unknown): void;
     applyTo(failure: CursorProviderError): CursorProviderError;
 }
 export type DecodedReplayFrame = {
@@ -13,10 +27,8 @@ export type DecodedReplayFrame = {
     kv?: Record<string, unknown>;
     execControl?: Record<string, unknown>;
     interactionQuery?: Record<string, unknown>;
-    checkpointBytes?: Uint8Array;
 };
 export type ReplayFrameAnalysis = {
-    semanticProgress: boolean;
     barrier?: ReplayBarrierReason;
 };
 /**

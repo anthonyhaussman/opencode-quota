@@ -55,6 +55,7 @@ export type DynamicRequestContextKey = typeof DYNAMIC_REQUEST_CONTEXT_KEYS[numbe
  * `skills.ts`); never kept on a frozen base.
  */
 export declare const HOST_DUPLICATED_REQUEST_CONTEXT_KEYS: readonly ["agent_skills", "agent_skills_info_complete"];
+export declare function resetWorkspaceFactsForTests(): void;
 /**
  * Full RequestContext payload for live UMA + exec #10 reply.
  * Workspace env/git/layout, the host system-instructions rule, and

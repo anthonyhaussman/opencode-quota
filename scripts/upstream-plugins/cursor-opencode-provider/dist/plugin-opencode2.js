@@ -3,9 +3,11 @@ import { createSdk, cursorApiBaseURL, cursorGetServerConfigTelemetryEnabled, isC
 import { opencode2PlanDir, opencodeGlobalCacheDir, setNativePlansDir } from "./context/paths.js";
 import { discoverModels, isCacheFresh, readCache } from "./models.js";
 import { resolveAgentUrl } from "./agent-url.js";
-import { sessionActivity } from "./activity.js";
+import { applyHostPromptEvent, applyHostToolEvent, sessionActivity } from "./activity.js";
+import { notifyHostInterrupt } from "./host-interrupt.js";
+import { announceHostSteer, forgetEarlySteerOfInbox, forgetEarlySteers, rememberQueuedSteer, takeQueuedSteer, } from "./host-steer.js";
 import { fetchOpenCodeWebSearchText, parseExaWebSearchResults, } from "./web-tools.js";
-import { captureCursorShellResult, cursorShellEnvForCommand, prepareCursorShellArgs, releaseCursorShellEnv, sanitizeRegisteredCursorShellOutput, } from "./shell-timeout.js";
+import { armCursorShellCreate, captureCursorShellResult, captureCursorShellFailure, prepareCursorShellCreate, prepareCursorShellArgs, releaseCursorShellEnv, sanitizeRegisteredCursorShellOutput, } from "./shell-timeout.js";
 import { applyCursorProviderInventory, CURSOR_INTEGRATION_ID } from "./opencode2/catalog.js";
 import { applyCursorIntegration, requireCursorAccessToken, resolveCursorAccessToken, } from "./opencode2/integration.js";
 import { exposeDirectMcpTools, rememberDirectMcpNamespaces } from "./opencode2/mcp-direct.js";
@@ -20,6 +22,7 @@ import { trace } from "./debug.js";
 import { cancelHostAgentModeSwitch, hostAgentSwitchPromptText, setHostAgentModeSwitch, } from "./host-agent-mode.js";
 import { clearActiveCursorMode, getActiveCursorMode, normalizeSwitchModeId, setActiveCursorMode, } from "./protocol/switch-mode.js";
 import { CursorPlugin } from "./plugin.js";
+import { nativeToolRefusal, preserveNativeToolResults } from "./opencode2/tool-results.js";
 /**
  * OpenCode 2.0 plugin.
  *
@@ -101,6 +104,60 @@ const plugin = {
         let disposeHostAgentModeSwitch;
         trace(`opencode2 plugin: setup directory=${workspaceRoot}`);
         const hasShellEnvHook = typeof ctx.shell?.hook === "function";
+        const refusals = new Map();
+        const permissionCalls = new Map();
+        const rememberRefusal = (id, refusal) => {
+            refusals.delete(id);
+            refusals.set(id, refusal);
+            while (refusals.size > 512)
+                refusals.delete(refusals.keys().next().value);
+        };
+        const releasePermissionCalls = () => {
+            for (const call of permissionCalls.values())
+                releaseCursorShellEnv(call.callID);
+            permissionCalls.clear();
+        };
+        const toolLifecycle = (event) => {
+            const payload = eventPayload(event);
+            if (event?.type === "permission.asked" && payload?.source?.type === "tool"
+                && typeof payload.source.id === "string" && payload.source.id.startsWith("cursor_")
+                && typeof payload.id === "string" && typeof payload.sessionID === "string") {
+                permissionCalls.set(payload.id, { sessionID: payload.sessionID, callID: payload.source.id });
+            }
+            else if (event?.type === "permission.replied") {
+                const call = permissionCalls.get(payload?.requestID);
+                if (!call || call.sessionID !== payload?.sessionID)
+                    return;
+                permissionCalls.delete(payload.requestID);
+                if (payload.reply === "reject") {
+                    rememberRefusal(call.callID, "rejected");
+                    releaseCursorShellEnv(call.callID);
+                    // Native rejection also rejects the session's other pending requests.
+                    for (const [id, pending] of permissionCalls)
+                        if (pending.sessionID === call.sessionID) {
+                            rememberRefusal(pending.callID, "rejected");
+                            releaseCursorShellEnv(pending.callID);
+                            permissionCalls.delete(id);
+                        }
+                }
+            }
+            else if ((event?.type === "session.tool.failed" || event?.type === "session.tool.success")
+                && typeof payload?.id === "string") {
+                if (event.type === "session.tool.failed")
+                    releaseCursorShellEnv(payload.id);
+                for (const [id, call] of permissionCalls)
+                    if (call.callID === payload.id && call.sessionID === payload.sessionID) {
+                        permissionCalls.delete(id);
+                    }
+            }
+            else if (event?.type === "session.deleted") {
+                for (const [id, call] of permissionCalls)
+                    if (call.sessionID === payload?.sessionID) {
+                        releaseCursorShellEnv(call.callID);
+                        permissionCalls.delete(id);
+                    }
+            }
+        };
         if (typeof ctx.session.switchAgent === "function") {
             const switchAgent = ctx.session.switchAgent;
             const continueTurn = typeof ctx.session.synthetic === "function"
@@ -192,15 +249,13 @@ const plugin = {
         };
         // ── AI SDK wiring ────────────────────────────────────────
         await track(ctx.aisdk.hook("sdk", async (event) => {
-            if (event.sdk)
-                return;
             if (!isCursorPackage(event.package, event.model.providerID))
                 return;
+            // The host's generic loader runs before plugin hooks and may already
+            // have created a Cursor SDK with a captured token. Own our package's
+            // SDK so current integration credentials are resolved on every Run.
             event.sdk = createSdk({
                 name: event.model.providerID || CURSOR_PROVIDER_ID,
-                // Resolved per Run open: this SDK lives as long as the daemon, so
-                // a token captured here would outlive its expiry.
-                getAccessToken: (request) => requireCursorAccessToken(ctx.integration, request),
                 // Static fallback only. This hook fires once per model/package, not
                 // per session, and 2.0 runs one daemon across many projects — the
                 // real per-request directory comes from `x-opencode-directory`
@@ -208,6 +263,9 @@ const plugin = {
                 workspaceRoot,
                 cacheDir,
                 ...event.options,
+                // Keep after host options: a captured resolver/token must not bypass
+                // the integration's current credential and renewal path.
+                getAccessToken: (request) => requireCursorAccessToken(ctx.integration, request),
                 // Keep after `event.options` so the OC2 plugin always selects the
                 // `path`/`shell` dialect when advertised schemas are opaque.
                 defaultDialect: OPENCODE_2_TOOL_DIALECT,
@@ -262,22 +320,35 @@ const plugin = {
             exposeDirectMcpTools(draft, directMcpNamespaces);
         }));
         // ── Shell timeout wrapper ────────────────────────────────
-        await track(ctx.tool.hook("execute.before", (event) => {
-            if (!isShellTool(event.tool))
+        await track(ctx.tool.hook("execute.before", async (event) => {
+            if (!isShellTool(event.tool) || typeof event.input !== "object" || event.input === null)
                 return;
             const executionID = toolExecutionID(event);
-            prepareCursorShellArgs(executionID, event.input, {
-                // OpenCode 2.0 `shell.create.before` can inject env for bash/zsh.
+            const input = event.input;
+            prepareCursorShellArgs(executionID, input, {
+                deferToShellHook: hasShellEnvHook,
                 preferWrapperCommand: !hasShellEnvHook,
             });
+            if (hasShellEnvHook)
+                await armCursorShellCreate(executionID, event);
         }));
         await track(ctx.tool.hook("execute.after", (event) => {
+            const executionID = toolExecutionID(event);
+            if (event.status === "error") {
+                const refusal = nativeToolRefusal(event.error);
+                if (refusal)
+                    rememberRefusal(executionID, refusal);
+            }
+            else
+                refusals.delete(executionID);
             if (!isShellTool(event.tool))
                 return;
-            const executionID = toolExecutionID(event);
             try {
-                if (event.status !== "completed")
+                if (event.status !== "completed") {
+                    if (event.status === "error")
+                        captureCursorShellFailure(executionID, event.error);
                     return;
+                }
                 const result = event.result;
                 // V1: `output` is the model-facing string. V2: `output` is structured
                 // per-tool output (shell: `{ output: string, ... }`) and the
@@ -324,10 +395,7 @@ const plugin = {
         }));
         if (ctx.shell) {
             await track(ctx.shell.hook("create.before", (event) => {
-                const env = cursorShellEnvForCommand(event.command, event.cwd);
-                if (!env)
-                    return;
-                event.env = { ...event.env, ...env };
+                prepareCursorShellCreate(event);
             }));
         }
         const rememberSessionDirectory = async (sessionID) => {
@@ -341,6 +409,7 @@ const plugin = {
             }
         };
         await track(ctx.session.hook("context", async (event) => {
+            event.messages = preserveNativeToolResults(event.messages, refusals);
             markCompactionAndOptions(event, event.agent === "compaction");
             event.options ??= {};
             event.options[CURSOR_HOST_AGENT_OPTION] = event.agent;
@@ -401,14 +470,17 @@ const plugin = {
             };
         }, { providerID: CURSOR_PROVIDER_ID }));
         await track(ctx.session.hook("compaction", async (event) => {
+            event.messages = preserveNativeToolResults(event.messages, refusals);
             markCompactionAndOptions(event, true);
             await rememberSessionDirectory(event.sessionID);
         }));
         await track(ctx.session.hook("generate", async (event) => {
+            event.messages = preserveNativeToolResults(event.messages, refusals);
             markCompactionAndOptions(event, false);
             await rememberSessionDirectory(event.sessionID);
         }));
         await track(ctx.session.hook("title", async (event) => {
+            event.messages = preserveNativeToolResults(event.messages, refusals);
             markCompactionAndOptions(event, false);
             await rememberSessionDirectory(event.sessionID);
         }));
@@ -473,10 +545,13 @@ const plugin = {
             modelsLoaded = false;
             credentialGeneration++;
         };
-        const unsubscribe = subscribeSessionActivity(ctx, ensureModels, onCredentialSwitch);
+        const unsubscribe = subscribeSessionActivity(ctx, ensureModels, onCredentialSwitch, toolLifecycle, releasePermissionCalls);
         return async () => {
             clearInterval(retry);
             unsubscribe?.();
+            releasePermissionCalls();
+            refusals.clear();
+            await saveOpenTurnsForShutdown();
             disposeHostAgentModeSwitch?.();
             disposeNativePlansDir();
             trace(`opencode2 plugin: cleanup directory=${workspaceRoot}`);
@@ -486,22 +561,45 @@ const plugin = {
         };
     },
 };
-function subscribeSessionActivity(ctx, onEvent, onCredentialSwitch) {
+const SHUTDOWN_SAVE_TIMEOUT_MS = 2_000;
+/** Save every open turn for the next server start, without holding shutdown up for long. */
+async function saveOpenTurnsForShutdown() {
+    let timer;
+    const timedOut = new Promise((resolve) => {
+        timer = setTimeout(resolve, SHUTDOWN_SAVE_TIMEOUT_MS);
+        timer.unref?.();
+    });
     try {
-        const stream = ctx.event.subscribe();
+        await Promise.race([notifyHostInterrupt(undefined, "shutdown"), timedOut]);
+    }
+    finally {
+        clearTimeout(timer);
+    }
+}
+function subscribeSessionActivity(ctx, onEvent, onCredentialSwitch, onToolEvent, onStreamClosed) {
+    try {
+        const controller = new AbortController();
+        const stream = ctx.event.subscribe({ signal: controller.signal });
         if (!stream || typeof stream[Symbol.asyncIterator] !== "function")
             return undefined;
         let stopped = false;
         void (async () => {
-            for await (const event of stream) {
-                if (stopped)
-                    break;
-                applySessionActivity(event, onCredentialSwitch);
-                onEvent?.();
+            try {
+                for await (const event of stream) {
+                    if (stopped)
+                        break;
+                    applySessionActivity(event, onCredentialSwitch);
+                    onToolEvent?.(event);
+                    onEvent?.();
+                }
+            }
+            finally {
+                onStreamClosed?.();
             }
         })().catch(() => { });
         return () => {
             stopped = true;
+            controller.abort();
         };
     }
     catch {
@@ -511,6 +609,8 @@ function subscribeSessionActivity(ctx, onEvent, onCredentialSwitch) {
 function applySessionActivity(event, onCredentialSwitch) {
     const payload = eventPayload(event);
     const info = payload?.info;
+    applyHostPromptEvent(sessionActivity, event?.type, payload);
+    applyHostToolEvent(sessionActivity, event?.type, payload);
     switch (event?.type) {
         case "credential.switched":
         case "credential.updated": {
@@ -537,6 +637,7 @@ function applySessionActivity(event, onCredentialSwitch) {
             if (id) {
                 sessionActivity.removeSession(id);
                 clearSessionTodos(id);
+                forgetEarlySteers(id);
                 clearActiveCursorMode(id);
                 cancelHostAgentModeSwitch(id);
             }
@@ -561,6 +662,42 @@ function applySessionActivity(event, onCredentialSwitch) {
                 sessionActivity.recordActivity(id);
             break;
         }
+        case "session.inbox.enqueued": {
+            const id = payload?.sessionID;
+            if (id)
+                sessionActivity.recordActivity(id);
+            const steer = inboxSteer(id, payload?.inboxID, payload?.item);
+            if (!steer)
+                break;
+            if (payload.item.delivery === "steer")
+                announceInboxSteer(steer);
+            else
+                rememberQueuedSteer(steer);
+            break;
+        }
+        case "session.inbox.delivery.changed": {
+            const id = payload?.sessionID;
+            if (id)
+                sessionActivity.recordActivity(id);
+            if (payload?.delivery !== "steer" || typeof payload?.inboxID !== "string")
+                break;
+            const steer = takeQueuedSteer(payload.inboxID);
+            if (steer)
+                announceInboxSteer(steer);
+            break;
+        }
+        case "session.inbox.delivered":
+        case "session.inbox.cancelled": {
+            const id = payload?.sessionID;
+            if (id)
+                sessionActivity.recordActivity(id);
+            if (typeof payload?.inboxID !== "string")
+                break;
+            takeQueuedSteer(payload.inboxID);
+            if (event.type === "session.inbox.cancelled" && typeof id === "string")
+                forgetEarlySteerOfInbox(id, payload.inboxID);
+            break;
+        }
         default: {
             // OpenCode 2.0 emits granular `session.*` progress events instead of
             // the V1 `message.updated` family (`session.tool.called/success/failed`,
@@ -571,9 +708,32 @@ function applySessionActivity(event, onCredentialSwitch) {
                 const id = payload?.sessionID ?? info?.sessionID ?? info?.id;
                 if (id)
                     sessionActivity.recordActivity(id);
+                if (id && type === "session.execution.interrupted") {
+                    void notifyHostInterrupt(id, typeof payload?.reason === "string" ? payload.reason : "user", typeof event.created === "number" ? event.created : Date.now());
+                }
             }
             break;
         }
     }
+}
+/** A plain-text user message; one with files or skills reaches the prompt in another shape. */
+function inboxSteer(sessionID, inboxID, item) {
+    if (typeof sessionID !== "string" || !sessionID || typeof inboxID !== "string" || !inboxID)
+        return undefined;
+    if (item?.type !== "user" || (item.delivery !== "steer" && item.delivery !== "queue"))
+        return undefined;
+    const prompt = item.payload;
+    if (typeof prompt?.text !== "string" || !prompt.text.trim())
+        return undefined;
+    if (prompt.files?.length || prompt.skills?.length)
+        return undefined;
+    return { sessionID, inboxID, text: prompt.text };
+}
+function announceInboxSteer(steer) {
+    const taken = announceHostSteer(steer);
+    if (taken === undefined)
+        return;
+    trace(`steer: OpenCode enqueued a mid-step message sessionID=${steer.sessionID} inboxID=${steer.inboxID} ` +
+        `chars=${steer.text.length} ${taken ? "injected into the pumping Run" : "left for the next step"}`);
 }
 export default plugin;

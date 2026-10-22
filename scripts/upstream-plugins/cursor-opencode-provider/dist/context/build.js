@@ -8,7 +8,7 @@ import { buildEnv } from "./env.js";
 import { ensureOpencodeProjectDir } from "./paths.js";
 import { holdCapabilityOverlay } from "./overlay.js";
 import { agentSkillsForCursor, applyAgentSkillsToContext, hostSkillFiles, loadBridgeSkills, skillToolAdvertised, } from "./skills.js";
-import { traceRequestContextPaths } from "../debug.js";
+import { trace, traceRequestContextPaths } from "../debug.js";
 /** Rule name Cursor shows for the host system context (not a file). */
 export const SYSTEM_INSTRUCTIONS_RULE_PATH = "OpenCode system instructions";
 /**
@@ -96,6 +96,34 @@ function stripHostDuplicatedRequestContextFields(context) {
     keepSystemInstructionsRule(context);
 }
 /**
+ * How long one workspace's git and layout discovery serves later builds. A new
+ * session's first message opens two Runs moments apart (OpenCode's title
+ * request and the turn itself) on separate conversations; each froze its own
+ * copy, and `git status` dominates on a large repository (1.3 s warm on 35k
+ * tracked files; both discoveries of one observed session took about 5 s).
+ * Each conversation freezes what it got anyway.
+ */
+const WORKSPACE_FACTS_REUSE_MS = 30_000;
+const workspaceFacts = new Map();
+function collectWorkspaceFacts(workspaceRoot) {
+    const now = Date.now();
+    for (const [root, entry] of workspaceFacts) {
+        if (now - entry.at >= WORKSPACE_FACTS_REUSE_MS)
+            workspaceFacts.delete(root);
+    }
+    const cached = workspaceFacts.get(workspaceRoot);
+    if (cached) {
+        trace(`workspace facts: reused ageMs=${now - cached.at}`);
+        return cached.facts;
+    }
+    const facts = Promise.all([collectGit(workspaceRoot), collectProjectLayout(workspaceRoot)]);
+    workspaceFacts.set(workspaceRoot, { at: now, facts });
+    return facts;
+}
+export function resetWorkspaceFactsForTests() {
+    workspaceFacts.clear();
+}
+/**
  * Full RequestContext payload for live UMA + exec #10 reply.
  * Workspace env/git/layout, the host system-instructions rule, and
  * host-advertised tools and subagents. The provider never looks in Cursor's
@@ -104,10 +132,9 @@ function stripHostDuplicatedRequestContextFields(context) {
 export async function buildRequestContext(input) {
     const workspaceRoot = path.resolve(input.workspaceRoot || process.cwd());
     const config = input.mergedConfig ?? await loadMergedConfig(workspaceRoot);
-    const [dynamic, git, layout] = await Promise.all([
+    const [dynamic, [git, layout]] = await Promise.all([
         buildDynamicRequestContextFromDiscovery(input, workspaceRoot, config),
-        collectGit(workspaceRoot),
-        collectProjectLayout(workspaceRoot),
+        collectWorkspaceFacts(workspaceRoot),
     ]);
     const workspace = {
         env: buildEnv(workspaceRoot),
@@ -118,7 +145,7 @@ export async function buildRequestContext(input) {
         env_info_complete: true,
         repository_info_complete: true,
         git_repo_info_complete: true,
-        git_status_info_complete: true,
+        git_status_info_complete: git.statusComplete,
     };
     const base = withSystemInstructions(workspace, input.systemInstructions);
     const skillLocations = await resolveSkillLocations(input, workspaceRoot);

@@ -731,3 +731,13 @@ export function extractExecDisplayCallId(execMsg) {
     }
     return undefined;
 }
+/** File paths a display TaskToolCall attaches; Cursor reads each one before its subagent request. */
+export function taskToolCallAttachments(toolCall) {
+    if (!toolCall || findToolVariant(toolCall) !== "task_tool_call")
+        return [];
+    const payload = asRecord(toolCall.task_tool_call);
+    const attachments = payload ? unwrapArgs(payload).attachments : undefined;
+    if (!Array.isArray(attachments))
+        return [];
+    return attachments.filter((item) => typeof item === "string" && item.trim().length > 0);
+}

@@ -2214,6 +2214,14 @@ describe("renderQuotaStatusReport", () => {
       ],
       absent: ["anthropic/claude", "codex-mini-latest", "model-x"],
     },
+    {
+      name: "a model priced for only some of its messages",
+      usage: {
+        totals: { tokens: { processed: 80_000 }, unpricedShare: 0.125 },
+        models: [{ providerID: "openai", modelID: "gpt-4", priced: true, unpricedTokens: 10_000 }],
+      },
+      lines: ["- unpriced_30d: 12.5% of 80.0K tokens", "  - openai/gpt-4: 10.0K tokens"],
+    },
   ])(
     "lists the last 30 days' models without a price: $name",
     async ({ usage, lines, absent = [] }) => {

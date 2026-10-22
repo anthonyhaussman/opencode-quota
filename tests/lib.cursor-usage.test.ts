@@ -58,26 +58,85 @@ describe("getCurrentCursorUsageSummary", () => {
       "api, auto/composer, unknown and non-Cursor history",
       [
         message("cursor", "auto", 1_000_000, 500_000),
-        message("cursor", "gpt-5.4-high", 1_000_000, 1_000_000),
+        message("cursor", "gpt-5.4-high", 200_000, 1_000_000),
         message("cursor-acp", "cursor-acp/unknown-future-model", 10, 20),
         message("openai", "gpt-5", 1_000_000, 1_000_000),
       ],
-      { auto: [1, 4.25], api: [1, 17.5], total: 3, unknown: ["cursor-acp/unknown-future-model"] },
+      {
+        auto: [1, 4.25],
+        api: [1, 15.5],
+        total: 3,
+        unknown: ["cursor-acp/unknown-future-model"],
+        unpriced: 0,
+      },
     ],
     [
       "legacy cursor-acp history",
       [message("cursor-acp", "cursor-acp/composer-1", 1_000_000, 500_000)],
-      { auto: [1, 6.25], api: [0, 0], total: 1, unknown: [] },
+      { auto: [1, 6.25], api: [0, 0], total: 1, unknown: [], unpriced: 0 },
     ],
     [
       "cursor-opencode-provider fast and 1m entries",
       [
         message("cursor", "composer-2.5-fast", 1_000_000, 1_000_000),
-        message("cursor", "grok-4.7", 1_000_000, 500_000),
+        message("cursor", "grok-4.7", 100_000, 500_000),
         message("cursor", "claude-opus-4-8-1m", 1_000_000, 1_000_000),
         message("cursor", "gpt-5.5-1m", 10, 20),
       ],
-      { auto: [2, 23], api: [1, 30], total: 4, unknown: ["gpt-5.5-1m"] },
+      { auto: [2, 21.2], api: [1, 30], total: 4, unknown: ["gpt-5.5-1m"], unpriced: 0 },
+    ],
+    [
+      // The last step of a turn, as cursor-opencode-provider's `shapeStepUsage` (billing.js)
+      // shapes it: cache writes Cursor has no rate for, so OpenCode bills each the $0.001 Cursor did.
+      "turns cursor-opencode-provider settled at what Cursor billed",
+      [
+        {
+          providerID: "cursor",
+          modelID: "gemini-4-argon",
+          tokens: { output: 1, cacheRead: 9_900, cacheWrite: 90_100 },
+        },
+        {
+          providerID: "cursor",
+          modelID: "kimi-k3",
+          tokens: { output: 1, cacheRead: 3_283, cacheWrite: 96_717 },
+        },
+        {
+          providerID: "cursor",
+          modelID: "grok-4.7",
+          tokens: { output: 1, cacheRead: 1_988, cacheWrite: 98_012 },
+        },
+      ],
+      { auto: [1, 0.001], api: [2, 0.002], total: 3, unknown: [], unpriced: 0 },
+    ],
+    [
+      "prompts over 200k tokens on models Cursor bills at a long-context rate there, without a price",
+      [
+        message("cursor", "grok-4.7", 200_000, 0),
+        {
+          providerID: "cursor",
+          modelID: "grok-4.7",
+          tokens: { input: 50_000, cacheRead: 150_001 },
+        },
+        message("cursor", "grok-4.7-fast", 250_000, 0),
+        message("cursor", "gpt-5.4", 200_000, 1),
+        message("cursor", "gpt-5.4", 250_000, 1),
+        message("cursor", "claude-sonnet-4-5", 250_000, 1),
+      ],
+      { auto: [1, 0.4], api: [2, 1.25003], total: 6, unknown: [], unpriced: 3 },
+    ],
+    [
+      "models Cursor prices on its own, without models.dev's different price",
+      [
+        message("cursor", "gemini-3.6-flash", 100_000, 1),
+        message("cursor", "glm-5.3-flash", 10, 20),
+      ],
+      {
+        auto: [0, 0],
+        api: [0, 0],
+        total: 2,
+        unknown: ["gemini-3.6-flash", "glm-5.3-flash"],
+        unpriced: 0,
+      },
     ],
     [
       "models outside Cursor's alias list at their models.dev price, as the Usage tab prices them",
@@ -86,12 +145,18 @@ describe("getCurrentCursorUsageSummary", () => {
         message("cursor", "constructor", 10, 20),
         message("cursor", "cursor/__proto__", 10, 20),
       ],
-      { auto: [0, 0], api: [1, 11.25], total: 3, unknown: ["constructor", "cursor/__proto__"] },
+      {
+        auto: [0, 0],
+        api: [1, 11.25],
+        total: 3,
+        unknown: ["constructor", "cursor/__proto__"],
+        unpriced: 0,
+      },
     ],
     [
       "a Cursor official fallback alias",
       [message("cursor", "cursor/gpt-5.3-codex-spark-preview", 1_000_000, 1_000_000)],
-      { auto: [0, 0], api: [1, 15.75], total: 1, unknown: [] },
+      { auto: [0, 0], api: [1, 15.75], total: 1, unknown: [], unpriced: 0 },
     ],
   ])("buckets %s by Cursor pool", async (_label, messages, expected) => {
     storeMessages(messages);
@@ -103,11 +168,13 @@ describe("getCurrentCursorUsageSummary", () => {
       api: [summary.api.messageCount, summary.api.costUsd],
       total: summary.total.messageCount,
       unknown: summary.unknownModels.map((model) => model.sourceModelID),
+      unpriced: summary.unpricedRequestCount,
     }).toEqual({
       auto: [expected.auto[0], expect.closeTo(expected.auto[1], 6)],
       api: [expected.api[0], expect.closeTo(expected.api[1], 6)],
       total: expected.total,
       unknown: expected.unknown,
+      unpriced: expected.unpriced,
     });
   });
 });
