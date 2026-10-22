@@ -28,17 +28,19 @@ const OPENROUTER_KEY_SOURCE = {
   format: "openrouter-key-v1",
 } satisfies RemoteApiQuotaProviderDefinition;
 
-/** The key from the env variable, the trusted global config or OpenCode's logins. */
-export async function resolveOpenRouterApiKey(): Promise<QuotaProviderAuthResolution> {
-  return await resolveQuotaProviderApiKey(OPENROUTER_KEY_SOURCE);
+/** The key from the env variable, OpenCode's config files for `directory`, or its logins. */
+export async function resolveOpenRouterApiKey(
+  directory: string,
+): Promise<QuotaProviderAuthResolution> {
+  return await resolveQuotaProviderApiKey(OPENROUTER_KEY_SOURCE, directory);
 }
 
 export const openRouterProvider: QuotaProvider = {
   id: "openrouter",
   cachePolicy: {
     kind: "resolved-auth",
-    async resolveIdentity() {
-      const { key } = await resolveOpenRouterApiKey();
+    async resolveIdentity(ctx) {
+      const { key } = await resolveOpenRouterApiKey(ctx.locationDirectory);
       if (!key) return null;
       return deriveResolvedAuthIdentity({
         providerId: "openrouter",
@@ -47,8 +49,8 @@ export const openRouterProvider: QuotaProvider = {
     },
   },
 
-  async isAvailable(_ctx: QuotaProviderContext): Promise<boolean> {
-    return Boolean((await resolveOpenRouterApiKey()).key);
+  async isAvailable(ctx: QuotaProviderContext): Promise<boolean> {
+    return Boolean((await resolveOpenRouterApiKey(ctx.locationDirectory)).key);
   },
 
   matchesCurrentModel(model: string): boolean {
@@ -56,7 +58,7 @@ export const openRouterProvider: QuotaProvider = {
   },
 
   async fetch(ctx: QuotaProviderContext): Promise<ProviderFetchResult> {
-    const resolved = await resolveOpenRouterApiKey();
+    const resolved = await resolveOpenRouterApiKey(ctx.locationDirectory);
     const debug = simpleApiKeyStatusDetails({
       configured: Boolean(resolved.key),
       source: resolved.source,

@@ -110,7 +110,7 @@ To edit it yourself, put definitions in `providers.custom` in `settings.jsonc` (
 
 - **Remote API:** real quota data from a supported endpoint (formats below).
 - **Local estimate:** counts matching completed OpenCode requests in 1–16 windows, with optional spend estimates. `utc-day` resets at UTC midnight; `rolling` uses `durationMinutes` (up to 366 days). Every window needs `requestLimit`; `usdBudget` is optional.
-- **Credentials:** the variable named by `apiKeyEnv`, then trusted global `provider.<providerId>.options.apiKey` (no `{env:…}` unless it names `apiKeyEnv`), then an API-key login saved in OpenCode 2 (`opencode.db`) for that provider id. A switched-off provider is never fetched and its key is never sent. Project secrets are never read.
+- **Credentials:** the variable named by `apiKeyEnv`, then `provider.<providerId>.options.apiKey` in the [OpenCode config files](troubleshooting.md#opencode-config-files) (no `{env:…}` unless it names `apiKeyEnv`), then an API-key login saved in OpenCode 2 (`opencode.db`) for that provider id. A switched-off provider is never fetched and its key is never sent.
 - Switched-on definitions whose `providerId` OpenCode has run automatically unless `providers.off` includes `custom`.
 - A custom model provider still needs its normal OpenCode provider/model config. `/connect` → **Other** stores its credential, not its model setup.
 - OpenRouter is built in. A custom OpenRouter definition only helps if you need a different endpoint or label.
@@ -269,9 +269,10 @@ OpenCode Quota sends a fixed authenticated `GET` and waits up to `providers.chec
 
 ## API keys
 
-These providers read an API key from, in order: an environment variable, then trusted user/global OpenCode config (`provider.<id>.options.apiKey`), then an API-key login saved in OpenCode 2 (`opencode.db`).
+These providers read an API key from, in order: an environment variable, then OpenCode config (`provider.<id>.options.apiKey`), then an API-key login saved in OpenCode 2 (`opencode.db`).
 
-- Project-local `opencode.json` / `opencode.jsonc` is never read for secrets.
+- OpenCode config means the [OpenCode config files](troubleshooting.md#opencode-config-files) of the session, the project's included. The file ranked highest that holds a key wins.
+- A whole value `{env:NAME}` is filled in only when `NAME` is one of that provider's own variables. Other templates, such as `{file:…}`, are not filled in.
 - An OpenCode login used as a fallback must be an API-key login, not an OAuth sign-in.
 - `provider.<id>.options.apiKey` can also be written in OpenCode 2's native form, `providers.<id>.settings.apiKey`. Like OpenCode 2, a native `providers.<id>` entry replaces the `provider.<id>` entry with the same id.
 
@@ -442,7 +443,7 @@ opencode auth login google-agy
 
 - It shows the companion's grouped weekly and five-hour windows for each account. AGY logins copied from OpenCode 1 keep working.
 - Remove `google-agy` from `providers.off` if it is switched off.
-- If the login has no project id, set `OPENCODE_AGY_PROJECT_ID`, or `providers.google-agy.settings.projectId` in your user/global `opencode.json` (the OpenCode 1 form `provider.google-agy.options.projectId` also works).
+- If the login has no project id, set `OPENCODE_AGY_PROJECT_ID`, or `providers.google-agy.settings.projectId` in [OpenCode config](troubleshooting.md#opencode-config-files) (the OpenCode 1 form `provider.google-agy.options.projectId` also works).
 
 <a id="gemini-cli"></a>
 
@@ -466,7 +467,7 @@ Shows your on-demand account balance from `GET https://api.deepseek.com/user/bal
 
 - Each valid **Total balance** is its own currency row. Detailed output can add **Granted balance** and **Topped-up balance**. Currencies are never added up or converted.
 - With no valid total balance, it shows the API's availability status. A malformed number becomes a partial-data issue, not zero.
-- Key: `DEEPSEEK_API_KEY`, or `provider.deepseek.options.apiKey` in trusted user/global config (for example `"{env:DEEPSEEK_API_KEY}"`). See [API keys](#api-keys).
+- Key: `DEEPSEEK_API_KEY`, or `provider.deepseek.options.apiKey` in OpenCode config (for example `"{env:DEEPSEEK_API_KEY}"`). See [API keys](#api-keys).
 - Remove `deepseek` from `providers.off` if it is switched off.
 
 <a id="kimi-code"></a>
@@ -475,8 +476,8 @@ Shows your on-demand account balance from `GET https://api.deepseek.com/user/bal
 
 Each regional plan has its own key and host. A key is sent only to its own host, and a failed request is never retried on the other one.
 
-- **Kimi Code (Global)** uses `api.kimi.ai`. Key order: `KIMI_GLOBAL_API_KEY` → trusted user/global `provider.kimi-code-plan-global.options.apiKey` → `kimi-code-plan-global` API-key login saved in OpenCode 2.
-- **Kimi Code (CN)** uses `api.kimi.com`. Key order: `KIMI_CN_API_KEY` → `KIMI_API_KEY` → `KIMI_CODE_API_KEY` → trusted user/global config under `kimi-code-plan-cn`, `kimi-for-coding`, `kimi-code`, or `kimi` → an API-key login saved in OpenCode 2 under those same ids. The legacy ids `kimi-for-coding`, `kimi-code`, and `kimi` belong to the CN plan.
+- **Kimi Code (Global)** uses `api.kimi.ai`. Key order: `KIMI_GLOBAL_API_KEY` → `provider.kimi-code-plan-global.options.apiKey` in OpenCode config → `kimi-code-plan-global` API-key login saved in OpenCode 2.
+- **Kimi Code (CN)** uses `api.kimi.com`. Key order: `KIMI_CN_API_KEY` → `KIMI_API_KEY` → `KIMI_CODE_API_KEY` → OpenCode config under `kimi-code-plan-cn`, `kimi-for-coding`, `kimi-code`, or `kimi` → an API-key login saved in OpenCode 2 under those same ids. The legacy ids `kimi-for-coding`, `kimi-code`, and `kimi` belong to the CN plan.
 
 <a id="xiaomi-mimo"></a>
 
@@ -515,7 +516,7 @@ To copy the cookie:
 
 ### Ollama Cloud
 
-Create an Ollama API key, then set `OLLAMA_API_KEY` (or use trusted user/global `provider.ollama-cloud.options.apiKey`, or an `ollama-cloud` API-key login saved in OpenCode 2).
+Create an Ollama API key, then set `OLLAMA_API_KEY` (or use `provider.ollama-cloud.options.apiKey` in OpenCode config, or an `ollama-cloud` API-key login saved in OpenCode 2).
 
 - Calls `https://ollama.com/api/balance`. Credit plans show a **Monthly** row (included credits left, with the period's reset time); legacy plans show **Session** and **Weekly** rows with their reset times.
 - **Purchased** shows unexpired purchased credits in USD when there are some, or when Ollama returns nothing else.
@@ -544,8 +545,8 @@ If you are signed in to the OpenCode Console in OpenCode 2, Go first asks the Co
 API key order:
 
 1. `OPENCODE_API_KEY`
-2. Trusted user/global OpenCode config: `provider.opencode-go.options.apiKey`
-3. Trusted user/global fallback: `provider.opencode.options.apiKey`
+2. OpenCode config: `provider.opencode-go.options.apiKey`
+3. OpenCode config fallback: `provider.opencode.options.apiKey`
 4. An `opencode-go` API-key login saved in OpenCode 2 (`opencode.db`). `opencode auth login opencode-go` creates it.
 5. A legacy `opencode` API-key login as the final fallback.
 

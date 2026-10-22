@@ -130,15 +130,15 @@ export async function alibabaCodingPlanRows(params: {
 
 export const alibabaCodingPlanProvider: QuotaProvider = {
   id: "alibaba-coding-plan",
-  cachePolicy: resolvedCredentialPolicy("alibaba-coding-plan", async () => {
-    const resolved = await resolveAlibabaCodingPlanAuthCached();
+  cachePolicy: resolvedCredentialPolicy("alibaba-coding-plan", async (ctx) => {
+    const resolved = await resolveAlibabaCodingPlanAuthCached(ctx.locationDirectory);
     return resolved.state === "configured"
       ? { credential: resolved.apiKey, qualifiers: [resolved.tier] }
       : null;
   }),
 
-  async isAvailable(_ctx: QuotaProviderContext): Promise<boolean> {
-    const plan = await resolveAlibabaCodingPlanAuthCached();
+  async isAvailable(ctx: QuotaProviderContext): Promise<boolean> {
+    const plan = await resolveAlibabaCodingPlanAuthCached(ctx.locationDirectory);
     return plan.state === "configured" || plan.state === "invalid";
   },
 
@@ -150,7 +150,7 @@ export const alibabaCodingPlanProvider: QuotaProvider = {
   },
 
   async fetch(ctx: QuotaProviderContext): Promise<ProviderFetchResult> {
-    const plan = await getAlibabaCodingPlanAuthDiagnostics();
+    const plan = await getAlibabaCodingPlanAuthDiagnostics(ctx.locationDirectory);
     const debug = statusDetailsFromRecord({
       "alibaba auth configured": plan.state === "none" ? "false" : "true",
       alibaba_api_key_source: plan.source ?? "(none)",

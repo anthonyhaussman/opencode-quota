@@ -2279,6 +2279,7 @@ describe("statusReport", () => {
     const host = {
       client,
       workspaceRoot: workspace,
+      locationDirectory: workspace,
       settings: () => loaded,
       providers: () => registry.providers,
     };

@@ -15,11 +15,15 @@ const { mockFiles, mockAuth, testPaths } = vi.hoisted(() => {
       cursorAuth: join(home, ".config", "cursor", "auth.json"),
       config,
       opencodeConfig: join(config, "opencode.json"),
+      // The session runs in a subfolder of a repository whose root holds an OpenCode config.
+      session: join(root, "repo", "packages", "app"),
+      repoConfig: join(root, "repo", "opencode.jsonc"),
     },
   };
 });
 
-vi.mock("fs", () => ({
+vi.mock("fs", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("fs")>()),
   existsSync: vi.fn((path: string) => mockFiles.has(path)),
 }));
 
@@ -183,7 +187,7 @@ describe("cursor detection", () => {
   ])("detects %s", async (_label, config, pluginEnabled, providerConfigured) => {
     mockFiles.set(testPaths.opencodeConfig, JSON.stringify(config));
 
-    expect(await inspectCursorOpenCodeIntegration()).toMatchObject({
+    expect(await inspectCursorOpenCodeIntegration(testPaths.session)).toMatchObject({
       pluginEnabled,
       providerConfigured,
       matchedPaths: [testPaths.opencodeConfig],
@@ -213,10 +217,24 @@ describe("cursor detection", () => {
   ])("plugin spec %j -> detected %s", async (spec, detected) => {
     mockFiles.set(testPaths.opencodeConfig, JSON.stringify({ plugin: [spec] }));
 
-    expect(await inspectCursorOpenCodeIntegration()).toMatchObject({
+    expect(await inspectCursorOpenCodeIntegration(testPaths.session)).toMatchObject({
       pluginEnabled: detected,
       providerConfigured: false,
       matchedPaths: detected ? [testPaths.opencodeConfig] : [],
+    });
+  });
+
+  it("reads the config of the session's folder and the folders above it", async () => {
+    mockFiles.set(
+      testPaths.repoConfig,
+      '{\n  // repository plugins\n  "plugin": ["cursor-opencode-provider/plugin/opencode2",],\n}',
+    );
+
+    expect(await inspectCursorOpenCodeIntegration(testPaths.session)).toMatchObject({
+      pluginEnabled: true,
+      providerConfigured: false,
+      matchedPaths: [testPaths.repoConfig],
+      checkedPaths: [testPaths.repoConfig],
     });
   });
 });

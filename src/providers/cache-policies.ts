@@ -9,7 +9,7 @@ import {
   readVendorKeys,
   type VendorKeys,
 } from "../lib/api-key-resolver.js";
-import type { QuotaProviderCachePolicy } from "../lib/entries.js";
+import type { QuotaProviderCachePolicy, QuotaProviderContext } from "../lib/entries.js";
 import type { CanonicalQuotaProviderId } from "../lib/provider-registration.js";
 import {
   deriveResolvedAuthIdentity,
@@ -26,12 +26,12 @@ type ResolvedCredential = {
 /** The identity of the one credential `resolve` finds; none when it finds none. */
 export function resolvedCredentialPolicy(
   providerId: CanonicalQuotaProviderId,
-  resolve: () => Promise<ResolvedCredential | null>,
+  resolve: (ctx: QuotaProviderContext) => Promise<ResolvedCredential | null>,
 ): QuotaProviderCachePolicy {
   return {
     kind: "resolved-auth",
-    async resolveIdentity() {
-      const resolved = await resolve();
+    async resolveIdentity(ctx) {
+      const resolved = await resolve(ctx);
       if (!resolved) return null;
       return deriveResolvedAuthIdentity({
         providerId,
@@ -81,8 +81,9 @@ export function vendorKeysPolicy(
   const spec: ApiKeyLoginSpec = API_KEY_VENDORS[providerId];
   return {
     kind: "resolved-auth",
-    async resolveIdentity() {
-      return await vendorKeysIdentity(providerId, await readVendorKeys(spec), endpoint);
+    async resolveIdentity(ctx) {
+      const keys = await readVendorKeys(spec, ctx.locationDirectory);
+      return await vendorKeysIdentity(providerId, keys, endpoint);
     },
   };
 }

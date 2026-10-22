@@ -15,7 +15,6 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vite-plus/test";
 
 import { writeTextAtomic } from "../src/lib/atomic-json.js";
-import { resolveEditableConfigPath } from "../src/lib/config-file-utils.js";
 import {
   applyConfigDocumentEdit,
   planConfigDocumentEdit,
@@ -39,29 +38,32 @@ const EMPTY_PLUGINS = '{"plugin":[]}\n';
 
 type ManagedComments = Parameters<typeof planConfigDocumentEdit>[0]["managedComments"];
 
-/** Plans an edit of the OpenCode config in `dir`; `preferredFormat` names a new file. */
+/** Plans an edit of the OpenCode config file `fileName` in `dir`. */
 function planEdit(
   dir: string,
   desiredData: Record<string, unknown>,
-  preferredFormat: "json" | "jsonc" = "json",
+  fileName: "opencode.json" | "opencode.jsonc" = "opencode.json",
   managedComments?: ManagedComments,
 ) {
+  const path = join(dir, fileName);
   return planConfigDocumentEdit({
-    target: resolveEditableConfigPath({ dir, kind: "opencode", preferredFormat }),
+    target: {
+      path,
+      format: fileName === "opencode.jsonc" ? "jsonc" : "json",
+      existed: existsSync(path),
+    },
     desiredData,
     managedComments,
   });
 }
 
-/** Plans and applies an edit of the OpenCode config in `dir`, and returns its path. */
+/** Plans and applies an edit of the OpenCode config file `fileName` in `dir`. */
 async function editConfig(
   dir: string,
   desiredData: Record<string, unknown>,
-  preferredFormat: "json" | "jsonc" = "json",
-): Promise<string> {
-  const plan = await planEdit(dir, desiredData, preferredFormat);
-  await applyConfigDocumentEdit(plan);
-  return plan.path;
+  fileName: "opencode.json" | "opencode.jsonc" = "opencode.json",
+): Promise<void> {
+  await applyConfigDocumentEdit(await planEdit(dir, desiredData, fileName));
 }
 
 /** Makes `<root>/config` with `name` as a symlink to `linkText`. */
@@ -99,34 +101,16 @@ describe("OpenCode JSON/JSONC config editor", () => {
       },
     ];
 
-    await applyConfigDocumentEdit(await planEdit(dir, desiredData, "jsonc", comments));
+    await applyConfigDocumentEdit(await planEdit(dir, desiredData, "opencode.jsonc", comments));
 
     const updated = readFileSync(path, "utf8");
     expect(updated).toContain("// user-owned setting");
     expect(updated).toContain('"other-plugin",');
     expect(updated.match(/OpenCode Quota: loads the server plugin/g)).toHaveLength(1);
 
-    const second = await planEdit(dir, desiredData, "jsonc", comments);
+    const second = await planEdit(dir, desiredData, "opencode.jsonc", comments);
     expect(second.changed).toBe(false);
   });
-
-  it.each([
-    { existing: "opencode.jsonc", preferredFormat: "json", format: "jsonc" },
-    { existing: "opencode.json", preferredFormat: "jsonc", format: "json" },
-  ] as const)(
-    "keeps the existing $existing file when $preferredFormat is preferred",
-    ({ existing, preferredFormat, format }) => {
-      const dir = makeTempDir();
-      const path = join(dir, existing);
-      writeFileSync(path, '{"plugin":["other"]}\n', "utf8");
-
-      expect(resolveEditableConfigPath({ dir, kind: "opencode", preferredFormat })).toEqual({
-        path,
-        format,
-        existed: true,
-      });
-    },
-  );
 
   it("creates a missing config as a regular strict-JSON file without comments", async () => {
     const dir = makeTempDir();
@@ -134,7 +118,7 @@ describe("OpenCode JSON/JSONC config editor", () => {
       $schema: "https://opencode.ai/config.json",
       plugin: ["@slkiser/opencode-quota@latest"],
     };
-    const plan = await planEdit(dir, desiredData, "json", [
+    const plan = await planEdit(dir, desiredData, "opencode.json", [
       { path: ["plugin"], text: "// OpenCode Quota: this must not appear in strict JSON." },
     ]);
 
@@ -192,7 +176,11 @@ describe("config symlink-preserving writes", () => {
     );
     const { configDir, link } = linkConfig(root, real, "opencode.jsonc");
 
-    await editConfig(configDir, { plugin: ["other", "@slkiser/opencode-quota@latest"] }, "jsonc");
+    await editConfig(
+      configDir,
+      { plugin: ["other", "@slkiser/opencode-quota@latest"] },
+      "opencode.jsonc",
+    );
 
     const updated = readFileSync(real, "utf8");
     expect(lstatSync(link).isSymbolicLink()).toBe(true);

@@ -139,26 +139,15 @@ function parseArgs(command: CliCommand, argv: string[]): ParsedArgs {
   return { ok: true, providerId, help: false, json, threshold };
 }
 
-function resolveCliRoots(cwd: string): {
-  workspaceRoot: string;
-  configRoot: string;
-  fallbackDirectory: string;
-} {
-  const fallbackDirectory = resolve(cwd);
-  const worktreeRoot = findGitWorktreeRoot(fallbackDirectory) ?? fallbackDirectory;
-  return {
-    workspaceRoot: worktreeRoot,
-    configRoot: worktreeRoot,
-    fallbackDirectory,
-  };
-}
-
 /** Logins OpenCode may not list as providers: the Claude CLI and the Kimi CLI. */
-async function loadCliAuthenticatedProviderIds(anthropicBinaryPath: string): Promise<string[]> {
+async function loadCliAuthenticatedProviderIds(
+  anthropicBinaryPath: string,
+  directory: string,
+): Promise<string[]> {
   const [anthropicConfigured, kimiGlobalAuth, kimiCnAuth] = await Promise.all([
     hasAnthropicCredentialsConfigured({ binaryPath: anthropicBinaryPath }),
-    resolveApiKeyLogin(API_KEY_VENDORS["kimi-code-plan-global"]),
-    resolveApiKeyLogin(API_KEY_VENDORS["kimi-code-plan-cn"]),
+    resolveApiKeyLogin(API_KEY_VENDORS["kimi-code-plan-global"], directory),
+    resolveApiKeyLogin(API_KEY_VENDORS["kimi-code-plan-cn"], directory),
   ]);
 
   return [
@@ -168,9 +157,12 @@ async function loadCliAuthenticatedProviderIds(anthropicBinaryPath: string): Pro
   ];
 }
 
-/** OpenCode's provider list without OpenCode: its config files plus the CLI logins. */
+/**
+ * OpenCode's provider list without OpenCode: its config files that count for `directory`, plus
+ * the CLI logins.
+ */
 export function createCliQuotaClient(params: {
-  configRootDir: string;
+  directory: string;
   anthropicBinaryPath: string;
 }): QuotaProviderContext["client"] {
   let providerIdsPromise: Promise<string[]> | undefined;
@@ -180,8 +172,8 @@ export function createCliQuotaClient(params: {
       providers: async () => {
         providerIdsPromise ??= (async () => {
           const [configuredIds, authenticatedIds] = await Promise.all([
-            loadConfiguredProviderIds({ configRootDir: params.configRootDir }),
-            loadCliAuthenticatedProviderIds(params.anthropicBinaryPath),
+            loadConfiguredProviderIds(params.directory),
+            loadCliAuthenticatedProviderIds(params.anthropicBinaryPath, params.directory),
           ]);
           return [...new Set([...configuredIds, ...authenticatedIds])];
         })();
@@ -231,16 +223,19 @@ async function runCliReport(params: {
   const unbind = bindCredentialSource(createSqliteCredentialSource());
   let unbindPricingSettings = () => {};
   try {
-    const roots = resolveCliRoots(params.cwd);
+    // The folder the command runs in stands for OpenCode's session folder.
+    const locationDirectory = resolve(params.cwd);
+    const workspaceRoot = findGitWorktreeRoot(locationDirectory) ?? locationDirectory;
     // The terminal reads the settings as they are; only OpenCode writes the v5 conversion.
-    const loaded = await loadSettings({ projectDir: roots.workspaceRoot });
+    const loaded = await loadSettings({ projectDir: workspaceRoot });
     unbindPricingSettings = usePricingSettings(() => loaded.settings.providers.pricing);
     const host: ProviderSourceHost = {
       client: createCliQuotaClient({
-        configRootDir: roots.configRoot,
+        directory: locationDirectory,
         anthropicBinaryPath: loaded.settings.providers.anthropic.binaryPath,
       }),
-      workspaceRoot: roots.workspaceRoot,
+      workspaceRoot,
+      locationDirectory,
       settings: () => loaded,
       providers: params.providers,
     };

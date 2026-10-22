@@ -8,7 +8,7 @@ import type {
 } from "../src/lib/quota-providers.js";
 import { createRuntimeProviderIdResolver } from "../src/lib/runtime-provider-ids.js";
 import type { ProviderFetchResult, ProviderRow } from "../src/providers/contract.js";
-import { useOpencodeFolders } from "./helpers/opencode-folders.js";
+import { NO_PROJECT_DIRECTORY, useOpencodeFolders } from "./helpers/opencode-folders.js";
 
 useOpencodeFolders();
 
@@ -107,6 +107,7 @@ function context(
   return {
     client,
     resolveRuntimeProviderIds: createRuntimeProviderIdResolver(client),
+    locationDirectory: NO_PROJECT_DIRECTORY,
     config: {
       anthropicBinaryPath: "claude",
       cursorPlan: "none",

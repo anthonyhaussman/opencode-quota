@@ -18,6 +18,7 @@ import {
 import { createGoogleTokenCache } from "../src/lib/google-token-cache.js";
 import type { CredentialRow } from "../src/lib/opencode-auth.js";
 import { getOpencodeRuntimeDirs } from "../src/lib/opencode-runtime-paths.js";
+import { NO_PROJECT_DIRECTORY } from "./helpers/opencode-folders.js";
 import { useProviderWorld } from "./helpers/provider-fetch.js";
 
 const world = useProviderWorld();
@@ -103,7 +104,11 @@ function queryAgy(
   options: { requestTimeoutMs?: number } = {},
 ) {
   const [row] = loginsOf(logins);
-  return queryGoogleQuota(agyFlavor, { ...options, login: row! });
+  return queryGoogleQuota(agyFlavor, {
+    ...options,
+    login: row!,
+    directory: NO_PROJECT_DIRECTORY,
+  });
 }
 
 /** The Gemini CLI query of the one login in `logins`. */
@@ -112,7 +117,11 @@ function queryGeminiCli(
   options: { requestTimeoutMs?: number } = {},
 ) {
   const [row] = loginsOf(logins);
-  return queryGoogleQuota(geminiCliFlavor, { ...options, login: row! });
+  return queryGoogleQuota(geminiCliFlavor, {
+    ...options,
+    login: row!,
+    directory: NO_PROJECT_DIRECTORY,
+  });
 }
 
 function summaryResponse(
@@ -192,7 +201,7 @@ const FLAVORS = [
       "Install @anthonyhaussman/opencode-agy-auth separately to enable Google AGY quota",
     failedLoginState: "invalid",
     query: queryAgy,
-    resolveProjectId: () => resolveGoogleConfiguredProjectId(AGY_FLAVOR),
+    resolveProjectId: () => resolveGoogleConfiguredProjectId(AGY_FLAVOR, NO_PROJECT_DIRECTORY),
     inspectAuth: (rows: CredentialRow[]) =>
       inspectGoogleAuthPresence(AGY_FLAVOR, { rows, configuredProjectId: undefined }),
   },
@@ -215,7 +224,8 @@ const FLAVORS = [
     missingCompanionError: "Gemini CLI requires the opencode-gemini-auth plugin",
     failedLoginState: "present",
     query: queryGeminiCli,
-    resolveProjectId: () => resolveGoogleConfiguredProjectId(GEMINI_CLI_FLAVOR),
+    resolveProjectId: () =>
+      resolveGoogleConfiguredProjectId(GEMINI_CLI_FLAVOR, NO_PROJECT_DIRECTORY),
     inspectAuth: (rows: CredentialRow[]) =>
       inspectGoogleAuthPresence(GEMINI_CLI_FLAVOR, { rows, configuredProjectId: undefined }),
   },

@@ -17,7 +17,7 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vite-plus/test";
 
 import {
-  assertSameConfigWriteTarget,
+  configWriteTargetsEqual,
   MAX_CONFIG_SYMLINK_HOPS,
   NEW_CONFIG_FILE_MODE,
   resolveConfigWriteTarget,
@@ -206,7 +206,7 @@ describe("resolveConfigWriteTarget", () => {
   });
 });
 
-describe("assertSameConfigWriteTarget", () => {
+describe("configWriteTargetsEqual", () => {
   it.each([
     ["../dotfiles/opencode.json", "..\\dotfiles\\opencode.json"],
     ["..\\dotfiles\\opencode.json", "../dotfiles/opencode.json"],
@@ -218,12 +218,10 @@ describe("assertSameConfigWriteTarget", () => {
       terminalExisted: true,
     };
     const current = { ...planned, hops: [{ ...planned.hops[0] }] };
-    expect(() => assertSameConfigWriteTarget(planned, current)).not.toThrow();
+    expect(configWriteTargetsEqual(planned, current)).toBe(true);
 
     current.hops[0].linkText = changedLinkText;
-    expect(() => assertSameConfigWriteTarget(planned, current)).toThrow(
-      expect.objectContaining({ name: "ConfigWriteTargetError", reason: "changed" }),
-    );
+    expect(configWriteTargetsEqual(planned, current)).toBe(false);
   });
 });
 

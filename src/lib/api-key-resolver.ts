@@ -1,13 +1,12 @@
 /**
  * One API key resolver for every API-key vendor.
  *
- * Order (first wins): environment variables, then the trusted global
- * `opencode.json(c)` (`providers.<id>.settings.apiKey`, or the legacy
- * `provider.<id>.options.apiKey`, with `{env:NAME}` templates), then OpenCode's
+ * Order (first wins): environment variables, then the OpenCode config files that count for the
+ * session's folder, the one OpenCode ranks highest first (`providers.<id>.settings.apiKey`, or
+ * the legacy `provider.<id>.options.apiKey`, with `{env:NAME}` templates), then OpenCode's
  * stored logins. Each vendor's spec is its `apiKey` in `provider-registration.ts`.
  */
 
-import { existsSync } from "fs";
 import { sanitizeDisplayText } from "./display-sanitize.js";
 import { resolveEnvTemplate } from "./env-template.js";
 import { asRecord } from "./json-guards.js";
@@ -18,17 +17,17 @@ import {
   readCredentialRows,
 } from "./opencode-auth.js";
 import {
-  buildOpenCodeConfigCandidates,
-  readOpenCodeConfigCandidate,
-} from "./opencode-config-read.js";
-import { getOpencodeRuntimeDirs } from "./opencode-runtime-paths.js";
+  existingOpenCodeConfigFiles,
+  type OpenCodeConfigDocument,
+  readOpenCodeConfigs,
+} from "./opencode-config-files.js";
 import { QUOTA_PROVIDER_REGISTRATION_SOURCE } from "./provider-registration.js";
 
 /** Where an API key may live for one vendor. */
 export interface ApiKeySpec {
   /** Checked first, in order. Also the only names allowed in `{env:NAME}` config templates. */
   envVars: readonly string[];
-  /** Provider ids read from the trusted global `opencode.json(c)`, in order. */
+  /** Provider ids read from the OpenCode config files, in order. */
   providerKeys: readonly string[];
   /** OpenCode login integration ids, in order. Default: `providerKeys`. */
   authKeys?: readonly string[];
@@ -83,31 +82,9 @@ export type ApiKeyLoginDiagnostics =
   | ({ state: "configured"; source: ApiKeySource } & DiagnosticPaths)
   | ({ state: "invalid"; source: "opencode.db"; error: string } & DiagnosticPaths);
 
-/** A candidate config file path with its format */
-interface ConfigCandidate {
-  path: string;
-  isJsonc: boolean;
-}
-
-/**
- * Trusted global-only `opencode.jsonc` / `opencode.json` paths. Provider secrets
- * are never read from repo-local config: the current workspace may be untrusted.
- */
-export function getGlobalOpencodeConfigCandidatePaths(): ConfigCandidate[] {
-  const { configDir } = getOpencodeRuntimeDirs();
-  return buildOpenCodeConfigCandidates({
-    directories: [configDir],
-    formatOrder: ["jsonc", "json"],
-  }).map((candidate) => ({ path: candidate.path, isJsonc: candidate.format === "jsonc" }));
-}
-
-/** The parsed config of one candidate; undefined when it is missing or does not parse. */
-export async function readConfigCandidate(candidate: ConfigCandidate): Promise<unknown> {
-  const result = await readOpenCodeConfigCandidate({
-    path: candidate.path,
-    format: candidate.isJsonc ? "jsonc" : "json",
-  });
-  return result.state === "parsed" ? result.value : undefined;
+/** The OpenCode config files that count for `directory`, the one OpenCode ranks highest first. */
+async function configsByPriority(directory: string): Promise<OpenCodeConfigDocument[]> {
+  return (await readOpenCodeConfigs(directory)).reverse();
 }
 
 /** The login of the first auth key, in order, that has one among `rows`. */
@@ -142,17 +119,16 @@ export function getProviderConfigSettings(
 }
 
 /**
- * Read one provider string setting from trusted user/global OpenCode config.
- * The first candidate (`opencode.jsonc`, then `opencode.json`) that sets it wins.
+ * Read one provider string setting from the OpenCode config files that count for `directory`.
+ * The file OpenCode ranks highest that sets it wins.
  */
-export async function readGlobalProviderConfigString(
+export async function readProviderConfigString(
   providerKey: string,
   settingKey: string,
+  directory: string,
 ): Promise<string | undefined> {
-  for (const candidate of getGlobalOpencodeConfigCandidatePaths()) {
-    const value = getProviderConfigSettings(await readConfigCandidate(candidate), providerKey)?.[
-      settingKey
-    ];
+  for (const { config } of await configsByPriority(directory)) {
+    const value = getProviderConfigSettings(config, providerKey)?.[settingKey];
     if (typeof value === "string" && value.trim().length > 0) return value.trim();
   }
   return undefined;
@@ -168,32 +144,32 @@ function extractConfigApiKey(config: unknown, spec: ApiKeySpec): string | null {
   return null;
 }
 
-/** Environment variables, then the trusted global config. */
+/** Environment variables, then the OpenCode config files that count for `directory`. */
 export async function resolveApiKeyFromEnvAndConfig(
   spec: ApiKeySpec,
+  directory: string,
 ): Promise<ApiKeyResult | null> {
   for (const name of spec.envVars) {
     const value = process.env[name]?.trim();
     if (value) return { key: value, source: `env:${name}` };
   }
 
-  for (const candidate of getGlobalOpencodeConfigCandidatePaths()) {
-    const config = await readConfigCandidate(candidate);
-    if (config === undefined) continue;
+  for (const { path, config } of await configsByPriority(directory)) {
     const key = extractConfigApiKey(config, spec);
-    if (key) return { key, source: candidate.isJsonc ? "opencode.jsonc" : "opencode.json" };
+    if (key) return { key, source: path.endsWith(".jsonc") ? "opencode.jsonc" : "opencode.json" };
   }
 
   return null;
 }
 
-/** Env vars that are set and trusted config files that exist (no values). */
-export function getApiKeyCheckedPaths(spec: Pick<ApiKeySpec, "envVars">): string[] {
+/** Env vars that are set and the OpenCode config files for `directory` that exist (no values). */
+export function getApiKeyCheckedPaths(
+  spec: Pick<ApiKeySpec, "envVars">,
+  directory: string,
+): string[] {
   return [
     ...spec.envVars.filter((name) => process.env[name] !== undefined).map((name) => `env:${name}`),
-    ...getGlobalOpencodeConfigCandidatePaths()
-      .map((candidate) => candidate.path)
-      .filter((path) => existsSync(path)),
+    ...existingOpenCodeConfigFiles(directory),
   ];
 }
 
@@ -219,8 +195,11 @@ function extractStoredApiKey(
   return null;
 }
 
-export async function resolveApiKey(spec: ApiKeySpec): Promise<ApiKeyResult | null> {
-  const fromEnvOrConfig = await resolveApiKeyFromEnvAndConfig(spec);
+export async function resolveApiKey(
+  spec: ApiKeySpec,
+  directory: string,
+): Promise<ApiKeyResult | null> {
+  const fromEnvOrConfig = await resolveApiKeyFromEnvAndConfig(spec, directory);
   if (fromEnvOrConfig) return fromEnvOrConfig;
 
   const { integrationIds, ...options } = loginReadOptions(spec);
@@ -275,13 +254,14 @@ export function parseApiKeyLogin(
 
 export async function resolveApiKeyLoginWithDiagnostics(
   spec: ApiKeyLoginSpec,
+  directory: string,
 ): Promise<{ auth: ApiKeyLoginResult; diagnostics: ApiKeyLoginDiagnostics }> {
-  const fromEnvOrConfig = await resolveApiKeyFromEnvAndConfig(spec);
+  const fromEnvOrConfig = await resolveApiKeyFromEnvAndConfig(spec, directory);
   const auth: ApiKeyLoginResult = fromEnvOrConfig
     ? { state: "configured", apiKey: fromEnvOrConfig.key }
     : parseApiKeyLogin(spec, await readApiKeyLoginRow(spec));
   const paths = {
-    checkedPaths: getApiKeyCheckedPaths(spec),
+    checkedPaths: getApiKeyCheckedPaths(spec, directory),
     credentialDatabasePaths: getCredentialDatabasePaths(),
   };
   if (auth.state === "none")
@@ -302,16 +282,20 @@ export async function resolveApiKeyLoginWithDiagnostics(
   };
 }
 
-export async function resolveApiKeyLogin(spec: ApiKeyLoginSpec): Promise<ApiKeyLoginResult> {
-  const fromEnvOrConfig = await resolveApiKeyFromEnvAndConfig(spec);
+export async function resolveApiKeyLogin(
+  spec: ApiKeyLoginSpec,
+  directory: string,
+): Promise<ApiKeyLoginResult> {
+  const fromEnvOrConfig = await resolveApiKeyFromEnvAndConfig(spec, directory);
   if (fromEnvOrConfig) return { state: "configured", apiKey: fromEnvOrConfig.key };
   return parseApiKeyLogin(spec, await readApiKeyLoginRow(spec));
 }
 
 export async function getApiKeyLoginDiagnostics(
   spec: ApiKeyLoginSpec,
+  directory: string,
 ): Promise<ApiKeyLoginDiagnostics> {
-  return (await resolveApiKeyLoginWithDiagnostics(spec)).diagnostics;
+  return (await resolveApiKeyLoginWithDiagnostics(spec, directory)).diagnostics;
 }
 
 export type KeyLogin = {
@@ -353,9 +337,10 @@ export type VendorKeys = {
 
 export async function readVendorKeys(
   spec: ApiKeyLoginSpec,
+  directory: string,
   options: { selectRows?: (rows: CredentialRow[]) => CredentialRow[] } = {},
 ): Promise<VendorKeys> {
-  const envOrConfig = await resolveApiKeyFromEnvAndConfig(spec);
+  const envOrConfig = await resolveApiKeyFromEnvAndConfig(spec, directory);
   if (envOrConfig) return { envOrConfig, logins: [], broken: null };
   const logins = await readKeyLogins(spec, options);
   if (logins.length > 0 || spec.skipBrokenLogins) return { envOrConfig, logins, broken: null };

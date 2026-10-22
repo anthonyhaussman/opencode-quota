@@ -32,6 +32,11 @@ export interface QuotaProviderContext {
    * location itself. The terminal command computes quota for the home folder.
    */
   workspaceRoot: string;
+  /**
+   * The folder OpenCode runs the session in: OpenCode's config files that count are found from
+   * here upward. The terminal command uses the folder it runs in.
+   */
+  locationDirectory: string;
   config: {
     anthropicBinaryPath?: string;
     cursorPlan: CursorQuotaPlan;

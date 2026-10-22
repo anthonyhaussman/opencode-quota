@@ -236,9 +236,9 @@ async function fetchKimiQuota(
   spec: KimiSpec,
   ctx: QuotaProviderContext,
 ): Promise<ProviderFetchResult> {
-  const keys = await readVendorKeys(spec.auth);
+  const keys = await readVendorKeys(spec.auth, ctx.locationDirectory);
   const authDetails = [
-    ...vendorKeyDetails(spec.auth, keys),
+    ...vendorKeyDetails(spec.auth, keys, ctx.locationDirectory),
     ...statusDetailsFromRecord({ api_endpoint: spec.endpoint }),
   ];
   const query = (apiKey: string) => queryKimiWindows(spec, apiKey, ctx.config?.requestTimeoutMs);
@@ -283,7 +283,7 @@ function kimiProvider(spec: KimiSpec): QuotaProvider {
         ctx,
         providerId: spec.id,
         availability: "listed-and-key",
-        readKeys: () => readVendorKeys(spec.auth),
+        readKeys: () => readVendorKeys(spec.auth, ctx.locationDirectory),
       });
     },
 

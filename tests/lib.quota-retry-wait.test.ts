@@ -148,6 +148,8 @@ describe("resolveQuotaResetRetryDelayMs", () => {
       },
     },
     workspaceRoot: process.cwd(),
+    // The test file's own temp home (tests/setup.ts).
+    locationDirectory: process.env.HOME!,
     settings: readSettings,
     providers: mocks.getProviders,
   };

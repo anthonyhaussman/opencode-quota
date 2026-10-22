@@ -13,6 +13,7 @@ import { googleAgyProvider } from "../src/providers/google-agy.js";
 import { googleGeminiCliProvider } from "../src/providers/google-gemini-cli.js";
 import type { CredentialDatabaseRow } from "./helpers/credential-database.js";
 import { createFakeIntegration } from "./helpers/fake-integration.js";
+import { NO_PROJECT_DIRECTORY } from "./helpers/opencode-folders.js";
 import { fakeHttp, fetchRows, requestHeader, useProviderWorld } from "./helpers/provider-fetch.js";
 
 const world = useProviderWorld();
@@ -116,7 +117,9 @@ describe.each(PROVIDERS)("$name provider", (flavor) => {
     if (withLogin) world.storeLogins([googleLogin(flavor, "work")]);
     if (withCompanion) installCompanion(flavor);
 
-    await expect(provider.isAvailable({ client: {} } as never)).resolves.toBe(expected);
+    await expect(
+      provider.isAvailable({ client: {}, locationDirectory: NO_PROJECT_DIRECTORY } as never),
+    ).resolves.toBe(expected);
   });
 
   it("is not set up without a login", async () => {
@@ -203,7 +206,11 @@ describe.each(PROVIDERS)("$name provider", (flavor) => {
     async () => {
       const policy = provider.cachePolicy;
       if (policy.kind !== "resolved-auth") throw new Error("expected a resolved-auth policy");
-      const identity = () => policy.resolveIdentity({ config: {} } as never, {} as never);
+      const identity = () =>
+        policy.resolveIdentity(
+          { config: {}, locationDirectory: NO_PROJECT_DIRECTORY } as never,
+          {} as never,
+        );
       world.storeLogins([googleLogin(flavor, "work")]);
 
       // Without the companion's OAuth client the rows are not remembered.
@@ -353,7 +360,10 @@ describe("Gemini CLI rows", () => {
       const policy = googleGeminiCliProvider.cachePolicy;
       if (policy.kind !== "resolved-auth") throw new Error("expected a resolved-auth policy");
       await expect(
-        policy.resolveIdentity({ config: {} } as never, {} as never),
+        policy.resolveIdentity(
+          { config: {}, locationDirectory: NO_PROJECT_DIRECTORY } as never,
+          {} as never,
+        ),
       ).resolves.toBeNull();
     } finally {
       unbind();

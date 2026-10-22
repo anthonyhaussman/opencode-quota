@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test"
 import { geminiCliCompanion } from "../src/lib/google-companion-credentials.js";
 import { GEMINI_CLI_FLAVOR } from "../src/lib/google-gemini-cli.js";
 import { queryGoogleQuota } from "../src/lib/google-oauth-quota.js";
+import { NO_PROJECT_DIRECTORY } from "./helpers/opencode-folders.js";
 import { useProviderWorld } from "./helpers/provider-fetch.js";
 
 const world = useProviderWorld();
@@ -18,6 +19,7 @@ function queryGeminiCliQuota(logins: Record<string, Record<string, unknown>>) {
   const value = { access: "login-access-token", expires: Date.now() + 3_600_000, ...stored };
   return queryGoogleQuota(GEMINI_CLI_FLAVOR, {
     login: { id: "login", integrationId, label: "", active: true, value },
+    directory: NO_PROJECT_DIRECTORY,
   });
 }
 

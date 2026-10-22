@@ -74,7 +74,7 @@ export const cursorProvider: QuotaProvider = {
     if (isCursorProviderId(ctx.config.currentProviderID)) return true;
     if (isCursorModelId(ctx.config.currentModel)) return true;
 
-    const integration = await inspectCursorOpenCodeIntegration();
+    const integration = await inspectCursorOpenCodeIntegration(ctx.locationDirectory);
     return integration.pluginEnabled || integration.providerConfigured;
   },
 
@@ -93,7 +93,7 @@ export const cursorProvider: QuotaProvider = {
         billingCycleStartDay: ctx.config.cursorBillingCycleStartDay,
       }),
       inspectCursorAuthPresence(),
-      inspectCursorOpenCodeIntegration(),
+      inspectCursorOpenCodeIntegration(ctx.locationDirectory),
     ]);
     const debug = [
       ...statusDetailsFromRecord({

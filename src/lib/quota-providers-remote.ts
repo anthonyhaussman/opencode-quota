@@ -98,6 +98,7 @@ function boundedDisplayText(value: unknown, maxCodePoints: number): string | nul
 
 export async function resolveQuotaProviderApiKey(
   source: RemoteApiQuotaProviderDefinition,
+  directory: string,
 ): Promise<QuotaProviderAuthResolution> {
   // A switched-off provider's key is never read, whoever asks.
   if (source.enabled === false) {
@@ -110,7 +111,7 @@ export async function resolveQuotaProviderApiKey(
     // (for example `opencode`), and resolving one could refresh its token for nothing.
     keyLoginsOnly: true,
   };
-  const resolved = await resolveApiKey(spec);
+  const resolved = await resolveApiKey(spec, directory);
   return {
     ...(resolved ? { key: resolved.key } : {}),
     // Custom providers report every environment variable source as plain "env".
@@ -119,7 +120,7 @@ export async function resolveQuotaProviderApiKey(
       : resolved.source.startsWith("env:")
         ? "env"
         : (resolved.source as QuotaProviderAuthSource),
-    checkedPaths: getApiKeyCheckedPaths(spec),
+    checkedPaths: getApiKeyCheckedPaths(spec, directory),
     credentialDatabasePaths: getCredentialDatabasePaths(),
   };
 }

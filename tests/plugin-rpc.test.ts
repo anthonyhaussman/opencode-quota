@@ -657,7 +657,7 @@ describe("server quota RPC", () => {
     // The slash command of Web and Desktop adds the detected providers.
     await runCommand("quota_status");
     expect(mocks.reconcileDetectedProvidersInGlobalConfig).toHaveBeenCalledWith({
-      configRootDir: process.cwd(),
+      directory: process.env.HOME,
       detectedProviderIds: ["copilot"],
     });
   });
@@ -770,8 +770,10 @@ describe("server quota RPC", () => {
   it("computes quota for the location's project folder, not the service's working folder", async () => {
     useSettings({ providers: { off: [] } });
     const workspaceRoots: string[] = [];
-    const fetch = vi.fn(async (ctx: { workspaceRoot: string }) => {
+    const locationDirectories: string[] = [];
+    const fetch = vi.fn(async (ctx: { workspaceRoot: string; locationDirectory: string }) => {
       workspaceRoots.push(ctx.workspaceRoot);
+      locationDirectories.push(ctx.locationDirectory);
       return copilotAnswer(81);
     });
     mocks.getProviders.mockReturnValue([provider("copilot", fetch)]);
@@ -790,6 +792,8 @@ describe("server quota RPC", () => {
 
     expect(workspaceRoots).toHaveLength(2);
     expect(new Set(workspaceRoots)).toEqual(new Set([project]));
+    // OpenCode's config files that count are found from the location's folder upward.
+    expect(new Set(locationDirectories)).toEqual(new Set([project]));
     expect(project).not.toBe(process.cwd());
   });
 
@@ -854,7 +858,7 @@ describe("server quota RPC", () => {
         expect(content).toMatch(/^# Quota Status /u);
         expect(content).toContain("\n- origin: quota_status tool\n");
         expect(mocks.reconcileDetectedProvidersInGlobalConfig).toHaveBeenCalledWith({
-          configRootDir: projectDirectory,
+          directory: projectDirectory,
           detectedProviderIds: ["openai"],
         });
         if (warns) {

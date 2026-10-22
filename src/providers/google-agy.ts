@@ -56,7 +56,7 @@ const AGY_PROVIDER: GoogleProviderFlavor<
 export const googleAgyProvider: QuotaProvider = {
   id: "google-agy",
   cachePolicy: googleCachePolicy(AGY_PROVIDER),
-  isAvailable: () => isGoogleProviderAvailable(AGY_PROVIDER),
+  isAvailable: (ctx) => isGoogleProviderAvailable(AGY_PROVIDER, ctx),
   matchesCurrentModel: (model) =>
     (AGY_AUTH_KEYS as readonly string[]).includes(parseProviderModelRef(model).providerId),
   fetch: (ctx) => fetchGoogleProviderQuota(AGY_PROVIDER, ctx),

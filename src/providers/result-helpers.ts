@@ -58,13 +58,17 @@ export function vendorKeyState(keys: VendorKeys): KeyState {
 }
 
 /** Where a vendor's API key was looked for, and what its first key holds. */
-export function vendorKeyDetails(spec: ApiKeySpec, keys: VendorKeys): DebugDetail[] {
+export function vendorKeyDetails(
+  spec: ApiKeySpec,
+  keys: VendorKeys,
+  directory: string,
+): DebugDetail[] {
   const key = vendorKeyState(keys);
   return statusDetailsFromRecord({
     auth_state: key.state,
     api_key_configured: key.state === "configured" ? "true" : "false",
     api_key_source: key.source ?? "(none)",
-    api_key_checked_paths: getApiKeyCheckedPaths(spec).join(" | ") || "(none)",
+    api_key_checked_paths: getApiKeyCheckedPaths(spec, directory).join(" | ") || "(none)",
     api_key_credential_database_paths: getCredentialDatabasePaths().join(" | ") || "(none)",
     auth_error: key.state === "invalid" ? sanitizeDisplayText(key.error) : undefined,
   });

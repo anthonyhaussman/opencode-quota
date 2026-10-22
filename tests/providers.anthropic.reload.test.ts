@@ -93,7 +93,12 @@ async function startInstance() {
   const client = {
     config: { providers: async () => ({ data: { providers: [{ id: "anthropic" }] } }) },
   };
-  const host = { client, workspaceRoot: world.configDir, settings: () => loaded };
+  const host = {
+    client,
+    workspaceRoot: world.configDir,
+    locationDirectory: world.configDir,
+    settings: () => loaded,
+  };
   const store = createQuotaStore({
     source: () => loadProviderSource(host),
     file: join(world.configDir, "snapshot-v6.json"),

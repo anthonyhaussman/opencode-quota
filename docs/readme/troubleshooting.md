@@ -35,7 +35,20 @@ In `/quota_status`, the `credential_source` section shows:
 The TUI, Web, and Desktop get their numbers from OpenCode's background service. The service takes `PATH` and environment variables from whatever started it first, not from the terminal you use now, and it runs in your home folder. The terminal command uses your terminal's `PATH`, environment, and current folder instead.
 
 - **`claude` or `bl` not found, or an API-key variable ignored:** in a terminal where they work, run `opencode service restart`. To keep that `PATH` for every later start, run `opencode service set env PATH "$PATH"` (it stops the service; open OpenCode again). For Claude you can instead set `providers.anthropic.binaryPath`.
-- Cursor's plugin-entry check reads `opencode.json` in your global config folder and your home folder, not in the project folder.
+- Cursor's plugin-entry check reads the [OpenCode config files](#opencode-config-files) of the session's folder, not of the service's folder.
+
+## OpenCode config files
+
+OpenCode Quota reads OpenCode's own config files the way OpenCode does. For a session, these count, from lowest to highest rank:
+
+1. `opencode.json`, then `opencode.jsonc`, in the global OpenCode folder (`$OPENCODE_CONFIG_DIR`, else `$XDG_CONFIG_HOME/opencode`, else `~/.config/opencode`).
+2. The file `OPENCODE_CONFIG` names.
+3. `opencode.json`, then `opencode.jsonc`, in every folder from the top of the drive down to the session's folder.
+4. The same two files in the `.opencode` folder of each of those folders, from the top down.
+
+A file ranked higher wins. Both kinds may hold comments and trailing commas. With `OPENCODE_DISABLE_PROJECT_CONFIG` (or `OPENCODE_CONFIG_PROJECT_DISABLE`) set to `1` or `true`, only 1 and 2 count. The terminal command uses the folder it runs in as the session's folder.
+
+`/quota_status` (the slash command and the `quota_status` tool; the TUI Plugin tab never writes) adds an empty `provider.<id>` entry for each provider it found available that none of these files declares. It writes only the global folder's `opencode.jsonc`, else its `opencode.json`, else a new `opencode.jsonc`, and in `opencode.jsonc` puts a `// Detected <id> authentication; …` comment above the entry. It edits the text in place, keeps comments, writes through a symlink, and writes nothing when the file changed while it ran. It never writes a project file.
 
 ## Terminal commands
 
@@ -74,7 +87,7 @@ Run `/quota_status` first and check that provider's section. Every known provide
 | ------------------------------------------ | --- |
 | Config is rejected                         | Keep definitions in `providers.custom` in `settings.jsonc` ([where](configuration.md#where-settings-live)). Remove unknown fields, duplicate IDs/request identities, or overlapping model coverage. |
 | Definition is `unavailable`                | Confirm OpenCode reports the exact `providerId`. With `words.onlyCurrentModel`, the model id (without provider prefix) must match `modelIds`, or omit `modelIds`. |
-| `Not set up` (`missing_credential`)       | Set the `apiKeyEnv` variable, trusted global `provider.<providerId>.options.apiKey`, or an API-key login saved in OpenCode 2 for that provider id. |
+| `Not set up` (`missing_credential`)       | Set the `apiKeyEnv` variable, `provider.<providerId>.options.apiKey` in an [OpenCode config file](#opencode-config-files), or an API-key login saved in OpenCode 2 for that provider id. |
 | `Provider error <code>`, `Timed out`, `Can't reach …`, or `Unexpected reply` | Check the endpoint and its response format; the `custom 1 check` outcome says which step failed. `/quota_status` intentionally hides URLs, request/response contents, raw errors, and secret material. |
 | One definition fails but others show       | Expected. Working definitions stay visible; the failed one stays an error row. |
 | CLI/export looks stale                     | `show --json` is cache-only, and the export file changes only when the server's quota does. Open a TUI session first. `/quota_status` is the live check. |
@@ -145,7 +158,7 @@ Check the `alibaba-coding-plan` section: the login, tier (`alibaba_coding_plan`)
 
 | Symptom              | Fix |
 | -------------------- | --- |
-| API key not detected | See [API keys](providers.md#api-keys). Repo-local provider secrets are ignored. |
+| API key not detected | See [API keys](providers.md#api-keys). |
 | Limits need tuning   | Add a local-estimate [custom provider](providers.md#custom-providers) with the `alibaba-coding-plan` id and its five-hour, weekly, and monthly rolling windows. |
 | Counters do not move | Make sure the requests use OpenCode's `alibaba-coding-plan` or `alibaba` provider. |
 | Quota seems stale    | Counters only count this machine's OpenCode requests; other machines and tools are not seen. |
@@ -170,7 +183,7 @@ Check the `alibaba-token-plan` section (separate from Alibaba Coding Plan).
 <summary><strong>API-key providers (MiniMax, Kimi, Z.ai, Zhipu, DeepSeek, OpenRouter)</strong></summary>
 
 - Check the provider's API-key section in `/quota_status` (for example `kimi-code-plan-global:`, `kimi-code-plan-cn:`, or `openrouter:`), which also shows the live check's result, for example `Sign in again (login_expired)` after HTTP 401.
-- Put keys in environment variables or trusted user/global config, never in the project's `opencode.json`. Variable names and rules: [API keys](providers.md#api-keys).
+- Put keys in environment variables or the global OpenCode config. A project's `opencode.json` counts too, as it does for OpenCode, but a key there can end up in the repository. Variable names and rules: [API keys](providers.md#api-keys).
 - Kimi keys go only to their own region's host: see [Kimi Code](providers.md#kimi-code).
 
 </details>

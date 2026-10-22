@@ -34,6 +34,8 @@ export type ProviderSourceHost = {
   client: QuotaProviderContext["client"];
   /** The project folder quota is computed for. */
   workspaceRoot: string;
+  /** The folder OpenCode runs the session in; see `QuotaProviderContext.locationDirectory`. */
+  locationDirectory: string;
   /** The server settings now. */
   settings: () => LoadedSettings;
   /** The registered providers in display order; `getProviders()` when absent. */
@@ -78,6 +80,7 @@ export function providerContext(
     client: host.client,
     resolveRuntimeProviderIds: createRuntimeProviderIdResolver(host.client),
     workspaceRoot: host.workspaceRoot,
+    locationDirectory: host.locationDirectory,
     config: {
       anthropicBinaryPath: anthropic.binaryPath,
       cursorPlan: cursor.plan,

@@ -63,11 +63,12 @@ export function resolveAlibabaCodingPlanAuth(
   return { state: "configured", apiKey: login.apiKey, tier };
 }
 
-async function resolveAlibabaCodingPlanAuthWithSource(params?: {
-  fallbackTier?: AlibabaCodingPlanTier;
-}): Promise<{ auth: ResolvedAlibabaCodingPlanAuth; source: ApiKeySource | null }> {
+async function resolveAlibabaCodingPlanAuthWithSource(
+  directory: string,
+  params?: { fallbackTier?: AlibabaCodingPlanTier },
+): Promise<{ auth: ResolvedAlibabaCodingPlanAuth; source: ApiKeySource | null }> {
   const fallbackTier = params?.fallbackTier ?? DEFAULT_ALIBABA_CODING_PLAN_TIER;
-  const fromEnvOrConfig = await resolveApiKeyFromEnvAndConfig(ALIBABA);
+  const fromEnvOrConfig = await resolveApiKeyFromEnvAndConfig(ALIBABA, directory);
   if (fromEnvOrConfig) {
     return {
       auth: { state: "configured", apiKey: fromEnvOrConfig.key, tier: fallbackTier },
@@ -79,16 +80,19 @@ async function resolveAlibabaCodingPlanAuthWithSource(params?: {
   return { auth, source: auth.state === "none" ? null : "opencode.db" };
 }
 
-export async function resolveAlibabaCodingPlanAuthCached(params?: {
-  fallbackTier?: AlibabaCodingPlanTier;
-}): Promise<ResolvedAlibabaCodingPlanAuth> {
-  return (await resolveAlibabaCodingPlanAuthWithSource(params)).auth;
+export async function resolveAlibabaCodingPlanAuthCached(
+  directory: string,
+  params?: { fallbackTier?: AlibabaCodingPlanTier },
+): Promise<ResolvedAlibabaCodingPlanAuth> {
+  return (await resolveAlibabaCodingPlanAuthWithSource(directory, params)).auth;
 }
 
-export async function getAlibabaCodingPlanAuthDiagnostics(): Promise<AlibabaCodingPlanAuthDiagnostics> {
-  const { auth, source } = await resolveAlibabaCodingPlanAuthWithSource();
+export async function getAlibabaCodingPlanAuthDiagnostics(
+  directory: string,
+): Promise<AlibabaCodingPlanAuthDiagnostics> {
+  const { auth, source } = await resolveAlibabaCodingPlanAuthWithSource(directory);
   const paths = {
-    checkedPaths: getApiKeyCheckedPaths(ALIBABA),
+    checkedPaths: getApiKeyCheckedPaths(ALIBABA, directory),
     credentialDatabasePaths: getCredentialDatabasePaths(),
   };
   if (auth.state === "none") return { state: "none", source: null, ...paths };
