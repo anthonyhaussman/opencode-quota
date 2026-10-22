@@ -300,6 +300,23 @@ describe("trusted config parsing", () => {
     });
   });
 
+  it.each([
+    ["apiKey: null", { options: { apiKey: null } }],
+    ["a baseURL that is not a string", { options: { apiKey: "", baseURL: null } }],
+    ["a timeout that is not a positive integer", { options: { apiKey: "", timeout: 0 } }],
+    ["a header that is not a string", { options: { apiKey: "", headers: { "X-Retry": 1 } } }],
+    ["env that is not a list", { env: "DEEPSEEK_API_KEY", options: { apiKey: "project-key" } }],
+  ])("a legacy project entry OpenCode drops (%s) sets nothing", async (_label, entry) => {
+    mockConfigFiles({
+      [TRUSTED.json]: legacyConfig({ deepseek: "global-key" }),
+      [PROJECT_FILE]: JSON.stringify({ provider: { deepseek: entry } }),
+    });
+    await expect(resolveApiKey(spec, PROJECT)).resolves.toEqual({
+      key: "global-key",
+      source: "opencode.json",
+    });
+  });
+
   it("a provider id the project clears leaves the vendor's next id as OpenCode has it", async () => {
     mockConfigFiles({
       [TRUSTED.json]: legacyConfig({ zai: "global-zai-key", "zai-coding-plan": "global-plan-key" }),

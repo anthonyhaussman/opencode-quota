@@ -241,6 +241,23 @@ describe("OpenCode config files", () => {
       );
     });
 
+    it("a legacy project entry OpenCode drops sets nothing, so the global values stay", async () => {
+      writeFileSync(
+        join(appDir, "opencode.json"),
+        JSON.stringify({
+          provider: {
+            deepseek: { options: { apiKey: null } },
+            google: { options: { projectId: "project-id", baseURL: null } },
+          },
+        }),
+      );
+
+      await expect(key(appDir)).resolves.toEqual({ key: "global-key", source: "opencode.jsonc" });
+      await expect(readProviderConfigString("google", "projectId", appDir)).resolves.toBe(
+        "global-project",
+      );
+    });
+
     it("a project file that leaves them out keeps the global values", async () => {
       writeFileSync(
         join(appDir, "opencode.json"),

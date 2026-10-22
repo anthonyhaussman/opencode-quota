@@ -9,7 +9,7 @@
 
 import { sanitizeDisplayText } from "./display-sanitize.js";
 import { resolveEnvTemplate } from "./env-template.js";
-import { asRecord } from "./json-guards.js";
+import { asRecord, isRecord } from "./json-guards.js";
 import {
   type CredentialRow,
   getCredentialDatabasePaths,
@@ -99,11 +99,59 @@ export function firstLoginRow(
   return undefined;
 }
 
+/** True when `value` is missing or passes `check`, like an optional field of a schema. */
+function isMissingOr(value: unknown, check: (value: unknown) => boolean): boolean {
+  return value === undefined || check(value);
+}
+
+function isString(value: unknown): boolean {
+  return typeof value === "string";
+}
+
+function isStringList(value: unknown): boolean {
+  return Array.isArray(value) && value.every(isString);
+}
+
+function isPositiveInteger(value: unknown): boolean {
+  return Number.isInteger(value) && (value as number) > 0;
+}
+
+function isTimeout(value: unknown): boolean {
+  return value === false || isPositiveInteger(value);
+}
+
+/**
+ * Whether OpenCode 2 keeps a legacy `provider.<id>` entry, as its legacy provider schema
+ * decides. A field that schema types holding another type (for example `options.apiKey:
+ * null`), or malformed `options.headers` or `options.body`, drops the whole entry. The
+ * fields inside `models` are not checked.
+ */
+function isKeptLegacyProvider(entry: unknown): entry is Record<string, unknown> {
+  if (!isRecord(entry) || !isMissingOr(entry.options, isRecord)) return false;
+  const options = asRecord(entry.options) ?? {};
+  return (
+    ["api", "name", "id", "npm"].every((field) => isMissingOr(entry[field], isString)) &&
+    ["env", "whitelist", "blacklist"].every((field) => isMissingOr(entry[field], isStringList)) &&
+    ["apiKey", "baseURL", "enterpriseUrl"].every((field) =>
+      isMissingOr(options[field], isString),
+    ) &&
+    isMissingOr(options.setCacheKey, (value) => typeof value === "boolean") &&
+    isMissingOr(options.timeout, isTimeout) &&
+    isMissingOr(options.headerTimeout, isTimeout) &&
+    isMissingOr(options.chunkTimeout, isPositiveInteger) &&
+    isMissingOr(
+      options.headers,
+      (headers) => isRecord(headers) && Object.values(headers).every(isString),
+    ) &&
+    isMissingOr(options.body, isRecord)
+  );
+}
+
 /**
  * Read one provider's settings the way OpenCode 2 normalizes its config.
  *
  * A native `providers.<id>` entry replaces the legacy `provider.<id>` entry,
- * whose `options` OpenCode 2 migrates into `settings`.
+ * whose `options` OpenCode 2 migrates into `settings` unless it drops the entry.
  */
 export function getProviderConfigSettings(
   config: unknown,
@@ -115,7 +163,8 @@ export function getProviderConfigSettings(
   if (typeof nativeProvider === "object" && nativeProvider !== null) {
     return asRecord((nativeProvider as Record<string, unknown>).settings);
   }
-  return asRecord(asRecord(asRecord(root?.provider)?.[providerKey])?.options);
+  const legacyProvider = asRecord(root?.provider)?.[providerKey];
+  return isKeptLegacyProvider(legacyProvider) ? asRecord(legacyProvider.options) : null;
 }
 
 /**
