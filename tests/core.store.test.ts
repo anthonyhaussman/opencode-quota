@@ -106,6 +106,7 @@ describe("quota store", () => {
 
   async function savedFile(): Promise<{
     entries: Record<string, { rows: Array<{ login: string; row: QuotaRow }> }>;
+    lastChecks: Record<string, unknown>;
   }> {
     return JSON.parse(await readFile(file, "utf8"));
   }
@@ -385,6 +386,49 @@ describe("quota store", () => {
     await vi.waitFor(() =>
       expect(only(listener.mock.lastCall?.[0]).rows).toEqual([row("allowance", 70)]),
     );
+  });
+
+  it("waits out the last check of a login that can't be saved after a restart", async () => {
+    const first = fakeProvider();
+    first.signInAs("settings-only", false);
+    first.fetch.mockResolvedValue({
+      rows: [],
+      error: { code: "rate_limited", retryAtMs: START_MS + 10 * MINUTE },
+      debug: [],
+    });
+    await makeStore([first.provider], MINUTE).refresh({ reason: "poll" });
+    // The file keeps when the provider was last checked, and nothing of the login.
+    const saved = await savedFile();
+    expect(saved.entries).toEqual({});
+    expect(saved.lastChecks).toEqual({
+      copilot: { checkedAtMs: START_MS, failures: 1, retryAtMs: START_MS + 10 * MINUTE },
+    });
+
+    const second = fakeProvider();
+    second.signInAs("settings-only", false);
+    const store = makeStore([second.provider], MINUTE);
+    clock += 10 * MINUTE - SECOND;
+    expect(only(await store.snapshot()).rows).toEqual([]);
+    await store.refresh({ reason: "poll" });
+    expect(second.fetch).not.toHaveBeenCalled();
+    clock += SECOND;
+    await store.refresh({ reason: "poll" });
+    expect(second.fetch).toHaveBeenCalledOnce();
+  });
+
+  it("checks a login that can't be saved at once after a login change, not after the file's wait", async () => {
+    const first = fakeProvider();
+    first.signInAs("settings-only", false);
+    await makeStore([first.provider]).refresh({ reason: "poll" });
+
+    const second = fakeProvider();
+    second.signInAs("settings-only", false);
+    const store = makeStore([second.provider]);
+    clock += MINUTE;
+    await store.refresh({ reason: "poll" });
+    expect(second.fetch).not.toHaveBeenCalled();
+    store.invalidateIdentity();
+    await vi.waitFor(() => expect(second.fetch).toHaveBeenCalledOnce());
   });
 
   it("records a reset notice once when a window refills", async () => {

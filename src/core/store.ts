@@ -14,7 +14,9 @@
  *   providers and rows of the new one.
  * - Rows and reset notices belong to an identity (account plus provider settings). Those of
  *   another identity are never shown; those whose identity can't be saved stay in memory and
- *   go on a login change.
+ *   go on a login change. For those the file keeps only when their provider was last checked
+ *   (with its failures and retry time), so a restarted store waits that check out before it
+ *   asks the provider; a login change ends that wait.
  * - Rows also carry their login. A failed refresh keeps the last good rows and records the
  *   error; when one of several logins fails, that login keeps its last rows. Logins that share
  *   an account name are numbered here ("Pro", "Pro 2"), by login, so the numbers stay put;
@@ -32,6 +34,7 @@ import type { QuotaExportProvider } from "../lib/quota-export-types.js";
 import { classifyError, RETRY_WAIT_MAX_MS } from "./errors.js";
 import {
   joinNotices,
+  type LastCheck,
   type LoginRow,
   readSavedState,
   rowSlot,
@@ -190,23 +193,34 @@ function backoffMs(failures: number): number {
   return Math.min(BACKOFF_MAX_MS, BACKOFF_FIRST_MS * 2 ** (failures - 1));
 }
 
+/** When an entry's provider was last checked; none before its first check. */
+function lastCheckOf(entry: Entry | undefined): LastCheck | undefined {
+  if (entry?.checkedAtMs === undefined) return undefined;
+  const retryAtMs = entry.error?.retryAtMs;
+  return {
+    checkedAtMs: entry.checkedAtMs,
+    failures: entry.failures,
+    ...(retryAtMs === undefined ? {} : { retryAtMs }),
+  };
+}
+
 function isDue(
-  entry: Entry | undefined,
+  last: LastCheck | undefined,
   reason: RefreshReason,
   minIntervalMs: number,
   nowMs: number,
 ): boolean {
   if (reason === "manual" || reason === "retry") return true;
-  if (entry?.checkedAtMs === undefined || entry.checkedAtMs > nowMs) return true;
+  if (last === undefined || last.checkedAtMs > nowMs) return true;
   // The one exception to the configured minimum: a model turn just used quota, so it may
   // refresh 30 s after the last check even when `minIntervalMs` is longer.
   let waitMs = reason === "turn" ? Math.min(minIntervalMs, TURN_MIN_INTERVAL_MS) : minIntervalMs;
-  if (entry.failures > 0) waitMs = Math.max(waitMs, backoffMs(entry.failures));
-  if (nowMs - entry.checkedAtMs < waitMs) return false;
+  if (last.failures > 0) waitMs = Math.max(waitMs, backoffMs(last.failures));
+  if (nowMs - last.checkedAtMs < waitMs) return false;
   // A retry time waits at most a day (the most a reply can ask), so a far one never stalls checks.
-  const retryAtMs = entry.error?.retryAtMs;
+  const { retryAtMs } = last;
   return (
-    retryAtMs === undefined || nowMs >= Math.min(retryAtMs, entry.checkedAtMs + RETRY_WAIT_MAX_MS)
+    retryAtMs === undefined || nowMs >= Math.min(retryAtMs, last.checkedAtMs + RETRY_WAIT_MAX_MS)
   );
 }
 
@@ -346,6 +360,11 @@ export function createQuotaStore(deps: QuotaStoreDeps): QuotaStore {
   const log = deps.log ?? ((message: string) => console.warn(`[opencode-quota] ${message}`));
   const timeouts = deps.timeouts ?? { readMs: READ_TIMEOUT_MS, fetchMs: FETCH_TIMEOUT_MS };
   const entries = new Map<string, Entry>();
+  /**
+   * By provider id, the last check of a login that can't be saved, as the file had it at the
+   * start. It stands in for this process's own check of such a login until there is one.
+   */
+  const lastChecksFromFile = new Map<string, LastCheck>();
   const inFlight = new Map<string, Promise<void>>();
   /** Running fetches per provider (an old one may still run after a login change). */
   const fetching = new Map<string, number>();
@@ -396,8 +415,20 @@ export function createQuotaStore(deps: QuotaStoreDeps): QuotaStore {
     }
   }
 
+  /** `lastChecksFromFile` of a provider whose login can't be saved; none for one that can. */
+  function fileLastCheck(providerId: string, where: ResolvedKey): LastCheck | undefined {
+    return where.persist ? undefined : lastChecksFromFile.get(providerId);
+  }
+
   function load(): Promise<void> {
-    loaded ??= deps.file ? readSavedState(deps.file).then(adopt) : Promise.resolve();
+    loaded ??= deps.file
+      ? readSavedState(deps.file).then((saved) => {
+          adopt(saved);
+          for (const [providerId, lastCheck] of saved.lastChecks) {
+            lastChecksFromFile.set(providerId, lastCheck);
+          }
+        })
+      : Promise.resolve();
     return loaded;
   }
 
@@ -409,9 +440,18 @@ export function createQuotaStore(deps: QuotaStoreDeps): QuotaStore {
     ] of entries) {
       if (keep) saved.set(key, entry);
     }
+    // Of a login that can't be saved, only when its provider was last checked.
+    const lastChecks = new Map<string, LastCheck>();
+    for (const entry of entries.values()) {
+      const lastCheck = entry.persist ? undefined : lastCheckOf(entry);
+      const other = lastChecks.get(entry.providerId);
+      if (lastCheck && (!other || other.checkedAtMs < lastCheck.checkedAtMs)) {
+        lastChecks.set(entry.providerId, lastCheck);
+      }
+    }
     try {
       const options = { nowMs: now(), noticeMaxAgeMs: RESET_NOTICE_KEEP_MS };
-      adopt(await writeSavedState(file, { entries: saved }, options));
+      adopt(await writeSavedState(file, { entries: saved, lastChecks }, options));
     } catch (error) {
       log(`could not save the quota snapshot: ${errorMessage(error)}`);
     }
@@ -567,8 +607,12 @@ export function createQuotaStore(deps: QuotaStoreDeps): QuotaStore {
       ...(okAtMs === undefined ? {} : { okAtMs }),
       checkedAtMs: nowMs,
       ...(error === undefined ? {} : { error }),
-      // Any error backs off, also when only one of several logins failed.
-      failures: error === undefined ? 0 : (previous?.failures ?? 0) + 1,
+      // Any error backs off, also when only one of several logins failed. Without an entry, a
+      // login that can't be saved counts on from the file's last check.
+      failures:
+        error === undefined
+          ? 0
+          : (previous?.failures ?? fileLastCheck(provider.id, where)?.failures ?? 0) + 1,
       debug: result.debug,
       ...(exportPart === undefined ? {} : { exportPart }),
       notices,
@@ -576,6 +620,7 @@ export function createQuotaStore(deps: QuotaStoreDeps): QuotaStore {
         ? resetSeenTimes(previous, rows, nowMs)
         : (previous?.resetSeenAtMs ?? {}),
     });
+    if (!where.persist) lastChecksFromFile.delete(provider.id);
     persist();
   }
 
@@ -601,7 +646,10 @@ export function createQuotaStore(deps: QuotaStoreDeps): QuotaStore {
     const where = operation.keys.get(provider.id);
     if (!where) return;
     const minIntervalMs = provider.minIntervalMs ?? operation.source.minIntervalMs;
-    if (!isDue(entries.get(where.key), reason, minIntervalMs, now())) return;
+    // A login that can't be saved has no entry after a restart: the file's last check of its
+    // provider waits instead, so a plugin reload asks no sooner than the last process would.
+    const last = lastCheckOf(entries.get(where.key)) ?? fileLastCheck(provider.id, where);
+    if (!isDue(last, reason, minIntervalMs, now())) return;
     const result = await fetchProvider(provider);
     // A fetch is stored only under the account it read. A login change (new generation) or
     // another account now (same generation) drops its answer.
@@ -715,6 +763,8 @@ export function createQuotaStore(deps: QuotaStoreDeps): QuotaStore {
       for (const [key, entry] of entries) {
         if (!entry.persist) entries.delete(key);
       }
+      // The new login is checked at once, not after the wait of a login before it.
+      lastChecksFromFile.clear();
       supersede("poll", "quota refresh after a login change failed");
     },
 
@@ -725,6 +775,7 @@ export function createQuotaStore(deps: QuotaStoreDeps): QuotaStore {
         return;
       }
       for (const entry of entries.values()) entry.failures = 0;
+      lastChecksFromFile.clear();
       // A manual refresh waits for no interval: every provider is checked again now.
       supersede("manual", "quota recheck after a settings change failed");
     },

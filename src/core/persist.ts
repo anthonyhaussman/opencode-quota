@@ -6,6 +6,7 @@
  * than a week are dropped. A file that does not parse is ignored; a bad entry or row is
  * skipped on its own. Provider text is scrubbed and credentials redacted again on read.
  * Each row is saved with its login (a hash), as the store numbers logins that share a name.
+ * A provider whose login can't be saved keeps only its last check's times, by provider id.
  */
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -49,7 +50,17 @@ export type SavedEntry = {
   resetSeenAtMs: Record<string, number>;
 };
 
-export type SavedState = { entries: Map<string, SavedEntry> };
+/** When a provider was last checked, its failures in a row and the retry time it asked for. */
+export type LastCheck = { checkedAtMs: number; failures: number; retryAtMs?: number };
+
+export type SavedState = {
+  entries: Map<string, SavedEntry>;
+  /**
+   * By provider id, the last check of a login that can't be saved (its rows stay in memory), so
+   * a restarted store waits it out too. Nothing in it tells whose login it was.
+   */
+  lastChecks: Map<string, LastCheck>;
+};
 
 /** One row's slot: rows of two checks match by id, account and login. */
 export function rowSlot({ login, row }: LoginRow): string {
@@ -119,6 +130,19 @@ function parseEntry(key: string, value: unknown): SavedEntry | undefined {
   };
 }
 
+function parseLastCheck(value: unknown): LastCheck | undefined {
+  if (!isRecord(value)) return undefined;
+  const checkedAtMs = optionalTime(value.checkedAtMs);
+  const retryAtMs = optionalTime(value.retryAtMs);
+  if (checkedAtMs === undefined || checkedAtMs === null || retryAtMs === null) return undefined;
+  if (!Number.isInteger(value.failures) || (value.failures as number) < 0) return undefined;
+  return {
+    checkedAtMs,
+    failures: value.failures as number,
+    ...(retryAtMs === undefined ? {} : { retryAtMs }),
+  };
+}
+
 /** A saved notice's label or account, scrubbed and cut to the row gate's code-point limit. */
 function savedLabel(text: string): string {
   return Array.from(safeDetail(text, Number.POSITIVE_INFINITY))
@@ -156,7 +180,7 @@ function parseNotice(entryProviderId: string, value: unknown): ResetNotice | und
 }
 
 function emptyState(): SavedState {
-  return { entries: new Map() };
+  return { entries: new Map(), lastChecks: new Map() };
 }
 
 /** What the file holds now; empty when it is missing or does not parse. */
@@ -175,7 +199,13 @@ export async function readSavedState(file: string): Promise<SavedState> {
     const entry = parseEntry(key, value);
     if (entry) entries.set(key, entry);
   }
-  return { entries };
+  const lastChecks = new Map<string, LastCheck>();
+  const savedLastChecks = isRecord(data.lastChecks) ? data.lastChecks : {};
+  for (const [providerId, value] of Object.entries(savedLastChecks)) {
+    const lastCheck = parseLastCheck(value);
+    if (lastCheck) lastChecks.set(providerId, lastCheck);
+  }
+  return { entries, lastChecks };
 }
 
 /** Each file's last write in this process (never rejects); the next write waits for it. */
@@ -215,18 +245,33 @@ async function mergeAndWrite(
       (notice) => options.nowMs - notice.atMs <= options.noticeMaxAgeMs,
     );
   }
+  for (const [providerId, lastCheck] of state.lastChecks) {
+    const other = merged.lastChecks.get(providerId);
+    if (!other || other.checkedAtMs <= lastCheck.checkedAtMs) {
+      merged.lastChecks.set(providerId, lastCheck);
+    }
+  }
+  for (const [providerId, lastCheck] of merged.lastChecks) {
+    if (options.nowMs - lastCheck.checkedAtMs > ENTRY_MAX_AGE_MS) {
+      merged.lastChecks.delete(providerId);
+    }
+  }
   await writeJsonAtomic(
     file,
-    { version: FILE_VERSION, entries: Object.fromEntries(merged.entries) },
+    {
+      version: FILE_VERSION,
+      entries: Object.fromEntries(merged.entries),
+      lastChecks: Object.fromEntries(merged.lastChecks),
+    },
     { trailingNewline: true, directoryMode: 0o700, fileMode: 0o600 },
   );
   return merged;
 }
 
 /**
- * Merges `state` into the file (per entry the newer check wins; notices are joined by id),
- * drops entries not checked for a week and notices older than `noticeMaxAgeMs`, writes it
- * atomically (owner-only), and returns the merged state.
+ * Merges `state` into the file (per entry and per last check the newer check wins; notices are
+ * joined by id), drops entries and last checks older than a week and notices older than
+ * `noticeMaxAgeMs`, writes it atomically (owner-only), and returns the merged state.
  */
 export function writeSavedState(
   file: string,
