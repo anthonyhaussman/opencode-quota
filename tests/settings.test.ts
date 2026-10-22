@@ -509,14 +509,16 @@ describe("saveSettings", () => {
     expect(existsSync(lock) && readFileSync(lock, "utf8")).toBe(ok ? false : text);
   });
 
-  it("takes over a dead owner's lock with one rename, whatever a crashed takeover left", async () => {
+  it("takes over a dead owner's lock, whatever a crashed takeover left", async () => {
     const lock = `${writeSettings("{}")}.lock`;
-    writeFileSync(lock, JSON.stringify({ pid: spawnSync(process.execPath, ["-e", ""]).pid }));
-    writeFileSync(`${lock}.takeover`, "");
+    const deadOwner = () => JSON.stringify({ pid: spawnSync(process.execPath, ["-e", ""]).pid });
+    writeFileSync(lock, deadOwner());
+    // A waiter that died while it took the lock over.
+    writeFileSync(`${lock}.claim`, deadOwner());
 
     expect((await saveSettings({ words: { percent: "used" } })).ok).toBe(true);
     expect(existsSync(lock)).toBe(false);
-    expect(readdirSync(dirname(lock)).filter((name) => name.includes(".stale-"))).toEqual([]);
+    expect(readdirSync(dirname(lock)).filter((name) => name.includes(".claim"))).toEqual([]);
   });
 
   it("writes and releases only while the lock still holds its own token", async () => {

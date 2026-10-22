@@ -1,8 +1,10 @@
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { existsSync } from "node:fs";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
+import { writeSavedState } from "../src/core/persist.js";
 import {
   createQuotaStore,
   type ProviderFetch,
@@ -106,6 +108,7 @@ describe("quota store", () => {
 
   async function savedFile(): Promise<{
     entries: Record<string, { rows: Array<{ login: string; row: QuotaRow }> }>;
+    lastChecks: Record<string, unknown>;
   }> {
     return JSON.parse(await readFile(file, "utf8"));
   }
@@ -385,6 +388,194 @@ describe("quota store", () => {
     await vi.waitFor(() =>
       expect(only(listener.mock.lastCall?.[0]).rows).toEqual([row("allowance", 70)]),
     );
+  });
+
+  it("waits out the last check of a login that can't be saved after a restart", async () => {
+    const first = fakeProvider();
+    first.signInAs("settings-only", false);
+    first.fetch.mockResolvedValue({
+      rows: [],
+      error: { code: "rate_limited", retryAtMs: START_MS + 10 * MINUTE },
+      debug: [],
+    });
+    await makeStore([first.provider], MINUTE).refresh({ reason: "poll" });
+    // The file keeps when the provider was last checked, and nothing of the login.
+    const saved = await savedFile();
+    expect(saved.entries).toEqual({});
+    expect(saved.lastChecks).toEqual({
+      copilot: { checkedAtMs: START_MS, failures: 1, retryAtMs: START_MS + 10 * MINUTE },
+    });
+
+    const second = fakeProvider();
+    second.signInAs("settings-only", false);
+    const store = makeStore([second.provider], MINUTE);
+    clock += 10 * MINUTE - SECOND;
+    expect(only(await store.snapshot()).rows).toEqual([]);
+    await store.refresh({ reason: "poll" });
+    expect(second.fetch).not.toHaveBeenCalled();
+    clock += SECOND;
+    await store.refresh({ reason: "poll" });
+    expect(second.fetch).toHaveBeenCalledOnce();
+  });
+
+  it("checks a login that can't be saved at once after a login change, not after the file's wait", async () => {
+    const first = fakeProvider();
+    first.signInAs("settings-only", false);
+    await makeStore([first.provider]).refresh({ reason: "poll" });
+
+    const second = fakeProvider();
+    second.signInAs("settings-only", false);
+    const store = makeStore([second.provider]);
+    clock += MINUTE;
+    await store.refresh({ reason: "poll" });
+    expect(second.fetch).not.toHaveBeenCalled();
+    store.invalidateIdentity();
+    await vi.waitFor(() => expect(second.fetch).toHaveBeenCalledOnce());
+  });
+
+  it("checks a new login at once when the login change comes before the file is read", async () => {
+    const first = fakeProvider();
+    first.signInAs("settings-only", false);
+    await makeStore([first.provider]).refresh({ reason: "poll" });
+
+    const second = fakeProvider();
+    second.signInAs("settings-only", false);
+    const store = makeStore([second.provider]);
+    clock += MINUTE;
+    store.invalidateIdentity();
+    await vi.waitFor(() => expect(second.fetch).toHaveBeenCalledOnce());
+  });
+
+  it("starts the backoff over on a settings recheck that comes while the file is read", async () => {
+    await mkdir(dirname(file), { recursive: true });
+    await writeFile(
+      file,
+      JSON.stringify({
+        version: 2,
+        entries: {},
+        lastChecks: { copilot: { checkedAtMs: START_MS, failures: 4 } },
+      }),
+    );
+    const copilot = fakeProvider();
+    copilot.signInAs("settings-only", false);
+    copilot.fetch.mockResolvedValue({ rows: [], error: { code: "network" }, debug: [] });
+    const store = makeStore([copilot.provider]);
+    const reading = store.snapshot({ refresh: false });
+    store.settingsChanged({ recheck: true });
+    await reading;
+    await vi.waitFor(() => expect(copilot.fetch).toHaveBeenCalledOnce());
+    await store.dispose();
+    expect((await savedFile()).lastChecks).toEqual({
+      copilot: { checkedAtMs: START_MS, failures: 1 },
+    });
+  });
+
+  it("replaces a last check dated after now once the clock went back", async () => {
+    const first = fakeProvider();
+    first.signInAs("settings-only", false);
+    clock = START_MS + HOUR;
+    await makeStore([first.provider]).refresh({ reason: "poll" });
+
+    clock = START_MS;
+    const second = fakeProvider();
+    second.signInAs("settings-only", false);
+    second.fetch.mockResolvedValue({
+      rows: [],
+      error: { code: "rate_limited", retryAtMs: START_MS + 10 * MINUTE },
+      debug: [],
+    });
+    await makeStore([second.provider], MINUTE).refresh({ reason: "poll" });
+    expect(second.fetch).toHaveBeenCalledOnce();
+
+    const third = fakeProvider();
+    third.signInAs("settings-only", false);
+    clock += 2 * MINUTE;
+    await makeStore([third.provider], MINUTE).refresh({ reason: "poll" });
+    expect(third.fetch).not.toHaveBeenCalled();
+  });
+
+  it("waits for another process's snapshot write and keeps what it saved", async () => {
+    await mkdir(dirname(file), { recursive: true });
+    // Another process holds the lock: it read the file and is about to write its own check.
+    const lock = `${file}.lock`;
+    await writeFile(lock, JSON.stringify({ pid: process.pid, token: "other" }));
+    const ours = { checkedAtMs: START_MS, failures: 0 };
+    let written = false;
+    const writing = writeSavedState(
+      file,
+      { entries: new Map(), lastChecks: new Map([["copilot", ours]]) },
+      { now: () => START_MS, noticeMaxAgeMs: HOUR },
+    ).then(() => {
+      written = true;
+    });
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    expect(written).toBe(false);
+
+    const theirs = { checkedAtMs: START_MS, failures: 1, retryAtMs: START_MS + HOUR };
+    await writeFile(
+      file,
+      JSON.stringify({ version: 2, entries: {}, lastChecks: { anthropic: theirs } }),
+    );
+    await rm(lock);
+    await writing;
+    expect((await savedFile()).lastChecks).toEqual({ anthropic: theirs, copilot: ours });
+    expect(existsSync(lock)).toBe(false);
+  });
+
+  it("keeps a newer check another process saved while this one waited for the lock", async () => {
+    await mkdir(dirname(file), { recursive: true });
+    const lock = `${file}.lock`;
+    await writeFile(lock, JSON.stringify({ pid: process.pid, token: "other" }));
+    const copilot = fakeProvider();
+    copilot.signInAs("settings-only", false);
+    const store = makeStore([copilot.provider]);
+    const checked = deferred<void>();
+    store.subscribe((snapshot) => {
+      if (only(snapshot).checkedAtMs !== undefined) checked.resolve();
+    });
+    const refreshing = store.refresh({ reason: "poll" });
+    await checked.promise;
+
+    // While this store waits to write its check, the other process saves a later 429 and lets go.
+    clock += MINUTE;
+    const theirs = { checkedAtMs: clock, failures: 1, retryAtMs: clock + HOUR };
+    await writeFile(
+      file,
+      JSON.stringify({ version: 2, entries: {}, lastChecks: { anthropic: theirs } }),
+    );
+    clock += MINUTE;
+    await rm(lock);
+    await refreshing;
+    expect((await savedFile()).lastChecks).toEqual({
+      anthropic: theirs,
+      copilot: { checkedAtMs: START_MS, failures: 0 },
+    });
+  });
+
+  it("writes nothing while another process keeps the lock, and saves it all later", async () => {
+    await mkdir(dirname(file), { recursive: true });
+    // Another process holds the lock: it read the file and stalls before its write.
+    const lock = `${file}.lock`;
+    await writeFile(lock, JSON.stringify({ pid: process.pid, token: "other" }));
+    const copilot = fakeProvider();
+    copilot.signInAs("settings-only", false);
+    const store = makeStore([copilot.provider]);
+    // After 2 s this store gives up on the lock.
+    await store.refresh({ reason: "poll" });
+    expect(existsSync(file)).toBe(false);
+
+    // The other process writes what it read and its own check, and lets go.
+    const theirs = { checkedAtMs: START_MS, failures: 1, retryAtMs: START_MS + HOUR };
+    await writeFile(
+      file,
+      JSON.stringify({ version: 2, entries: {}, lastChecks: { anthropic: theirs } }),
+    );
+    await rm(lock);
+    await store.dispose();
+    expect((await savedFile()).lastChecks).toEqual({
+      anthropic: theirs,
+      copilot: { checkedAtMs: START_MS, failures: 0 },
+    });
   });
 
   it("records a reset notice once when a window refills", async () => {
