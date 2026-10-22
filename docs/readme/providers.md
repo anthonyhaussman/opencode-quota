@@ -271,8 +271,8 @@ OpenCode Quota sends a fixed authenticated `GET` and waits up to `providers.chec
 
 These providers read an API key from, in order: an environment variable, then OpenCode config (`provider.<id>.options.apiKey`), then an API-key login saved in OpenCode 2 (`opencode.db`).
 
-- OpenCode config means the [OpenCode config files](troubleshooting.md#opencode-config-files) of the session, the project's included. The file ranked highest that holds a key wins.
-- A whole value `{env:NAME}` is filled in only when `NAME` is one of that provider's own variables. Other templates, such as `{file:…}`, are not filled in.
+- OpenCode config means the [OpenCode config files](troubleshooting.md#opencode-config-files) of the session, the project's included. For each provider id, the file ranked highest that sets `apiKey` decides, as in OpenCode: `null` or `""` there means no key from config, even when a lower file has one.
+- A whole value `{env:NAME}` is filled in only when `NAME` is one of that provider's own variables and is set; otherwise it gives no key from config. Other templates, such as `{file:…}`, are not filled in.
 - An OpenCode login used as a fallback must be an API-key login, not an OAuth sign-in.
 - `provider.<id>.options.apiKey` can also be written in OpenCode 2's native form, `providers.<id>.settings.apiKey`. Like OpenCode 2, a native `providers.<id>` entry replaces the `provider.<id>` entry with the same id.
 

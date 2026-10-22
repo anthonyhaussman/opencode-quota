@@ -183,4 +183,76 @@ describe("OpenCode config files", () => {
     );
     await expect(readProviderConfigString("google", "projectId", repoDir)).resolves.toBeUndefined();
   });
+
+  describe("a key and a project id a closer file sets win even when cleared, as in OpenCode", () => {
+    beforeEach(() => {
+      writeFileSync(
+        join(globalDir, "opencode.jsonc"),
+        JSON.stringify({
+          providers: {
+            deepseek: { settings: { apiKey: "global-key" } },
+            google: { settings: { projectId: "global-project" } },
+          },
+        }),
+      );
+    });
+    const key = async (directory: string) =>
+      resolveApiKeyFromEnvAndConfig(API_KEY_VENDORS.deepseek, directory);
+
+    it.each([
+      [
+        "null",
+        {
+          providers: {
+            deepseek: { settings: { apiKey: null } },
+            google: { settings: { projectId: null } },
+          },
+        },
+      ],
+      [
+        '""',
+        {
+          providers: {
+            deepseek: { settings: { apiKey: "" } },
+            google: { settings: { projectId: "" } },
+          },
+        },
+      ],
+      [
+        '"" in the legacy form',
+        {
+          provider: {
+            deepseek: { options: { apiKey: "" } },
+            google: { options: { projectId: "" } },
+          },
+        },
+      ],
+    ])("a project file that sets them to %s clears them", async (_label, project) => {
+      writeFileSync(join(appDir, "opencode.json"), JSON.stringify(project));
+
+      await expect(key(appDir)).resolves.toBeNull();
+      await expect(
+        readProviderConfigString("google", "projectId", appDir),
+      ).resolves.toBeUndefined();
+      // The repository folder, above that file, still gets the global values.
+      await expect(key(repoDir)).resolves.toEqual({ key: "global-key", source: "opencode.jsonc" });
+      await expect(readProviderConfigString("google", "projectId", repoDir)).resolves.toBe(
+        "global-project",
+      );
+    });
+
+    it("a project file that leaves them out keeps the global values", async () => {
+      writeFileSync(
+        join(appDir, "opencode.json"),
+        JSON.stringify({
+          providers: { deepseek: { name: "DeepSeek" }, google: { settings: { location: "eu" } } },
+        }),
+      );
+
+      await expect(key(appDir)).resolves.toEqual({ key: "global-key", source: "opencode.jsonc" });
+      await expect(readProviderConfigString("google", "projectId", appDir)).resolves.toBe(
+        "global-project",
+      );
+    });
+  });
 });

@@ -1,10 +1,10 @@
 /**
  * One API key resolver for every API-key vendor.
  *
- * Order (first wins): environment variables, then the OpenCode config files that count for the
- * session's folder, the one OpenCode ranks highest first (`providers.<id>.settings.apiKey`, or
- * the legacy `provider.<id>.options.apiKey`, with `{env:NAME}` templates), then OpenCode's
- * stored logins. Each vendor's spec is its `apiKey` in `provider-registration.ts`.
+ * Order (first wins): environment variables, then the key OpenCode ends up with from the config
+ * files that count for the session's folder (`providers.<id>.settings.apiKey`, or the legacy
+ * `provider.<id>.options.apiKey`, with `{env:NAME}` templates), then OpenCode's stored logins.
+ * Each vendor's spec is its `apiKey` in `provider-registration.ts`.
  */
 
 import { sanitizeDisplayText } from "./display-sanitize.js";
@@ -119,27 +119,55 @@ export function getProviderConfigSettings(
 }
 
 /**
- * Read one provider string setting from the OpenCode config files that count for `directory`.
- * The file OpenCode ranks highest that sets it wins.
+ * One provider setting as OpenCode ends up with it: the value in the first of `configs` (the
+ * one OpenCode ranks highest first) that has the setting. Like OpenCode's `mergeOverlay`, any
+ * value there wins, so a `null` or `""` in a closer file clears the setting of every lower file.
+ * Undefined when no file has it.
+ */
+function effectiveProviderSetting(
+  configs: readonly OpenCodeConfigDocument[],
+  providerKey: string,
+  settingKey: string,
+): { path: string; value: unknown } | undefined {
+  for (const { path, config } of configs) {
+    const value = getProviderConfigSettings(config, providerKey)?.[settingKey];
+    if (value !== undefined) return { path, value };
+  }
+  return undefined;
+}
+
+/**
+ * Read one provider string setting from the OpenCode config files that count for `directory`:
+ * the value OpenCode ends up with, when it is a non-empty string.
  */
 export async function readProviderConfigString(
   providerKey: string,
   settingKey: string,
   directory: string,
 ): Promise<string | undefined> {
-  for (const { config } of await configsByPriority(directory)) {
-    const value = getProviderConfigSettings(config, providerKey)?.[settingKey];
-    if (typeof value === "string" && value.trim().length > 0) return value.trim();
-  }
-  return undefined;
+  const value = effectiveProviderSetting(
+    await configsByPriority(directory),
+    providerKey,
+    settingKey,
+  )?.value;
+  return typeof value === "string" && value.trim().length > 0 ? value.trim() : undefined;
 }
 
-function extractConfigApiKey(config: unknown, spec: ApiKeySpec): string | null {
+/**
+ * The key of the first provider id, in order, whose `apiKey` as OpenCode ends up with it is
+ * usable. A cleared key, or an `{env:…}` template the vendor may not fill in, is none for its id.
+ */
+function extractConfigApiKey(
+  configs: readonly OpenCodeConfigDocument[],
+  spec: ApiKeySpec,
+): ApiKeyResult | null {
   for (const providerKey of spec.providerKeys) {
-    const apiKey = getProviderConfigSettings(config, providerKey)?.apiKey;
-    if (typeof apiKey !== "string" || apiKey.trim().length === 0) continue;
-    const resolved = resolveEnvTemplate(apiKey.trim(), spec.envVars);
-    if (resolved) return resolved;
+    const setting = effectiveProviderSetting(configs, providerKey, "apiKey");
+    if (typeof setting?.value !== "string" || setting.value.trim().length === 0) continue;
+    const key = resolveEnvTemplate(setting.value.trim(), spec.envVars);
+    if (key) {
+      return { key, source: setting.path.endsWith(".jsonc") ? "opencode.jsonc" : "opencode.json" };
+    }
   }
   return null;
 }
@@ -154,12 +182,7 @@ export async function resolveApiKeyFromEnvAndConfig(
     if (value) return { key: value, source: `env:${name}` };
   }
 
-  for (const { path, config } of await configsByPriority(directory)) {
-    const key = extractConfigApiKey(config, spec);
-    if (key) return { key, source: path.endsWith(".jsonc") ? "opencode.jsonc" : "opencode.json" };
-  }
-
-  return null;
+  return extractConfigApiKey(await configsByPriority(directory), spec);
 }
 
 /** Env vars that are set and the OpenCode config files for `directory` that exist (no values). */

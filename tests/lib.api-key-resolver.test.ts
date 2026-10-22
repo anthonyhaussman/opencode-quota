@@ -270,14 +270,43 @@ describe("trusted config parsing", () => {
     });
   });
 
-  it("leaves a project template naming another variable unresolved and uses the global key", async () => {
+  it("leaves a project template naming another variable unresolved, with no config key", async () => {
     process.env.NOT_ALLOWED = "some-other-secret";
     mockConfigFiles({
       [TRUSTED.json]: legacyConfig({ deepseek: "global-key" }),
       [PROJECT_FILE]: legacyConfig({ deepseek: "{env:NOT_ALLOWED}" }),
     });
-    await expect(resolveApiKey(spec, PROJECT)).resolves.toEqual({
-      key: "global-key",
+    // OpenCode uses the project's value there, so the global key is not the one it has.
+    await expect(resolveApiKey(spec, PROJECT)).resolves.toBeNull();
+  });
+
+  it("a key the project clears falls through to the stored login; an env key still wins", async () => {
+    mockConfigFiles({
+      [TRUSTED.json]: legacyConfig({ deepseek: "global-key" }),
+      [PROJECT_FILE]: JSON.stringify({ providers: { deepseek: { settings: { apiKey: null } } } }),
+    });
+    mocks.readActiveCredentialRowsCached.mockResolvedValue(
+      asRows({ deepseek: { type: "api", key: "stored-key" } }),
+    );
+    await expect(resolveApiKeyLogin(spec, PROJECT)).resolves.toEqual({
+      state: "configured",
+      apiKey: "stored-key",
+    });
+
+    process.env.DEEPSEEK_API_KEY = "env-key";
+    await expect(resolveApiKeyLogin(spec, PROJECT)).resolves.toEqual({
+      state: "configured",
+      apiKey: "env-key",
+    });
+  });
+
+  it("a provider id the project clears leaves the vendor's next id as OpenCode has it", async () => {
+    mockConfigFiles({
+      [TRUSTED.json]: legacyConfig({ zai: "global-zai-key", "zai-coding-plan": "global-plan-key" }),
+      [PROJECT_FILE]: legacyConfig({ zai: "" }),
+    });
+    await expect(resolveApiKeyFromEnvAndConfig(API_KEY_VENDORS.zai, PROJECT)).resolves.toEqual({
+      key: "global-plan-key",
       source: "opencode.json",
     });
   });
