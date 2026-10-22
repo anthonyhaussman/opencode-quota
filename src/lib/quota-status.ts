@@ -1326,7 +1326,7 @@ function knownModelText(
 }
 
 /**
- * The models of the last 30 days without a price: their tokens add no cost. A model shows when
+ * The models of the last 30 days with tokens without a price, which add no cost. A model shows when
  * the shipped price list has its id; the others are counted.
  */
 function unpricedRows(
@@ -1337,7 +1337,7 @@ function unpricedRows(
   const { totals } = usage;
   if (totals.tokens.processed === 0) return [{ key: "unpriced_30d", value: "(no usage)" }];
   const summary = `${formatShare(totals.unpricedShare)} of ${formatTokens(totals.tokens.processed)} tokens`;
-  const unpriced = usage.models.filter((model) => !model.priced);
+  const unpriced = usage.models.filter((model) => model.unpricedTokens > 0);
   const rows: ReportKvRow[] = [{ key: "unpriced_30d", value: summary }];
   const listed = unpriced
     .map((model) => ({ model, name: knownModelText(model.providerID, model.modelID, priceList) }))

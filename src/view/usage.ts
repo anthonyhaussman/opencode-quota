@@ -257,7 +257,7 @@ function unpricedLines(view: View, width: number): UsageLine[] {
   if (totals.unpricedShare <= 0) return [];
   const label = "Unpriced tokens excluded: ";
   const share = formatShare(totals.unpricedShare);
-  const names = models.filter((row) => !row.priced && row.tokens > 0).map((row) => row.modelID);
+  const names = models.filter((row) => row.unpricedTokens > 0).map((row) => row.modelID);
   const shown =
     names.length > 3
       ? `${names.slice(0, 3).join(", ")} +${names.length - 3} more`

@@ -3,9 +3,11 @@ import { getQuotaProviderRuntimeIds } from "./provider-metadata.js";
 
 export type CursorQuotaPlan = "none" | "pro" | "pro-plus" | "ultra";
 
+/** "unpriced": Cursor's own price, which no table here holds. */
 type CursorResolvedModel =
   | { kind: "local"; model: CursorLocalPricingModel; pool: "auto_composer" }
   | { kind: "official"; providerHint: string; modelHint: string; pool: "api" }
+  | { kind: "unpriced" }
   | { kind: "unknown" };
 
 const CURSOR_INCLUDED_API_USD_BY_PLAN: Readonly<Record<Exclude<CursorQuotaPlan, "none">, number>> =
@@ -39,14 +41,29 @@ const CURSOR_LOCAL_PRICING = {
 
 type CursorLocalPricingModel = keyof typeof CURSOR_LOCAL_PRICING;
 
-// Cursor bills a request whose prompt passes this many tokens at a higher rate than the table
-// holds, so such a request has no price here.
-const CURSOR_LOCAL_PRICED_PROMPT_TOKENS: Readonly<
-  Partial<Record<CursorLocalPricingModel, number>>
-> = {
-  "grok-4.7": 200_000,
-  "grok-4.7-fast": 200_000,
-};
+// Cursor bills a request of these models whose prompt passes 200k tokens at a long-context rate
+// that no price here holds, so such a request has no price.
+const CURSOR_LONG_CONTEXT_PROMPT_TOKENS = 200_000;
+const CURSOR_MODELS_WITH_LONG_CONTEXT_RATE = new Set([
+  "claude-sonnet-4",
+  "gpt-5.4",
+  "gpt-5.4-high",
+  "gpt-5.4-medium",
+  "gpt-5.5",
+  "gpt-5.6-luna",
+  "gpt-5.6-sol",
+  "gpt-5.6-terra",
+  "grok-4.7",
+  "grok-4.7-fast",
+]);
+
+// Cursor's price for these differs from models.dev's, or models.dev has none.
+const CURSOR_MODELS_WITH_OWN_PRICE = new Set([
+  "gemini-3.6-flash",
+  "glm-5.3-flash",
+  "muse-spark-1.3",
+  "muse-wonder-1.0",
+]);
 
 // models.dev lists a cache-write rate for these that Cursor does not publish.
 const CURSOR_MODELS_WITHOUT_CACHE_WRITE_RATE = new Set(["kimi-k3", "kimi-k3-1m"]);
@@ -167,12 +184,13 @@ export function lookupCursorLocalCost(model: string): CostBuckets | null {
     : null;
 }
 
-/** Whether the table's rates price a request of `model` with `promptTokens` of prompt. */
-export function cursorLocalCostCoversPrompt(model: string, promptTokens: number): boolean {
-  const limit = Object.hasOwn(CURSOR_LOCAL_PRICED_PROMPT_TOKENS, model)
-    ? CURSOR_LOCAL_PRICED_PROMPT_TOKENS[model as CursorLocalPricingModel]
-    : undefined;
-  return limit === undefined || promptTokens <= limit;
+/** Whether Cursor bills a request of `rawModelId` with `promptTokens` of prompt at base rates. */
+export function cursorBaseRatesCoverPrompt(
+  rawModelId: string | undefined,
+  promptTokens: number,
+): boolean {
+  if (promptTokens <= CURSOR_LONG_CONTEXT_PROMPT_TOKENS) return true;
+  return !CURSOR_MODELS_WITH_LONG_CONTEXT_RATE.has(rawModelId ? cursorModelName(rawModelId) : "");
 }
 
 /**
@@ -208,7 +226,8 @@ export function resolveCursorModel(rawModelId?: string): CursorResolvedModel {
     return { kind: "local", model: localModel as CursorLocalPricingModel, pool: "auto_composer" };
   }
 
-  return Object.hasOwn(CURSOR_OFFICIAL_MODEL_ALIASES, model)
-    ? { kind: "official", ...CURSOR_OFFICIAL_MODEL_ALIASES[model]!, pool: "api" }
-    : { kind: "unknown" };
+  if (Object.hasOwn(CURSOR_OFFICIAL_MODEL_ALIASES, model)) {
+    return { kind: "official", ...CURSOR_OFFICIAL_MODEL_ALIASES[model]!, pool: "api" };
+  }
+  return CURSOR_MODELS_WITH_OWN_PRICE.has(model) ? { kind: "unpriced" } : { kind: "unknown" };
 }

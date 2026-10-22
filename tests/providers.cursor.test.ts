@@ -34,8 +34,16 @@ function tokensFor(usd: number): number {
   return Math.round((usd / 1.25) * 1_000_000);
 }
 
-/** This month's Cursor messages: API spend, Auto+Composer spend, and unknown models. */
-function storeHistory(spend: { api?: number; auto?: number; unknownModels?: number }): void {
+/**
+ * This month's Cursor messages: API spend, Auto+Composer spend, unknown models, and GPT-5.4
+ * requests over 200k tokens (Cursor's long-context rate).
+ */
+function storeHistory(spend: {
+  api?: number;
+  auto?: number;
+  unknownModels?: number;
+  longRequests?: number;
+}): void {
   const created = new Date(2026, 1, 10).getTime();
   const message = (index: number, modelID: string, input: number): SessionDatabaseMessage => ({
     id: `msg_${index}`,
@@ -51,6 +59,9 @@ function storeHistory(spend: { api?: number; auto?: number; unknownModels?: numb
     ...(spend.auto === undefined ? [] : [message(2, "auto", tokensFor(spend.auto))]),
     ...Array.from({ length: spend.unknownModels ?? 0 }, (_, index) =>
       message(10 + index, "cursor/future-model", 10),
+    ),
+    ...Array.from({ length: spend.longRequests ?? 0 }, (_, index) =>
+      message(20 + index, "cursor/gpt-5.4", 250_000),
     ),
   ];
   writeSessionDatabase(join(world.configDir, "..", "..", "data", "opencode", "opencode.db"), {
@@ -117,6 +128,18 @@ describe("cursor provider", () => {
         ["cursor.auto_composer", "Pro", "Auto+Composer", "month", "0 USD", RESET],
       ],
       { detail: "Unknown Cursor model ids present in local history (see /quota_status)" },
+    ],
+    [
+      "only known API spend, and an error, when long requests have no price",
+      { cursorPlan: "pro" },
+      { api: 2, longRequests: 1 },
+      [
+        ["cursor.api", "Pro", "Known API", "month", "2 USD", RESET],
+        ["cursor.auto_composer", "Pro", "Auto+Composer", "month", "0 USD", RESET],
+      ],
+      {
+        detail: "Cursor requests over 200k tokens on models with a long-context rate have no price",
+      },
     ],
   ])("shows %s", async (_name, config, spend, rows, error) => {
     storeHistory(spend);

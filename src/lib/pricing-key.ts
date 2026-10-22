@@ -3,8 +3,8 @@
  * key, and what one message of it costs (`priceMessage`).
  */
 import {
+  cursorBaseRatesCoverPrompt,
   cursorBilledRates,
-  cursorLocalCostCoversPrompt,
   isCursorModelId,
   isCursorProviderId,
   lookupCursorLocalCost,
@@ -280,7 +280,7 @@ export function resolvePricingKey(source: {
     return { ok: true, key: { provider: providerID, model: modelID }, method };
   };
 
-  if (isCursorProviderId(source.providerID) || isCursorModelId(source.modelID)) {
+  if (isCursorSource(source)) {
     const cursorModel = resolveCursorModel(source.modelID);
     if (cursorModel.kind === "local") {
       return {
@@ -296,6 +296,10 @@ export function resolvePricingKey(source: {
         cursorModel.modelHint,
       );
       if (resolved) return resolved;
+    }
+    // Another source's price for it would not be Cursor's.
+    if (cursorModel.kind === "unpriced") {
+      return { ok: false, unknown: { sourceProviderID: srcProvider, sourceModelID: srcModel } };
     }
   }
 
@@ -452,14 +456,16 @@ function classifyMissingPricing(params: {
   return { kind: "unknown" };
 }
 
+function isCursorSource(source: { providerID?: string; modelID?: string }): boolean {
+  return isCursorProviderId(source.providerID) || isCursorModelId(source.modelID);
+}
+
 /** The rates OpenCode bills `source` at: a Cursor model's by Cursor's rules. */
 function billedRates(
   source: { providerID?: string; modelID?: string },
   rates: CostBuckets,
 ): CostBuckets {
-  return isCursorProviderId(source.providerID) || isCursorModelId(source.modelID)
-    ? cursorBilledRates(source.modelID, rates)
-    : rates;
+  return isCursorSource(source) ? cursorBilledRates(source.modelID, rates) : rates;
 }
 
 /**
@@ -533,10 +539,7 @@ export function priceMessage(
   const pricing = cachedModelPricing(source);
   if (pricing.kind === "priced") {
     const promptTokens = tokens.input + tokens.cache_read + tokens.cache_write;
-    if (
-      pricing.key.provider === "cursor" &&
-      !cursorLocalCostCoversPrompt(pricing.key.model, promptTokens)
-    ) {
+    if (isCursorSource(source) && !cursorBaseRatesCoverPrompt(source.modelID, promptTokens)) {
       return { kind: "unpriced", key: pricing.key };
     }
     return pricedMessage(pricing.key, pricing.rates, tokens);

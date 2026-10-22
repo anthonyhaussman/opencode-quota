@@ -120,7 +120,7 @@ export const cursorProvider: QuotaProvider = {
       return { attempted: false, accounts: [], debug };
     }
 
-    const hasPartialApiCoverage = usage.unknownModels.length > 0;
+    const hasPartialApiCoverage = usage.unknownModels.length > 0 || usage.unpricedRequestCount > 0;
     const hasPositiveAllowance = includedApiUsd !== undefined && includedApiUsd > 0;
     const resetsAt = usage.window.resetTimeIso;
     const rows: ProviderRow[] = [];
@@ -164,11 +164,19 @@ export const cursorProvider: QuotaProvider = {
     const accounts: AccountResult[] = [
       { name: planLabel ? `Cursor (${planLabel})` : "Cursor", rows, errors: [] },
     ];
-    if (hasPartialApiCoverage) {
+    if (usage.unknownModels.length > 0) {
       accounts.push(
         failedAccount(
           "Cursor",
           "Unknown Cursor model ids present in local history (see /quota_status)",
+        ),
+      );
+    }
+    if (usage.unpricedRequestCount > 0) {
+      accounts.push(
+        failedAccount(
+          "Cursor",
+          "Cursor requests over 200k tokens on models with a long-context rate have no price",
         ),
       );
     }

@@ -134,7 +134,7 @@ Check the `copilot` section: `pat_state`, `pat_organization` and `pat_enterprise
 | Cursor login missing                      | Run `/connect` → **Cursor** in OpenCode, or set `CURSOR_API_KEY`. |
 | Quota shows but no remaining percentage   | Set `providers.cursor.plan` or `providers.cursor.includedApiUsd`. |
 | Billing cycle looks wrong                 | Set `providers.cursor.billingCycleStartDay` to your billing day. |
-| Unknown Cursor pricing                    | Press `p` in the TUI's Usage tab (`/quota_usage`). If still unknown, check `unpriced_30d` in `/quota_status` (the share of the last 30 days' tokens without a price; it names a model only when the bundled price list has its id). Cursor `auto`, `composer*`, and `grok-4.5`–`grok-4.7` use bundled Cursor pricing; a `grok-4.7` prompt over 200k tokens and the `grok-4.7-500k` models have no price. |
+| Unknown Cursor pricing                    | Press `p` in the TUI's Usage tab (`/quota_usage`). If still unknown, check `unpriced_30d` in `/quota_status` (the share of the last 30 days' tokens without a price; it names a model only when the bundled price list has its id). Cursor `auto`, `composer*`, and `grok-4.5`–`grok-4.7` use bundled Cursor pricing. A prompt over 200k tokens on `claude-sonnet-4`, `gpt-5.4`, `gpt-5.5`, `gpt-5.6-*` or `grok-4.7*` has no price, nor do `gemini-3.6-flash`, `glm-5.3-flash`, `muse-*` and the `grok-4.7-500k` models. |
 
 </details>
 
