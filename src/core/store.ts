@@ -16,7 +16,8 @@
  *   another identity are never shown; those whose identity can't be saved stay in memory and
  *   go on a login change. For those the file keeps only when their provider was last checked
  *   (with its failures and retry time), so a restarted store waits that check out before it
- *   asks the provider; a login change ends that wait.
+ *   asks the provider; a login change or settings recheck ends that wait, also one that comes
+ *   before the file is read.
  * - Rows also carry their login. A failed refresh keeps the last good rows and records the
  *   error; when one of several logins fails, that login keeps its last rows. Logins that share
  *   an account name are numbered here ("Pro", "Pro 2"), by login, so the numbers stay put;
@@ -365,6 +366,8 @@ export function createQuotaStore(deps: QuotaStoreDeps): QuotaStore {
    * start. It stands in for this process's own check of such a login until there is one.
    */
   const lastChecksFromFile = new Map<string, LastCheck>();
+  /** A login change or settings recheck ended those waits, also before the file was read. */
+  let fileWaitsEnded = false;
   const inFlight = new Map<string, Promise<void>>();
   /** Running fetches per provider (an old one may still run after a login change). */
   const fetching = new Map<string, number>();
@@ -415,6 +418,12 @@ export function createQuotaStore(deps: QuotaStoreDeps): QuotaStore {
     }
   }
 
+  /** Ends the file's waits: those read already and those a first read still brings. */
+  function endFileWaits(): void {
+    fileWaitsEnded = true;
+    lastChecksFromFile.clear();
+  }
+
   /** `lastChecksFromFile` of a provider whose login can't be saved; none for one that can. */
   function fileLastCheck(providerId: string, where: ResolvedKey): LastCheck | undefined {
     return where.persist ? undefined : lastChecksFromFile.get(providerId);
@@ -424,6 +433,7 @@ export function createQuotaStore(deps: QuotaStoreDeps): QuotaStore {
     loaded ??= deps.file
       ? readSavedState(deps.file).then((saved) => {
           adopt(saved);
+          if (fileWaitsEnded) return;
           for (const [providerId, lastCheck] of saved.lastChecks) {
             lastChecksFromFile.set(providerId, lastCheck);
           }
@@ -764,7 +774,7 @@ export function createQuotaStore(deps: QuotaStoreDeps): QuotaStore {
         if (!entry.persist) entries.delete(key);
       }
       // The new login is checked at once, not after the wait of a login before it.
-      lastChecksFromFile.clear();
+      endFileWaits();
       supersede("poll", "quota refresh after a login change failed");
     },
 
@@ -775,7 +785,7 @@ export function createQuotaStore(deps: QuotaStoreDeps): QuotaStore {
         return;
       }
       for (const entry of entries.values()) entry.failures = 0;
-      lastChecksFromFile.clear();
+      endFileWaits();
       // A manual refresh waits for no interval: every provider is checked again now.
       supersede("manual", "quota recheck after a settings change failed");
     },
