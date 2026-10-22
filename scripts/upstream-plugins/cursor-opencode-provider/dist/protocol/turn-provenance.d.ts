@@ -1,11 +1,10 @@
 import type { LanguageModelV3CallOptions } from "@ai-sdk/provider";
 /** Mirrors MAX_TURN_STATE_SESSIONS; evicted sessions re-hydrate from disk. */
 export declare const MAX_PROVENANCE_SESSIONS = 256;
-export type TurnProvenance = {
-    conversationId: string;
-    /** Tool call ids emitted in the latest non-empty step. */
+type EmittedStep = {
+    /** Tool call ids emitted in the step. */
     toolCallIds: string[];
-    /** Whitespace-free text emitted in the latest non-empty step (first 4 KiB). */
+    /** Whitespace-free text emitted in the step (first 4 KiB). */
     text: string;
     /**
      * Whitespace-free reasoning and text of the same step in emission order
@@ -14,6 +13,17 @@ export type TurnProvenance = {
      * OpenCode 2 does the same for an assistant message that ended in error.
      */
     textWithReasoning: string;
+};
+/** The latest non-empty step, as fields of the record itself. */
+export type TurnProvenance = EmittedStep & {
+    conversationId: string;
+    /**
+     * The latest step has not finished: it is still streaming, or the host
+     * stopped it. The host may keep only what it read of it, or drop it.
+     */
+    unfinished?: boolean;
+    /** The step before an unfinished one, which the host's history may still end on. */
+    previous?: EmittedStep;
 };
 export type ForeignHistoryReason = "foreign-assistant";
 /**
@@ -28,6 +38,10 @@ export declare function recordEmittedPart(sessionKey: string, conversationId: st
     delta?: unknown;
     toolCallId?: unknown;
 }): void;
+/** The host step's stream finished normally; an empty step leaves the previous one recorded. */
+export declare function finishEmittedStep(sessionKey: string, conversationId: string): void;
+/** The finished step goes on in the same host step (a progress-only continuation Run). */
+export declare function resumeEmittedStep(sessionKey: string, conversationId: string): void;
 /**
  * Bind provenance to the conversation a Run was opened on. A reminted
  * conversation starts with an empty record, so it never inherits the previous
@@ -50,3 +64,4 @@ export declare function detectForeignHistory(input: {
     conversationId: string;
     prompt: LanguageModelV3CallOptions["prompt"];
 }): ForeignHistoryReason | undefined;
+export {};

@@ -91,8 +91,10 @@ export function snapshotConversationBlobs(conversationId) {
  * Keep only blobs reachable from the latest checkpoint and snapshot them.
  * Malformed/unknown state or a missing referenced hash falls back to retaining
  * every blob: cache size must never come at the cost of restart correctness.
+ * `keepInMemory`: snapshot only, for a Run still in progress, whose next
+ * checkpoint may reference blobs this one does not.
  */
-export function compactConversationBlobs(conversationId, checkpoint) {
+export function compactConversationBlobs(conversationId, checkpoint, options) {
     const current = byConversation.get(conversationId) ?? new Map();
     const before = retainedBlobStats(current);
     const beforeCount = before.count;
@@ -117,13 +119,15 @@ export function compactConversationBlobs(conversationId, checkpoint) {
             return isBlobIdHash(id) ? undefined : id;
         });
         const retained = new Map([...current].filter(([id]) => reachable.has(id)));
-        if (retained.size > 0)
-            byConversation.set(conversationId, retained);
-        else
-            byConversation.delete(conversationId);
+        if (!options?.keepInMemory) {
+            if (retained.size > 0)
+                byConversation.set(conversationId, retained);
+            else
+                byConversation.delete(conversationId);
+        }
         const afterBytes = [...retained.values()].reduce((total, data) => total + data.length, 0);
         return {
-            blobs: snapshotConversationBlobs(conversationId),
+            blobs: [...retained].map(([id, data]) => ({ id, data: Uint8Array.from(data) })),
             beforeCount,
             beforeBytes,
             afterCount: retained.size,

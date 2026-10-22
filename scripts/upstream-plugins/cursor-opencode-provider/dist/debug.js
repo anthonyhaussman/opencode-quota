@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { processShared } from "./process-shared.js";
 // Wire-level diagnostics. Opt in with CURSOR_PROVIDER_DEBUG=1 (or "true").
 // Default path mirrors Cursor CLI: $TMPDIR/cursor-provider-logs-<uid>/debug-<pid>.log
 // with directory mode 0o700 and file mode 0o600. Override with CURSOR_PROVIDER_DEBUG_FILE.
@@ -14,6 +15,11 @@ const DEBUG_ENABLED = process.env.CURSOR_PROVIDER_DEBUG === "1" ||
     process.env.CURSOR_PROVIDER_DEBUG === "true";
 /** Soft cap for the debug log file; exceeded size triggers truncate + new header. */
 export const DEBUG_LOG_MAX_BYTES = 10 * 1024 * 1024;
+// A host can load this package more than once in one process (a plugin and an
+// AI SDK package import, or one plugin import per location). Count the copies so
+// each banner names its copy and, once there are several, every line says which.
+const moduleCopies = processShared("debug.module-copies.v1", () => ({ count: 0 }));
+const MODULE_COPY = ++moduleCopies.count;
 let _traceInitialized = false;
 let _debugFile;
 let _debugFileUsesManagedDirectory = false;
@@ -73,7 +79,12 @@ function announceLogPath(filePath) {
     }
 }
 function debugBannerLine() {
-    return `--- cursor-provider debug (pid ${process.pid}) ${new Date().toISOString()} ---\n`;
+    return `--- cursor-provider debug (pid ${process.pid}) ${new Date().toISOString()} ` +
+        `copy=#${MODULE_COPY} module=${import.meta.url} ---\n`;
+}
+/** `#N` on each line once a second copy of this module exists in the process. */
+function copyTag() {
+    return moduleCopies.count > 1 ? `#${MODULE_COPY} ` : "";
 }
 /**
  * If `filePath` is at least `maxBytes`, truncate it and write a size-cap header.
@@ -120,7 +131,7 @@ export function trace(msg) {
                 `\n`);
         }
         truncateDebugLogIfOversized(_debugFile);
-        fs.appendFileSync(_debugFile, `[${new Date().toISOString()}] ${msg}\n`);
+        fs.appendFileSync(_debugFile, `[${new Date().toISOString()}] ${copyTag()}${msg}\n`);
     }
     catch {
         /* ignore */

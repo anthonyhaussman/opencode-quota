@@ -3,12 +3,18 @@ import { type CursorProviderError } from "./errors.js";
 import { type SessionActivitySource } from "./activity.js";
 import type { HostSubagentCatalog, HostToolDialect, OpencodeToolDef, ToolAliasRegistry } from "./protocol/tools.js";
 import type { CursorConversationTokenDetails } from "./protocol/token-details.js";
+import type { HostNoteBatch } from "./protocol/host-notes.js";
+import type { RunHistoryImages } from "./protocol/sent-history-images.js";
 import type { ParallelStepState } from "./parallel-step.js";
+import type { OpenCodeModelCost } from "./pricing.js";
+import type { RunCostEstimate } from "./billing.js";
+import type { ReplaySafetyState } from "./replay-safety.js";
 export type Frame = {
     flags: number;
     payload: Uint8Array;
 };
 export type CursorContinuationOptions = {
+    /** A Run that owes the host nothing fails after this long without any inbound frame. */
     semanticIdleMs?: number;
     /** @deprecated Use semanticIdleMs. Kept as a strict alias for compatibility. */
     softHealthMs?: number;
@@ -51,8 +57,14 @@ export type PendingExec = {
      * exec result back to Cursor — just clear pending and keep pumping.
      */
     bridged?: boolean;
+    /**
+     * Cursor withdrew the exec (`ExecServerControlMessage.abort`). As in Cursor
+     * CLI, nothing is written back for it, but the host's late result still
+     * finds this Run so the turn goes on.
+     */
+    aborted?: boolean;
 };
-export type ContinuationTerminalReason = "hard-cap-expired" | "remote-clean-close" | "remote-error" | "result-write-failed" | "ambiguous-partial-write" | "heartbeat-write-failed" | "reply-write-failed" | "process-disposed" | "superseded-by-new-run" | "open-session-cap-exceeded";
+export type ContinuationTerminalReason = "host-interrupted" | "hard-cap-expired" | "remote-clean-close" | "remote-error" | "result-write-failed" | "ambiguous-partial-write" | "heartbeat-write-failed" | "reply-write-failed" | "process-disposed" | "superseded-by-new-run" | "open-session-cap-exceeded";
 export type SessionCloseReason = ContinuationTerminalReason | "ordinary-cleanup" | "turn-ended" | "initial-write-failed";
 export type ContinuationClaim = {
     session: CursorSession;
@@ -79,7 +91,7 @@ export type DeliveryOutcome = {
 } | {
     kind: "duplicate";
     reason: "in-flight" | "delivered";
-    framesWritten: 0;
+    framesWritten: number;
 } | {
     kind: "terminal";
     reason: ContinuationTerminalReason;
@@ -87,7 +99,7 @@ export type DeliveryOutcome = {
 } | {
     kind: "missing";
     reason: "missing-process-local-state";
-    framesWritten: 0;
+    framesWritten: number;
 };
 export type CursorSession = {
     /**
@@ -98,6 +110,8 @@ export type CursorSession = {
     sessionId: string;
     /** AgentRunRequest.run_id, for context injections bound to this Run. */
     runId?: string;
+    /** Host notes consumed by this Run's initial user action, retained for a rebase. */
+    userTurnHostNotes?: HostNoteBatch[];
     /**
      * Cursor conversation_id for this Run — used to store/echo
      * conversation_checkpoint_update (CLI parity).
@@ -107,10 +121,32 @@ export type CursorSession = {
     cacheDir?: string;
     /** Latest eligible checkpoint emitted by this Run attempt. */
     resumeCheckpoint?: Uint8Array;
+    /**
+     * This Run sent a user message or tool result after its last checkpoint:
+     * recovery must not resume earlier state that lacks the delivered input.
+     */
+    checkpointRevoked?: boolean;
+    /** Only a delivered host result, rather than an unrepresented follow-up, revoked it. */
+    checkpointRevokedByHostResult?: boolean;
+    /** Ignore queued checkpoints received before the latest message/result delivery. */
+    resumeCheckpointAfterFrame?: number;
+    /** Stateful replay barriers survive host tool-step boundaries on this Run. */
+    replaySafety?: ReplaySafetyState;
+    /** History images this Run's checkpoints hold or may hold; absent for a Run outside an OpenCode session. */
+    historyImages?: RunHistoryImages;
     /** Last checkpoint-derived context snapshot, independent of retry eligibility. */
     tokenDetails?: CursorConversationTokenDetails;
     /** True only after this Run receives a checkpoint containing token details. */
     tokenDetailsFresh?: boolean;
+    /** Cost reporting for this Run's steps (`src/billing.ts`). */
+    billing: RunCostEstimate & {
+        /** Ledger key: the OpenCode session, or this Run for an ephemeral one. */
+        key: string;
+        /** Catalog cost entry; absent for a model Cursor publishes no rate for. */
+        cost?: OpenCodeModelCost;
+        /** Context the previous billed step already sent: read from cache on the next one. */
+        prefixTokens: number;
+    };
     /**
      * Run-lifetime cache evidence. Cursor exposes only aggregate cache counters at
      * TurnEnded, so retain the inputs and protocol activity needed to explain
@@ -124,6 +160,8 @@ export type CursorSession = {
         modelId?: string;
         priorTokenDetails?: CursorConversationTokenDetails;
         startedWithCheckpoint: boolean;
+        /** Why a Run started without a checkpoint: a reset reason, `ephemeral`, or `no-checkpoint`. */
+        coldReason?: string;
         requestContextReused: boolean;
         requestContextHash: string;
         systemPromptHash?: string;
@@ -139,6 +177,8 @@ export type CursorSession = {
     };
     /** OpenCode session whose own or descendant activity renews tool leases. */
     openCodeSessionId?: string;
+    /** OpenCode session whose Stop cancels this Run, also for a helper isolated from it. */
+    stoppedWithSessionId?: string;
     /** Host primary agent whose prompt/permissions this Run was seeded with. */
     hostAgent?: string;
     /** Stable host-system + provider-guidance identity for restart validation. */
@@ -166,6 +206,12 @@ export type CursorSession = {
      * after the host settles emitted tools. Timed-out reads use pendingFrameRead.
      */
     pushbackFrame?: Frame;
+    /**
+     * Frames the held-Run reader took while the host ran tools and the next pump
+     * must see, in arrival order. They follow `pushbackFrame` and precede any
+     * unread frame.
+     */
+    heldFrames?: Frame[];
     /**
      * In-progress parallel tool-call step (field 27 hold). Cleared when the step
      * finishes; added to priorParallelStepCallIds for late-completion filtering.
@@ -255,13 +301,18 @@ export type CursorSession = {
     deferredTerminalReason: "remote-clean-close" | "remote-error" | null;
     policy: CursorContinuationPolicy;
     createdAt: number;
+    /** When the host's model call that opened this Run started; it may open the Run after a stop. */
+    requestedAt?: number;
     lastInboundAt: number;
     lastHeartbeatWriteAt: number;
     semanticDeadlineAt: number;
     closeError: CursorProviderError | null;
     closed: boolean;
-    reopenWithUserMessage?: (text: string) => Promise<void>;
+    /** The host stopped the turn (OpenCode 2 interrupt); the Run is being cancelled and must not be continued. */
+    hostInterrupted?: string;
+    reopenWithUserMessage?: (text: string, signal?: AbortSignal) => Promise<void>;
 };
+export declare function stoppedWith(session: CursorSession): string | undefined;
 type SessionManagerOptions = {
     now?: () => number;
     setTimer?: (callback: () => void, delayMs: number) => ReturnType<typeof setTimeout>;
@@ -272,10 +323,14 @@ type SessionManagerOptions = {
     maxOpenSessions?: number;
 };
 export declare class SessionManager {
+    /** A claimed result has one writer even while that writer awaits drain. */
+    private readonly delivering;
     private byExecId;
     private sessions;
     private byOpenCodeSessionId;
     private tombstones;
+    /** Early-row tool call id → the exec that bound it. Bounded like the tombstones. */
+    private toolCallRoutes;
     private readonly now;
     private readonly setTimer;
     private readonly clearTimer;
@@ -288,12 +343,24 @@ export declare class SessionManager {
     /** Live open Run for this OpenCode session id, if any. */
     findOpenByOpenCodeSessionId(openCodeSessionId: string | undefined): CursorSession | undefined;
     isActivelyPumping(session: CursorSession): boolean;
+    /** Every open Run a Stop of this OpenCode session cancels, including one a newer Run did not supersede. */
+    openSessionsStoppedWith(openCodeSessionId: string | undefined): CursorSession[];
     /**
-     * Clear display-only bridged pendings that do not require a Cursor exec write.
-     * Used when the host starts a fresh user turn instead of returning the bridged
-     * tool result (e.g. human `continue` while a todowrite mirror is outstanding).
+     * Forget every result the host still owed this Run, without writing any: the
+     * host stopped the turn, and the Run is about to be cancelled.
      *
-     * @returns number of bridged pendings settled
+     * @returns number of pendings dropped
+     */
+    abandonPending(session: CursorSession): number;
+    /** Cursor withdrew this exec; returns false when it is not one the host still owes. */
+    markExecAborted(session: CursorSession, execId: number): boolean;
+    /**
+     * Clear pendings that do not require a Cursor exec write: display-only bridged
+     * ones and execs Cursor aborted. Used when the host starts a fresh user turn
+     * instead of returning the result (e.g. human `continue` while a todowrite
+     * mirror is outstanding).
+     *
+     * @returns number of pendings settled
      */
     settleBridgedPending(session: CursorSession): number;
     private isPumping;
@@ -313,7 +380,9 @@ export declare class SessionManager {
     pendingFor(sessionId: string, execId: number): PendingExec | undefined;
     classify(sessionId: string, execId: number): ContinuationClassification;
     claim(sessionId: string, execId: number): ContinuationClaim | ContinuationClassification;
-    deliverClaim(claim: ContinuationClaim, frames: readonly Uint8Array[]): DeliveryOutcome;
+    deliverClaim(claim: ContinuationClaim, frames: readonly Uint8Array[], 
+    /** Called at each actual serialized write, before write() and its drain. */
+    beforeWrite?: () => void): Promise<DeliveryOutcome>;
     /** Find the live session awaiting one of the given exec ids. */
     findByExecIds(sessionId: string, execIds: number[]): CursorSession | undefined;
     /** Mark an exec id as resolved (its result has been delivered). */
@@ -342,6 +411,22 @@ export declare class SessionManager {
     dispose(): void;
     sweepHardDeadlines(): void;
     private onStreamTerminal;
+    /**
+     * The host tool-call id a continuation will send for this exec, when it is
+     * not `cursor_<session>_<execId>` (an early row bound to the real exec).
+     * The route outlives its Run, like a tombstone, so a result that arrives
+     * after the Run closed still names its exec and rebuilds from host history.
+     */
+    bindToolCall(toolCallId: string, sessionId: string, execId: number): void;
+    toolCallExec(toolCallId: string): {
+        sessionId: string;
+        execId: number;
+    } | undefined;
+    /**
+     * Leases only grow. Session activity renews from its own time; a running
+     * host tool renews from now, but never past that tool's own ceiling. The
+     * ceiling limits the tool's extension, not the lease activity already gave.
+     */
     private refreshHardDeadline;
     private hardDeadlineExpired;
     private scheduleHardDeadline;

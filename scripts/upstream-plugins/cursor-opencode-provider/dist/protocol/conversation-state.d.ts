@@ -6,10 +6,15 @@ export declare function hydrateConversationState(cacheDir: string, sessionKey: s
     toolCatalog: OpencodeToolDef[];
     hostAgent?: string;
     systemPromptHash?: string;
+    hostNote?: string;
 } | undefined>;
 /** Restore only turn provenance when its in-memory entry was evicted. */
 export declare function hydrateTurnProvenance(cacheDir: string, sessionKey: string): Promise<void>;
-/** Persist the complete resumable state only after Cursor confirms TurnEnded. */
+/**
+ * Persist the resumable state at Cursor's TurnEnded, or before it
+ * (`runInProgress`) so a Run the host interrupts, or a restart, resumes from
+ * the latest checkpoint and still recognizes the step in progress.
+ */
 export declare function persistConversationState(cacheDir: string, input: {
     sessionKey: string;
     conversationId: string;
@@ -18,5 +23,7 @@ export declare function persistConversationState(cacheDir: string, input: {
     postCompactionRebase?: boolean;
     hostAgent?: string;
     systemPromptHash?: string;
+    hostNote?: string;
+    runInProgress?: boolean;
 }): Promise<void>;
 export declare function clearPersistedConversationState(cacheDir: string, sessionKey: string, expectedConversationId?: string): Promise<void>;

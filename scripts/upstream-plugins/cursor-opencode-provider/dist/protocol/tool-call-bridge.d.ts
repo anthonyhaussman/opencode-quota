@@ -77,3 +77,5 @@ export declare function extractProtobufSubmessage(buf: Uint8Array, path: number[
  * can correlate display tool_call_started with the authoritative exec path.
  */
 export declare function extractExecDisplayCallId(execMsg: Record<string, unknown>): string | undefined;
+/** File paths a display TaskToolCall attaches; Cursor reads each one before its subagent request. */
+export declare function taskToolCallAttachments(toolCall: Record<string, unknown> | undefined): string[];

@@ -1,8 +1,11 @@
 import { trace } from "./debug.js";
+import { releaseUnstartedTerminal } from "./terminal-runner.js";
 import { CursorProtocolError } from "./errors.js";
-import { sessionActivity } from "./activity.js";
+import { StreamWriteDrainError, writeStreamMessage } from "./stream-write.js";
+import { RUNNING_TOOL_CAP_MS, sessionActivity } from "./activity.js";
 export const DEFAULT_CONTINUATION_POLICY = {
-    semanticIdleMs: 120_000,
+    // Cursor CLI aborts an active attempt after 30 s without an inbound frame.
+    semanticIdleMs: 30_000,
     hardCapMs: 600_000,
     heartbeatMs: 5_000,
 };
@@ -33,13 +36,15 @@ export function resolveContinuationPolicy(options) {
             throw new CursorProtocolError(`Unknown Cursor continuation option: ${key}`);
         }
     }
+    // Read the deprecated alias once, without the deprecated typed accessor.
+    const legacySemanticIdleMs = options?.softHealthMs;
     if (options?.semanticIdleMs !== undefined &&
-        options.softHealthMs !== undefined &&
-        options.semanticIdleMs !== options.softHealthMs) {
+        legacySemanticIdleMs !== undefined &&
+        options.semanticIdleMs !== legacySemanticIdleMs) {
         throw new CursorProtocolError("Cursor continuation semanticIdleMs and deprecated softHealthMs must match when both are set");
     }
     const heartbeatMs = positiveInteger("heartbeatMs", options?.heartbeatMs, DEFAULT_CONTINUATION_POLICY.heartbeatMs);
-    const semanticIdleMs = positiveInteger("semanticIdleMs", options?.semanticIdleMs ?? options?.softHealthMs, DEFAULT_CONTINUATION_POLICY.semanticIdleMs);
+    const semanticIdleMs = positiveInteger("semanticIdleMs", options?.semanticIdleMs ?? legacySemanticIdleMs, DEFAULT_CONTINUATION_POLICY.semanticIdleMs);
     const hardCapMs = positiveInteger("hardCapMs", options?.hardCapMs, DEFAULT_CONTINUATION_POLICY.hardCapMs);
     if (heartbeatMs >= semanticIdleMs) {
         throw new CursorProtocolError("Cursor continuation heartbeatMs must be less than semanticIdleMs");
@@ -49,7 +54,12 @@ export function resolveContinuationPolicy(options) {
     }
     return { heartbeatMs, semanticIdleMs, hardCapMs };
 }
+export function stoppedWith(session) {
+    return session.stoppedWithSessionId ?? session.openCodeSessionId;
+}
 export class SessionManager {
+    /** A claimed result has one writer even while that writer awaits drain. */
+    delivering = new WeakSet();
     // Composite key `${sessionId}:${execId}` → owning session. Composite keying
     // means two Run streams that both register an execId of 1 (Cursor resets
     // counters per stream) coexist instead of overwriting each other.
@@ -60,6 +70,8 @@ export class SessionManager {
     // of continuing the held-open one — the prior entry is stale and superseded.
     byOpenCodeSessionId = new Map();
     tombstones = new Map();
+    /** Early-row tool call id → the exec that bound it. Bounded like the tombstones. */
+    toolCallRoutes = new Map();
     now;
     setTimer;
     clearTimer;
@@ -146,19 +158,54 @@ export class SessionManager {
     isActivelyPumping(session) {
         return this.isPumping(session);
     }
+    /** Every open Run a Stop of this OpenCode session cancels, including one a newer Run did not supersede. */
+    openSessionsStoppedWith(openCodeSessionId) {
+        return [...this.sessions].filter((session) => !session.closed && (openCodeSessionId === undefined || stoppedWith(session) === openCodeSessionId));
+    }
     /**
-     * Clear display-only bridged pendings that do not require a Cursor exec write.
-     * Used when the host starts a fresh user turn instead of returning the bridged
-     * tool result (e.g. human `continue` while a todowrite mirror is outstanding).
+     * Forget every result the host still owed this Run, without writing any: the
+     * host stopped the turn, and the Run is about to be cancelled.
      *
-     * @returns number of bridged pendings settled
+     * @returns number of pendings dropped
+     */
+    abandonPending(session) {
+        if (session.closed)
+            return 0;
+        const dropped = session.pending.size;
+        for (const [execId, pending] of session.pending) {
+            const directory = pending.resultMetadata?.managed_job_directory;
+            if (typeof directory === "string")
+                releaseUnstartedTerminal(directory);
+            const key = this.key(session.sessionId, execId);
+            this.byExecId.delete(key);
+            this.putTombstone(key, "host-interrupted");
+        }
+        session.pending.clear();
+        this.scheduleHardDeadline(session);
+        return dropped;
+    }
+    /** Cursor withdrew this exec; returns false when it is not one the host still owes. */
+    markExecAborted(session, execId) {
+        const pending = session.pending.get(execId);
+        if (session.closed || !pending || pending.bridged || pending.aborted || pending.state !== "pending")
+            return false;
+        pending.aborted = true;
+        return true;
+    }
+    /**
+     * Clear pendings that do not require a Cursor exec write: display-only bridged
+     * ones and execs Cursor aborted. Used when the host starts a fresh user turn
+     * instead of returning the result (e.g. human `continue` while a todowrite
+     * mirror is outstanding).
+     *
+     * @returns number of pendings settled
      */
     settleBridgedPending(session) {
         if (session.closed)
             return 0;
         let settled = 0;
         for (const [execId, pending] of [...session.pending.entries()]) {
-            if (!pending.bridged)
+            if (!pending.bridged && !pending.aborted)
                 continue;
             if (pending.state === "claimed")
                 continue;
@@ -192,8 +239,9 @@ export class SessionManager {
                 if (candidate === justRegistered || this.isPumping(candidate))
                     continue;
                 // Held-open Runs with pending tools must not be cap-evicted — that is
-                // mid-exec supersede by another name and throws away the prefix.
-                if (candidate.pending.size > 0)
+                // mid-exec supersede by another name and throws away the prefix. An
+                // exec Cursor aborted no longer waits on the host, so it does not hold.
+                if ([...candidate.pending.values()].some((pending) => !pending.aborted))
                     continue;
                 if (!oldest || candidate.createdAt < oldest.createdAt)
                     oldest = candidate;
@@ -291,20 +339,25 @@ export class SessionManager {
             pending: classification.pending,
         };
     }
-    deliverClaim(claim, frames) {
+    async deliverClaim(claim, frames, 
+    /** Called at each actual serialized write, before write() and its drain. */
+    beforeWrite) {
         const { session, execId, pending } = claim;
         const key = this.key(session.sessionId, execId);
-        if (session.closed ||
-            this.byExecId.get(key) !== session ||
-            session.pending.get(execId) !== pending) {
+        const unavailable = (framesWritten) => {
+            if (!session.closed &&
+                this.byExecId.get(key) === session &&
+                session.pending.get(execId) === pending)
+                return undefined;
             const current = this.classify(session.sessionId, execId);
-            if (current.kind === "duplicate")
-                return { ...current, framesWritten: 0 };
-            if (current.kind === "terminal")
-                return { ...current, framesWritten: 0 };
-            return { kind: "missing", reason: "missing-process-local-state", framesWritten: 0 };
-        }
-        if (pending.state !== "claimed") {
+            if (current.kind === "duplicate" || current.kind === "terminal")
+                return { ...current, framesWritten };
+            return { kind: "missing", reason: "missing-process-local-state", framesWritten };
+        };
+        const invalid = unavailable(0);
+        if (invalid)
+            return invalid;
+        if (pending.state !== "claimed" || this.delivering.has(pending)) {
             return {
                 kind: "duplicate",
                 reason: pending.state === "delivered" ? "delivered" : "in-flight",
@@ -315,17 +368,37 @@ export class SessionManager {
             this.close(session, "hard-cap-expired");
             return { kind: "terminal", reason: "hard-cap-expired", framesWritten: 0 };
         }
+        this.delivering.add(pending);
         let framesWritten = 0;
         try {
-            if (!pending.bridged && frames.length === 0) {
+            if (!pending.bridged && !pending.aborted && frames.length === 0) {
                 throw new CursorProtocolError("No result frames were produced");
             }
             for (const frame of frames) {
-                session.stream.write(frame);
+                try {
+                    await writeStreamMessage(session.stream, frame, "continuation result", beforeWrite ? () => {
+                        beforeWrite();
+                        return true;
+                    } : undefined);
+                }
+                catch (error) {
+                    // write() returned false before the drain failed: the bytes are buffered.
+                    if (error instanceof StreamWriteDrainError)
+                        framesWritten++;
+                    throw error;
+                }
                 framesWritten++;
+                // The Run can close or replace this pending exec while drain is awaited.
+                // Never send its remaining frames or apply approval/state to that owner.
+                const invalid = unavailable(framesWritten);
+                if (invalid)
+                    return invalid;
             }
         }
         catch {
+            const invalid = unavailable(framesWritten);
+            if (invalid)
+                return invalid;
             const reason = framesWritten === 0 ? "result-write-failed" : "ambiguous-partial-write";
             this.close(session, reason);
             return { kind: "terminal", reason, framesWritten };
@@ -377,7 +450,8 @@ export class SessionManager {
         session.pumpActive = false;
         const deferred = session.deferredTerminalReason;
         session.deferredTerminalReason = null;
-        if (deferred)
+        // A Run the host stopped is closed by its cancel, after it has read what Cursor sent last.
+        if (deferred && !session.hostInterrupted)
             this.close(session, deferred);
         return true;
     }
@@ -395,11 +469,15 @@ export class SessionManager {
         session.deferredTerminalReason = null;
         const old = session.stream;
         session.stream = next;
+        // Preserve session totals but give the replacement Run its own estimates.
+        session.billing.estimatedUsd = 0;
+        delete session.billing.ledgerEpoch;
         if (runId !== undefined)
             session.runId = runId;
         session.frames = next.frames()[Symbol.asyncIterator]();
         session.pendingFrameRead = undefined;
         session.pushbackFrame = undefined;
+        session.heldFrames = undefined;
         session.parallelStep = undefined;
         session.priorParallelStepCallIds = undefined;
         this.subscribeTerminal(session);
@@ -443,7 +521,10 @@ export class SessionManager {
         session.terminalUnsubscribe?.();
         session.terminalUnsubscribe = null;
         session.deferredTerminalReason = null;
-        for (const id of session.pending.keys()) {
+        for (const [id, pending] of session.pending) {
+            const directory = pending.resultMetadata?.managed_job_directory;
+            if (typeof directory === "string")
+                releaseUnstartedTerminal(directory);
             const key = this.key(session.sessionId, id);
             this.byExecId.delete(key);
             if (this.isTerminalReason(reason))
@@ -452,6 +533,7 @@ export class SessionManager {
         session.pending.clear();
         session.pendingFrameRead = undefined;
         session.pushbackFrame = undefined;
+        session.heldFrames = undefined;
         session.parallelStep = undefined;
         session.priorParallelStepCallIds = undefined;
         session.pumpOwner = null;
@@ -492,6 +574,7 @@ export class SessionManager {
         for (const session of [...this.sessions])
             this.close(session, "process-disposed");
         this.byExecId.clear();
+        this.toolCallRoutes.clear();
     }
     sweepHardDeadlines() {
         for (const session of [...this.sessions]) {
@@ -507,22 +590,55 @@ export class SessionManager {
         const reason = event.kind === "remote-error" ? "remote-error" : "remote-clean-close";
         if (event.kind === "remote-error")
             session.closeError = event.error;
-        if (session.pumpOwner !== null) {
+        if (session.pumpOwner !== null || session.hostInterrupted) {
             session.deferredTerminalReason = reason;
             return;
         }
         this.close(session, reason, event.kind === "remote-error" ? event.error : undefined);
     }
+    /**
+     * The host tool-call id a continuation will send for this exec, when it is
+     * not `cursor_<session>_<execId>` (an early row bound to the real exec).
+     * The route outlives its Run, like a tombstone, so a result that arrives
+     * after the Run closed still names its exec and rebuilds from host history.
+     */
+    bindToolCall(toolCallId, sessionId, execId) {
+        this.toolCallRoutes.delete(toolCallId);
+        this.toolCallRoutes.set(toolCallId, { sessionId, execId });
+        while (this.toolCallRoutes.size > this.tombstoneLimit) {
+            const oldest = this.toolCallRoutes.keys().next().value;
+            if (oldest === undefined)
+                break;
+            this.toolCallRoutes.delete(oldest);
+        }
+    }
+    toolCallExec(toolCallId) {
+        return this.toolCallRoutes.get(toolCallId);
+    }
+    /**
+     * Leases only grow. Session activity renews from its own time; a running
+     * host tool renews from now, but never past that tool's own ceiling. The
+     * ceiling limits the tool's extension, not the lease activity already gave.
+     */
     refreshHardDeadline(session, pending) {
         if (!session.openCodeSessionId)
             return pending.hardDeadlineAt;
+        const now = this.now();
+        const toolCapAt = this.activitySource.runningToolDeadline?.(session.openCodeSessionId, now, RUNNING_TOOL_CAP_MS);
         const activityAt = this.activitySource.lastActivityAt(session.openCodeSessionId);
-        if (activityAt === undefined || activityAt <= pending.registeredAt)
-            return pending.hardDeadlineAt;
-        const renewedDeadline = activityAt + session.policy.hardCapMs;
-        if (renewedDeadline > pending.hardDeadlineAt) {
-            pending.hardDeadlineAt = renewedDeadline;
-            trace("continuation lease renewed from OpenCode session activity");
+        if (activityAt !== undefined && activityAt > pending.registeredAt) {
+            const renewedDeadline = activityAt + session.policy.hardCapMs;
+            if (renewedDeadline > pending.hardDeadlineAt) {
+                pending.hardDeadlineAt = renewedDeadline;
+                trace("continuation lease renewed from OpenCode session activity");
+            }
+        }
+        if (toolCapAt !== undefined) {
+            const renewedDeadline = Math.min(now + session.policy.hardCapMs, toolCapAt);
+            if (renewedDeadline > pending.hardDeadlineAt) {
+                pending.hardDeadlineAt = renewedDeadline;
+                trace("continuation lease renewed while a host tool is running");
+            }
         }
         return pending.hardDeadlineAt;
     }
@@ -586,6 +702,9 @@ export async function readSessionFrame(session, timeoutMs) {
         session.pushbackFrame = undefined;
         return { done: false, value };
     }
+    const held = session.heldFrames?.shift();
+    if (held)
+        return { done: false, value: held };
     const pending = session.pendingFrameRead ??= session.frames.next();
     // A timed-out read can reject while no pump is consuming it. Preserve the
     // rejection for the next reader without an unhandled detached promise.

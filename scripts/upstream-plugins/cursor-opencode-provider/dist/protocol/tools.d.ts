@@ -1,3 +1,4 @@
+import type { HookAdditionalContext } from "./host-notes.js";
 import type { CursorImageInput } from "../image-input.js";
 import { type CursorExecVariant } from "./exec-variants.js";
 import { type CursorShellOutcome } from "../shell-timeout.js";
@@ -125,6 +126,30 @@ export declare function mapCursorSubagentTypeToOpenCode(subagentType: string): s
 /** Resolve a native Cursor subagent request to this turn's executor and catalog. */
 export declare function remapNativeSubagentForCatalog(parsed: ParsedExecRequest, advertisedToolNames: Iterable<string>, catalog?: HostSubagentCatalog): void;
 /**
+ * Who answers the private read Cursor sends under an edit's call id. Both the
+ * exec handler and the early tool row decide from this, so a row never opens
+ * for an edit whose read becomes its own host call.
+ *
+ * - `empty`: no target. The provider answers an empty file; creation continues.
+ * - `complete`: a readable regular file within Cursor's edit limit whose real
+ *   path is inside the workspace. The provider answers its complete content.
+ * - `external`: an existing target not proven inside the workspace by real
+ *   path, including through a symlink rooted in it. OpenCode's
+ *   permission-aware `read` answers; once authorized, the continuation
+ *   upgrades the result to the complete content.
+ * - `host`: any other existing target (not a regular file, too large,
+ *   unreadable, or not stat-able). OpenCode's `read` answers as is.
+ */
+export type CursorEditReadAnswer = "empty" | "complete" | "external" | "host";
+export declare function cursorEditReadAnswer(absolutePath: string, workspaceRoot: string): CursorEditReadAnswer;
+/**
+ * The edit's private read becomes its own host `read` call. A read the edit
+ * handshake leaves to the host can still be answered by the provider's
+ * missing-target validation (a dangling symlink, a directory); that read
+ * never reaches the host.
+ */
+export declare function cursorEditReadReachesHost(absolutePath: string, workspaceRoot: string): boolean;
+/**
  * Complete the private read inside Cursor's legacy edit transaction without
  * routing it through OpenCode's user-facing `read` tool. The latter caps every
  * result at 50 KB, while Cursor's editor needs the complete file to calculate
@@ -135,6 +160,28 @@ export declare function remapNativeSubagentForCatalog(parsed: ParsedExecRequest,
  */
 export declare function buildCompleteEditReadMessages(execId: number, sourcePath: string, resultPath?: string): Uint8Array[] | undefined;
 /**
+ * Answer Cursor's read of a Task attachment without the file's bytes. Cursor
+ * puts them only in SubagentArgs.selected_context, which OpenCode's subagent
+ * tools cannot take, yet refuses the Task unless the read returns binary data.
+ * The path reaches the subagent prompt instead ({@link appendTaskAttachments})
+ * and the child reads it under its own permissions. A missing or non-regular
+ * target gets the same typed rejection as any native read.
+ */
+export declare function buildTaskAttachmentReadMessages(execId: number, sourcePath: string, resultPath?: string): Uint8Array[];
+/** List Cursor's Task attachments at the end of the subagent prompt as absolute paths. */
+export declare function appendTaskAttachments(parsed: ParsedExecRequest, attachments: readonly string[], workspaceRoot: string): void;
+/**
+ * Host tool a Cursor edit announcement will become, using the same file facts
+ * as `remapCorrelatedEditWriteForCatalog` and `remapEditToolsForCatalog`. An
+ * existing file becomes `edit`, else the patch tool. A missing file is a
+ * creation, which stays `write`, else becomes the patch tool's Add File; so
+ * does an empty file, which has no text for an `edit` to replace. A name is
+ * withheld when those remaps would refuse the file or not produce that tool:
+ * no workspace for a relative path, not a regular file, too large,
+ * unreadable, or `patch` with carriage returns.
+ */
+export declare function hostToolForCursorEdit(filePath: string, catalog: ReadonlySet<string>, workspaceRoot?: string): string | undefined;
+/**
  * Preserve a legacy Cursor edit's intent when its internal executor follows
  * `edit_tool_call` with a whole-file `write_args` request.
  *
@@ -143,19 +190,19 @@ export declare function buildCompleteEditReadMessages(execId: number, sourcePath
  */
 export declare function remapCorrelatedEditWriteForCatalog(parsed: ParsedExecRequest, advertisedToolNames: Iterable<string>, editPath: string, workspaceRoot?: string): boolean;
 /**
- * Express a native Cursor write/edit as `apply_patch` when the host swapped the
+ * Express a native Cursor write/edit as a patch call when the host swapped the
  * edit-tool family out from under us.
  *
- * OpenCode 1.x removes `edit` and `write` from the catalog for GPT models and
- * advertises `apply_patch` in their place — see the module comment in
- * `./apply-patch.ts` for the upstream reasoning and citations. Cursor keeps
- * using its native write/edit exec channel regardless, so without this the
- * request is refused as an unavailable tool and the model loses the ability to
- * change files at all.
+ * Both OpenCode majors remove `edit` and `write` from the catalog for GPT
+ * models and advertise a patch tool in their place (`apply_patch` on 1.x,
+ * `patch` on 2.0) — see the module comment in `./apply-patch.ts` for the
+ * upstream reasoning and citations. Cursor keeps using its native write/edit
+ * exec channel regardless, so without this the request is refused as an
+ * unavailable tool.
  *
  * Keyed purely off the advertised set: this is inert whenever the host offers
  * `write`/`edit` normally, and equally inert when it offers neither those nor
- * `apply_patch` (the caller's unavailable-tool rejection still applies).
+ * a patch tool (the caller's unavailable-tool rejection still applies).
  */
 export declare function remapEditToolsForCatalog(parsed: ParsedExecRequest, advertisedToolNames: Iterable<string>, workspaceRoot?: string): void;
 export type ParsedExecRequest = {
@@ -268,6 +315,8 @@ export type ToolResultInput = {
     resultField: string;
     output: string;
     error?: string;
+    refusal?: "permission_denied" | "rejected";
+    interrupted?: boolean;
     executionTimeMs?: number;
     /**
      * Resolved opencode tool name (read/write/grep/…). Gates read-envelope
@@ -304,6 +353,16 @@ export declare function execResultImages(resultField: string, images: readonly C
  * shell execs hang on heartbeats forever).
  */
 export declare function buildExecClientMessages(input: ToolResultInput): Uint8Array[];
+/**
+ * Attach host notes to an exec result as Cursor CLI postToolUse hook context:
+ * `ExecClientMessage.hook_additional_contexts` (#45) on a unary result, or a
+ * `ShellStream.hook_context` (#8) event after the stream's own events and
+ * before `stream_close` (CLI agent-exec hook wrapper). Cursor renders it as a
+ * system reminder on that tool result, so it never mixes into file content.
+ * Returns undefined when the frames carry no exec result (bridged
+ * interaction replies have no such field).
+ */
+export declare function attachHookAdditionalContexts(frames: readonly Uint8Array[], contexts: readonly HookAdditionalContext[]): Uint8Array[] | undefined;
 /** ACM #5 exec_client_control_message { stream_close { id } }. */
 export declare function buildExecStreamClose(execId: number): Uint8Array;
 export declare function buildUnsupportedExecDeny(input: {
@@ -331,6 +390,13 @@ export declare function buildUnsupportedExecDeny(input: {
  * alone is not a tool-identity check.
  */
 export declare function unwrapReadOutput(output: string): string;
+/**
+ * OpenCode's read tool appends newly discovered instructions after the
+ * envelope's unnumbered `</content>`, in one `<system-reminder>` block.
+ * The numbered-body parser stops before that block, so callers must lift it
+ * out before the file text is encoded.
+ */
+export declare function extractOpenCodeReadInstruction(output: string): string | undefined;
 /**
  * Map OpenCode tool text into the agent.v1 result oneof for each exec variant.
  * OpenCode returns free-form text; we wrap it in the minimal success shape the

@@ -35,7 +35,12 @@ export declare function fetchAgentUrl(token: string, options?: {
 }): Promise<string>;
 export type BidiStream = {
     write(msg: Uint8Array): boolean | void;
-    waitForDrain?(timeoutMs: number): Promise<void>;
+    /**
+     * Resolves once a backpressured write has drained. There is no deadline, as
+     * in Cursor CLI's transport: a stream error or close (remote or local) settles
+     * it, and the read-idle watchdog bounds a stream that stops answering.
+     */
+    waitForDrain?(): Promise<void>;
     end(): void;
     frames(): AsyncIterable<{
         flags: number;
@@ -78,6 +83,8 @@ export declare function cacheHttp2SessionForTests(origin: string, session: http2
 export declare function getSession(baseURL: string, options?: {
     pingTimeoutMs?: number;
 }): Promise<http2.ClientHttp2Session>;
+export declare function frameArrival(frame: object): number | undefined;
+export declare function lastFrameArrival(): number;
 export declare function bidiRunStream(token: string, options: {
     signal?: AbortSignal;
     baseURL: string;

@@ -140,13 +140,18 @@ export const CURSOR_MODEL_COSTS = {
     },
     "gemini-3.7-flash": {
         "input": 0.75,
-        "output": 3.5,
+        "output": 3.75,
         "cache_read": 0.075
     },
     "gemini-3.8-flash": {
         "input": 0.75,
-        "output": 3.5,
+        "output": 3.75,
         "cache_read": 0.075
+    },
+    "gemini-4-argon": {
+        "input": 2,
+        "output": 10,
+        "cache_read": 0.1
     },
     "glm-5.2": {
         "input": 1.4,
@@ -303,6 +308,11 @@ export const CURSOR_MODEL_COSTS = {
         "input": 1.25,
         "output": 4.25,
         "cache_read": 0.15
+    },
+    "muse-wonder-1.0": {
+        "input": 4,
+        "output": 20,
+        "cache_read": 0.2
     }
 };
 export const CURSOR_MODEL_CONTEXTS = {
@@ -396,6 +406,10 @@ export const CURSOR_MODEL_CONTEXTS = {
         "maxContext": 200000,
         "maxContextForMaxMode": 1000000
     },
+    "gemini-4-argon": {
+        "maxContext": 200000,
+        "maxContextForMaxMode": 1000000
+    },
     "glm-5.2": {
         "maxContext": 200000
     },
@@ -461,6 +475,10 @@ export const CURSOR_MODEL_CONTEXTS = {
         "maxContextForMaxMode": 1000000
     },
     "muse-spark-1.3": {
+        "maxContext": 300000,
+        "maxContextForMaxMode": 1000000
+    },
+    "muse-wonder-1.0": {
         "maxContext": 300000,
         "maxContextForMaxMode": 1000000
     }
@@ -535,6 +553,9 @@ export const CURSOR_MODEL_CAPABILITIES = {
     "gemini-3.8-flash": {
         "supportsImages": true
     },
+    "gemini-4-argon": {
+        "supportsImages": true
+    },
     "glm-5.2": {
         "supportsImages": false
     },
@@ -593,6 +614,9 @@ export const CURSOR_MODEL_CAPABILITIES = {
         "supportsImages": true
     },
     "muse-spark-1.3": {
+        "supportsImages": true
+    },
+    "muse-wonder-1.0": {
         "supportsImages": true
     }
 };

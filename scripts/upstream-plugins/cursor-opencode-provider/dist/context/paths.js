@@ -188,17 +188,20 @@ export function slugifyWorkspacePath(workspaceRoot) {
  * Lives at `<host-cache>/projects/<slug>/` under the resolved OpenCode/host cache root.
  *
  * This is what Cursor's RequestContextEnv.project_folder / MCP
- * workspace_project_dir point at — agent-tools, terminals, transcripts, etc.
+ * workspace_project_dir point at — agent-tools, terminals, assets, etc.
  * Must NOT be the git workspace, or those dumps land in the repo.
  */
 export function opencodeProjectDir(workspaceRoot) {
     const projectsRoot = path.join(opencodeGlobalCacheDir(), "projects");
     const slug = slugifyWorkspacePath(workspaceRoot);
-    let dir = path.join(projectsRoot, slug);
-    // Mirror Cursor's long-path guard so nested agent-tools paths stay usable.
+    const dir = path.join(projectsRoot, slug);
+    // Keep nested agent-tools paths short by cutting the name to 84 characters.
+    // While that cut falls after `projects/`, it only shortens the slug, and it
+    // is the name existing folders already have. With a longer root it would
+    // fall inside the root, so the folder is named by the hash alone.
     if (dir.length > 92) {
         const hash = createHash("sha256").update(dir).digest("hex").slice(0, 7);
-        dir = `${dir.slice(0, Math.min(84, dir.length))}-${hash}`;
+        return projectsRoot.length < 84 ? `${dir.slice(0, 84)}-${hash}` : path.join(projectsRoot, hash);
     }
     return dir;
 }

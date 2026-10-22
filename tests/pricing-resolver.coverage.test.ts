@@ -10,13 +10,12 @@ import { priceMessage, resolvePricingKey } from "../src/lib/pricing-key.js";
 import { SHIPPED_PRICE_LIST } from "./helpers/shipped-price-list.js";
 
 // Price not confirmed, so these stay unknown: models.dev rates differ from Cursor's for the
-// Gemini Flash and GLM 5.3 Flash ids, and muse-spark (meta) is not a pricing snapshot provider.
+// Gemini 3.6 Flash and GLM 5.3 Flash ids, and the Muse models (meta) are not in the snapshot.
 const CURSOR_UPSTREAM_INTENTIONALLY_UNKNOWN_MODELS = new Set<string>([
   "gemini-3.6-flash",
-  "gemini-3.7-flash",
-  "gemini-3.8-flash",
   "glm-5.3-flash",
   "muse-spark-1.3",
+  "muse-wonder-1.0",
 ]);
 
 /** "provider/model" of the price `resolvePricingKey` picks, or null when it finds none. */
@@ -153,6 +152,8 @@ describe("resolvePricingKey snapshot coverage", () => {
       "gpt-5.6-sol-1m",
       "grok-4.7-1m",
       "grok-4.7-1m-fast",
+      "grok-4.7-500k",
+      "grok-4.7-500k-fast",
     ];
     for (const modelID of unconfirmed) {
       expect(resolveCursorModel(`cursor/${modelID}`), modelID).toEqual({ kind: "unknown" });

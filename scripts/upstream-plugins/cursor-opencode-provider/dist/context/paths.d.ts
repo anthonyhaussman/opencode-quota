@@ -97,7 +97,7 @@ export declare function slugifyWorkspacePath(workspaceRoot: string): string;
  * Lives at `<host-cache>/projects/<slug>/` under the resolved OpenCode/host cache root.
  *
  * This is what Cursor's RequestContextEnv.project_folder / MCP
- * workspace_project_dir point at — agent-tools, terminals, transcripts, etc.
+ * workspace_project_dir point at — agent-tools, terminals, assets, etc.
  * Must NOT be the git workspace, or those dumps land in the repo.
  */
 export declare function opencodeProjectDir(workspaceRoot: string): string;

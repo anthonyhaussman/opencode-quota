@@ -3,17 +3,19 @@ import path from "node:path";
 import { FALLBACK_CLIENT_VERSION, MODEL_CACHE_TTL_MS, VERSION_CACHE_FILE, } from "../shared.js";
 import { opencodeGlobalCacheDir } from "../context/paths.js";
 import { withAbortDeadline } from "../deadline.js";
+import { processShared } from "../process-shared.js";
 const INSTALL_URL = "https://cursor.com/install";
 const REMOTE_TIMEOUT_MS = 5_000;
 const BUILD_RE = /^\d{4}\.\d{2}\.\d{2}-[0-9A-Za-z][0-9A-Za-z.-]*$/;
 const CLIENT_VERSION_RE = /^cli-[0-9A-Za-z][0-9A-Za-z._-]*$/;
-let cachedResolution;
+// Once per process, not per copy of this package the host loads.
+const cache = processShared("client-version.v1", () => ({}));
 export function resetClientVersionCache() {
-    cachedResolution = undefined;
+    cache.resolution = undefined;
 }
 export function resolveClientVersion() {
-    cachedResolution ??= resolve();
-    return cachedResolution;
+    cache.resolution ??= resolve();
+    return cache.resolution;
 }
 async function resolve() {
     const env = process.env.CURSOR_CLIENT_VERSION?.trim();

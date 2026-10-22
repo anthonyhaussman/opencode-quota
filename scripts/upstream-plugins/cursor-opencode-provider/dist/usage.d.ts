@@ -19,6 +19,8 @@ export type CursorCacheDiagnosticStats = {
     conversationGroupId?: string;
     modelId?: string;
     startedWithCheckpoint: boolean;
+    /** Why a Run started without a checkpoint: a reset reason, `ephemeral`, or `no-checkpoint`. */
+    coldReason?: string;
     requestContextReused: boolean;
     requestContextHash: string;
     systemPromptHash?: string;
@@ -51,31 +53,49 @@ export declare function formatCursorTokenCategories(details: CursorConversationT
  * does not expose per-model-call cache accounting on the Run stream.
  */
 export declare function formatCursorCacheDiagnostics(counters: CursorUsageCounters, current: CursorConversationTokenDetails | undefined, prior: CursorConversationTokenDetails | undefined, stats: CursorCacheDiagnosticStats): string;
-/** One-line proof that Cursor, AI SDK, and projected OpenCode totals agree. */
-export declare function formatTurnUsageValidation(counters: CursorUsageCounters, usage: LanguageModelV3Usage, tokenDetails?: CursorConversationTokenDetails, contextSource?: CursorContextUsageSource): string;
+/**
+ * One-line proof that Cursor, AI SDK, and projected OpenCode totals agree.
+ * `counterKind` names what `counters` hold so the line labels them truthfully:
+ * Cursor's TurnEnded request counters (`raw*`) or the occupancy-shaped counters
+ * of {@link occupancyValidationCounters} (`occupancy*`).
+ */
+export declare function formatTurnUsageValidation(counters: CursorUsageCounters, usage: LanguageModelV3Usage, tokenDetails?: CursorConversationTokenDetails, contextSource?: CursorContextUsageSource, counterKind?: "turn-ended" | "occupancy"): string;
+/**
+ * The `finish:` trace. `v3*` is the usage sent to OpenCode. The second group is
+ * labelled by where its numbers come from: `raw*` are Cursor's TurnEnded
+ * request counters (whole Run), `occupancy*` the checkpoint snapshot a
+ * tool-call boundary sends (its cache split as billed: the previous step's
+ * context, see `src/billing.ts`), and
+ * `est*` the provider's char/4 estimate before any checkpoint arrived.
+ */
+export declare function formatFinishTrace(input: {
+    reason: string;
+    usage: LanguageModelV3Usage;
+    turnEnded?: CursorUsageCounters;
+    occupancy?: {
+        usedTokens: number;
+        priorUsedTokens: number;
+    };
+    estimate: CursorUsageCounters;
+    source: string;
+}): string;
+/**
+ * A warning when Cursor's checkpoint counts no rules although this Run sent the
+ * system-instructions rule: the host system context (AGENTS.md, skills,
+ * subagents) is then likely absent from the model's prompt. Undefined when the
+ * breakdown is missing or stale, or when rules were counted.
+ */
+export declare function missingRulesWarning(details: CursorConversationTokenDetails | undefined, sentRuleChars: number, conversationId: string): string | undefined;
 /** OpenCode requires a usage object at every step boundary. */
 export declare function emptyLanguageModelV3Usage(): LanguageModelV3Usage;
 /**
- * OpenCode TUI/GUI replace each assistant message's `tokens` (they do not sum
- * occupancy). The TUI footer picks the last assistant with `tokens.output > 0`.
- * Session cost, however, adds every step-finish. Checkpoint occupancy is
- * therefore sent as a snapshot with `output=1` so the footer accepts it, and
- * callers attach {@link OPENCODE_DISPLAY_ONLY_COST_METADATA} so getUsage
- * reports $0 instead of billing the snapshot as a new prompt.
- */
-export declare const OPENCODE_DISPLAY_ONLY_COST_METADATA: {
-    readonly copilot: {
-        readonly totalNanoAiu: 0;
-    };
-};
-/**
- * Counters that mirror {@link occupancyUsageFromTokenDetails} for
- * {@link formatTurnUsageValidation}. Always validate occupancy finishes —
+ * Occupancy-shaped counters for {@link formatTurnUsageValidation}: `usedTokens`
+ * with `prior.usedTokens` of it cached, the shape every step finish sends
+ * (`shapeStepUsage` in `src/billing.ts`). Always validate occupancy finishes —
  * including TurnEnded/stop — against these, not against aggregate TurnEnded
  * request counters. Request cache ratios stay on `finish:` / cache diagnosis.
  */
 export declare function occupancyValidationCounters(details: CursorConversationTokenDetails, prior?: CursorConversationTokenDetails): CursorUsageCounters;
-export declare function occupancyUsageFromTokenDetails(details: CursorConversationTokenDetails, prior?: CursorConversationTokenDetails): LanguageModelV3Usage;
 /** Project nested V3 usage into the common flat AI-SDK counter shape. */
 export declare function flatUsageFromV3(usage: LanguageModelV3Usage): {
     inputTokens: number;

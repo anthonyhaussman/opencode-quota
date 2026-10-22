@@ -1,13 +1,16 @@
+import { type RetryBudget } from "./retry-budget.js";
 import type { LanguageModelV3, LanguageModelV3CallOptions, LanguageModelV3StreamPart } from "@ai-sdk/provider";
 import type { CreateCursorOptions, CursorRetryOptions } from "./index.js";
+import { type ToolRefusal } from "./opencode2/tool-results.js";
 import { type OpencodeToolDef } from "./protocol/tools.js";
 import { cursorContextUsageMetadata, type CursorContextUsageSource, type CursorConversationTokenDetails } from "./protocol/token-details.js";
 import { type ConversationBlobGraphStats } from "./protocol/blob-store.js";
 import { type CursorSession } from "./session.js";
 import { CursorProviderError } from "./errors.js";
-import { type ModelInfo } from "./models.js";
+import { type ModelInfo, type ModelParameterValue } from "./models.js";
 import type { SeedHistoryMessage } from "./protocol/request.js";
 import { type CursorImageInput } from "./image-input.js";
+import { type HostNoteBatch } from "./protocol/host-notes.js";
 type PromptIdentity = {
     hostAgent?: string;
     systemPromptHash?: string;
@@ -31,7 +34,7 @@ export declare function checkpointBlobGraphConcern(stats: ConversationBlobGraphS
  */
 export declare function isSoleControlFrame(payload: Uint8Array): boolean;
 export type CursorRetryPolicy = {
-    maxAttempts: number;
+    maxAttempts?: number;
     baseDelayMs: number;
     maxDelayMs: number;
 };
@@ -49,8 +52,11 @@ export declare function snapshotMirroredTodosBySession(sessionKey: string | unde
  * churn have a single no-op definition.
  */
 export declare function promptIdentityWouldRemint(_previous: PromptIdentity, _current: PromptIdentity): boolean;
-/** Test helper: content hashes recorded after a successful held-Run image write. */
-export declare function snapshotSentHistoryImageHashesForTests(sessionKey: string): string[];
+/** Test helper: the release `startSession` performs, then the host-note stores. */
+export declare function releaseHostNoteInjectionsForTests(sessionKey: string): {
+    inFlight: string[][];
+    undelivered: string[];
+};
 type V3Part = LanguageModelV3StreamPart;
 export declare function createCursorLanguageModel(modelId: string, providerId: string, options: CreateCursorOptions): LanguageModelV3;
 export declare function pumpWithRecovery(input: {
@@ -58,6 +64,9 @@ export declare function pumpWithRecovery(input: {
     controller: ReadableStreamDefaultController<V3Part>;
     abortSignal?: AbortSignal;
     retryPolicy?: CursorRetryPolicy;
+    retryBudget?: RetryBudget;
+    /** Proven completed host results can seed history without replaying their calls. */
+    canRebaseFromHistory?: (session: CursorSession) => boolean;
     recover: (recovery: CursorRunRecovery) => Promise<CursorSession>;
     onSession?: (session: CursorSession) => void;
     maxRecoveries?: number;
@@ -71,7 +80,7 @@ export declare function pumpWithRecovery(input: {
 }): Promise<CursorSession>;
 export type CursorRunRecovery = {
     kind: "rebase";
-    reason?: "checkpoint-unusable";
+    reason?: "checkpoint-unusable" | "unfinished-prior-run" | "completed-tool-results";
 } | {
     kind: "resume";
     conversationId: string;
@@ -79,10 +88,6 @@ export type CursorRunRecovery = {
 };
 /** Start (or replace) the per-session heartbeat. In-flight writes from a prior attach are ignored. */
 export declare function attachSessionHeartbeat(session: CursorSession): void;
-/**
- * OpenCode re-sends the full tool-result history on every continuation. Prefer
- * the newest result that still has a live pending exec on its tagged session.
- */
 export declare function findContinuationSession(toolResults: Array<{
     sessionId: string;
     execId: number;
@@ -117,10 +122,10 @@ export declare const FRESH_TURN_DRAIN_TIMEOUT_MS = 8000;
  */
 export declare const FRESH_TURN_PENDING_CANCEL_REASON = "Host started a new user turn before this tool result was delivered";
 /**
- * Before opening a new user-turn Run, finish the prior held-open Run cleanly:
- * settle display-only bridged pendings, cancel any real execs still waiting on
- * the host, then drain for `turn_ended`. That preserves the same
- * conversation_id / checkpoint prefix instead of aborting mid-tool.
+ * Before opening a new user-turn Run, settle the held Run's pending results
+ * and drain its terminal checkpoint. The unseen follow-up to results settled
+ * here can finish through Cursor's cancellation contract; an unacknowledged
+ * turn must rebase.
  */
 export declare function preparePriorSessionForFreshTurn(openCodeSessionId: string | undefined, opts?: {
     timeoutMs?: number;
@@ -134,20 +139,84 @@ export declare function preparePriorSessionForFreshTurn(openCodeSessionId: strin
  *
  * @returns number of pendings successfully cancelled
  */
-export declare function cancelPendingExecsForFreshTurn(session: CursorSession): number;
+export declare function cancelPendingExecsForFreshTurn(session: CursorSession): Promise<number>;
+/**
+ * While the host runs a step's tools nothing pumps the Run, but Cursor keeps
+ * writing: right after a step it sends `tool_requests_listed` or a checkpoint,
+ * then KV blob writes, and it may abort an exec. Cursor CLI's single reader
+ * handles KV and exec control on their own channels at once; an unanswered KV
+ * write left Cursor waiting until the tool finished (seen live). Answer KV,
+ * apply an abort for an exec still waiting on the host, and skip heartbeats;
+ * queue every other frame in `heldFrames`, in arrival order, for the next pump.
+ * An abort whose exec request is still queued stays queued behind it.
+ *
+ * The reader peeks the shared `pendingFrameRead`: a pump that starts meanwhile
+ * awaits the same read, and the reader leaves that frame to it.
+ */
+export declare function readHeldRun(session: CursorSession): void;
+/** How long a Run must wait on host tools before its state is saved for a restart. */
+export declare const HELD_RUN_SAVE_DELAY_MS = 1000;
+/** How long a cancelled Run may take to end by itself before its stream is closed. */
+export declare const HOST_INTERRUPT_GRACE_MS = 3000;
+/**
+ * The host stopped the turn. OpenCode 2 never aborts `doStream` for that, so
+ * the Run would keep generating, and a held one would wait on results that
+ * never come. Cancel it as Cursor CLI's Stop does: forget what the host owed,
+ * send `cancel_action`, give Cursor a moment to end the Run, then close it.
+ * A Run that ends without `turn_ended` is saved with the last checkpoint
+ * Cursor sent, so the next turn resumes it and recognizes the stopped step.
+ */
+export declare function cancelRunForHostInterrupt(session: CursorSession, reason: string, opts?: {
+    graceMs?: number;
+}): Promise<void>;
+/**
+ * Test helper: wait for host-interrupt cancels and in-progress Run saves, which
+ * write after the call that started them returned. Close the Runs first, so a
+ * held Run's save timer finds them closed instead of starting another save.
+ */
+export declare function settleRunSavesForTests(): Promise<void>;
+export declare function cancelIfHostStoppedSince(session: CursorSession): void;
 /**
  * Read remaining frames on an idle held-open Run until `turn_ended`, a
  * response-requiring request we cannot answer without the host, or timeout.
- * Used only on the fresh-turn settle path — not a general pump substitute.
+ * Used only to settle a Run the host left (a fresh turn, a host interrupt) —
+ * not a general pump substitute. `cancelReason` sends `cancel_action` first;
+ * `cancelled`: the caller already sent it. Either way nothing the Run still
+ * sends (display updates, an exec already in flight) needs the host, and
+ * Cursor's closing frames (the final checkpoint) are worth reading.
  */
 export declare function drainSessionUntilTurnEnded(session: CursorSession, opts?: {
     timeoutMs?: number;
-}): Promise<"turn-ended" | "busy" | "timeout" | "interrupted" | "skipped">;
-export declare function deliverContinuationResults(session: CursorSession, trailingToolResults: ExtractedToolResult[], 
-/** Host primary agent of the request that carries these results. */
-delivery?: {
+    cancelReason?: string;
+    cancelled?: boolean;
+}): Promise<"turn-ended" | "cancelled" | "busy" | "timeout" | "interrupted" | "skipped">;
+export declare function deliverContinuationResults(session: CursorSession, trailingToolResults: ExtractedToolResult[], delivery?: {
     hostAgent?: string;
-}): CursorSession | undefined;
+}): Promise<CursorSession | undefined>;
+/** Notes the restart snapshot kept for this session's next user turn. */
+export declare function restorePersistedHostNotes(sessionKey: string, persisted: string | undefined): void;
+/**
+ * Host notes a new Run's user turn carries, as `<system_reminder>` blocks:
+ * notes no earlier Run delivered, then notes OpenCode placed before this user
+ * message (they exist only in host history, which a checkpointed Run does not
+ * resend). Call `sent()` once the Run request is written.
+ */
+export declare function prepareUserTurnHostNotes(input: {
+    sessionKey?: string;
+    prompt: LanguageModelV3CallOptions["prompt"];
+    startedWithCheckpoint: boolean;
+    isCompaction: boolean;
+    ephemeralRun: boolean;
+    resuming: boolean;
+    /** The history actually seeded by a Run without a checkpoint. */
+    seedHistory?: readonly SeedHistoryMessage[];
+    /** Messages carried as the live action, rather than replayed in seed history. */
+    liveTurnStart?: number;
+}): {
+    reminders: string[];
+    carriedNotes: HostNoteBatch[];
+    sent: () => void;
+};
 /**
  * Read the held-open stream, emitting stream parts, until the turn boundary:
  *  - tool call(s) for one Cursor generation → emit each tool-call as it
@@ -168,21 +237,34 @@ type ToolResultContent = {
     toolName: string;
     output: string;
     error?: string;
+    refusal?: ToolRefusal;
+    interrupted?: boolean;
     /** Host media parts of this result (own content, or the trailing media message). */
     media?: unknown[];
     /** `media` decoded for the exec result, with content hashes in the same order. */
     images?: CursorImageInput[];
     imageHashes?: string[];
-    /** Host updates that a binary read cannot carry in its output oneof. */
-    notes?: string;
+    /** Raw host note bodies that trailed the step (attached after typed result build). */
+    notes?: string[];
+    /** Notices about this result its typed shape cannot carry (hook context on this result). */
+    notices?: string[];
 };
 type ExtractedToolResult = ToolResultContent & {
     sessionId: string;
     execId: number;
 };
+/**
+ * Host notes between the previous reply and the closing user message, e.g. an
+ * OpenCode 2 `<system-update>` after MCP servers reconnect. The host's leading
+ * system prompt is never one of them. Empty unless the prompt ends with a
+ * user message that is not itself a note.
+ */
+export declare function hostNotesBeforeUserTurn(prompt: LanguageModelV3CallOptions["prompt"]): string[];
 export declare function extractTrailingToolResults(prompt: LanguageModelV3CallOptions["prompt"]): ExtractedToolResult[];
 /** Decode only image-bearing pending execs, under one continuation-wide budget. */
 export declare function decodeTrailingToolImages(session: CursorSession, results: ExtractedToolResult[], signal?: AbortSignal, maxBytes?: number): Promise<ExtractedToolResult[]>;
+/** Debug summary of the last prompt messages: roles, part kinds, short text previews. */
+export declare function describePromptTail(prompt: LanguageModelV3CallOptions["prompt"], count?: number): string;
 /** Detect a host-owned canonical plan review, excluding Cursor exec replies. */
 export declare function hasApprovedUncorrelatedPlanStageResult(prompt: LanguageModelV3CallOptions["prompt"]): boolean;
 /**
@@ -216,6 +298,13 @@ export declare function cursorTurnEndedProviderMetadata(te: Record<string, unkno
         context?: ReturnType<typeof cursorContextUsageMetadata>;
     };
 };
+/** Partial assistant output may grow on a host retry; it is not a new user turn. */
+export declare function retryTurnKey(prompt: LanguageModelV3CallOptions["prompt"], withoutLastInterruptionNotice?: boolean): string;
+/** All user messages after the last assistant/tool boundary form one live user turn. */
+export declare function liveUserTurn(prompt: LanguageModelV3CallOptions["prompt"]): {
+    start: number;
+    text: string;
+} | undefined;
 /**
  * Prior prompt turns for a seed ConversationStateStructure. Tool results must
  * never be replayed as assistant-authored prose: that teaches the model to
@@ -227,6 +316,7 @@ export declare function cursorTurnEndedProviderMetadata(te: Record<string, unkno
 export declare function extractPromptHistory(prompt: LanguageModelV3CallOptions["prompt"], options?: {
     preserveTrailingUser?: boolean;
     toolResults?: "omit" | "all" | "trailing";
+    liveTurnStart?: number;
 }): SeedHistoryMessage[];
 /** Share of the target context a foreign-history rebase may fill before compaction. */
 export declare const FOREIGN_HISTORY_REBASE_CONTEXT_SHARE = 0.8;
@@ -239,6 +329,8 @@ export declare function assertForeignHistoryRebaseFits(input: {
     modelInfo: ModelInfo | undefined;
     cursorModelId: string;
     maxMode: boolean;
+    /** Resolved variant tuple; its `context` is the Run's window when present. */
+    parameters?: ModelParameterValue[];
     history: SeedHistoryMessage[];
     systemPrompt: string | undefined;
     userText: string;
@@ -270,7 +362,6 @@ export declare function spanEndParts(opts: {
     type: "text-end" | "reasoning-end";
     id: string;
 }>;
-/** Exported for tests — false for compaction/summary (no tools) and toolChoice none. */
 export declare function computeAllowTools(toolCount: number, toolChoice: LanguageModelV3CallOptions["toolChoice"] | undefined): boolean;
 /**
  * OpenCode title/summary take the first non-empty line of the answer. After a

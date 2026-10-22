@@ -4,14 +4,15 @@ import { pollForTokens, exchangeApiKey, isExpiringSoon, generatePkceParams, gene
 import { renewSessionIfDue, resolveApiKeyToken, } from "./auth-renewal.js";
 import { CursorAuthError } from "./errors.js";
 import { errorMessage, trace } from "./debug.js";
+import { normalizeClassicInterruptedResults } from "./classic-tool-results.js";
 import { readCache, discoverModels, isCacheFresh } from "./models.js";
 import { modelsToConfig } from "./model-config.js";
 import { loadClassicTools } from "./classic-tools.js";
 import { opencodeGlobalCacheDir } from "./context/paths.js";
 import { readStoredAuth } from "./context/auth-store.js";
 import { resolveAgentUrl } from "./agent-url.js";
-import { captureCursorShellResult, cursorShellEnvForCall, cursorShellOriginalCommand, prepareCursorShellArgs, releaseCursorShellEnv, sanitizeRegisteredCursorShellOutput, setCursorShellPath, } from "./shell-timeout.js";
-import { sessionActivity } from "./activity.js";
+import { captureCursorShellResult, cursorShellEnvForCall, cursorShellOriginalCommand, cursorShellTimeoutMs, prepareCursorShellArgs, releaseCursorShellEnv, sanitizeRegisteredCursorShellOutput, setCursorShellPath, resolveCursorShellPath, } from "./shell-timeout.js";
+import { applyHostPromptEvent, applyHostToolEvent, sessionActivity } from "./activity.js";
 import { dispatchHostEventBridge } from "./host-event-bridge.js";
 import { createPromptHostAgentModeSwitch, setHostAgentModeSwitch } from "./host-agent-mode.js";
 import { isHostPlanFileResolved, resolveHostPlanFile } from "./host-plan-file.js";
@@ -250,6 +251,9 @@ export async function CursorPlugin(input) {
             cursor_image_save: classicTools.imageSave,
         },
         async event({ event }) {
+            // The SDK's event union predates these prompt events; read them untyped.
+            applyHostPromptEvent(sessionActivity, event.type, event.properties);
+            applyHostToolEvent(sessionActivity, event.type, event.properties);
             switch (event.type) {
                 case "session.created":
                     sessionActivity.linkSession(event.properties.info.id, event.properties.info.parentID);
@@ -266,6 +270,11 @@ export async function CursorPlugin(input) {
                     break;
                 case "message.part.updated":
                     sessionActivity.recordActivity(event.properties.part.sessionID);
+                    // Rejection/abort can stop the classic host before a continuation or
+                    // execute.after. Its persisted tool state is still authoritative.
+                    if (event.properties.part.type === "tool" && event.properties.part.state.status === "error") {
+                        releaseCursorShellEnv(event.properties.part.callID);
+                    }
                     break;
             }
             await dispatchHostEventBridge({
@@ -275,13 +284,22 @@ export async function CursorPlugin(input) {
                 serverUrl: input.serverUrl,
             });
         },
+        async "experimental.chat.messages.transform"(_hookInput, output) {
+            // The classic host retains the original array and discards hook output.
+            // Replace entries with request-only clones, preserving array identity.
+            const normalized = normalizeClassicInterruptedResults(output.messages);
+            for (let index = 0; index < output.messages.length; index++)
+                output.messages[index] = normalized[index];
+        },
         async "tool.execute.before"(hookInput, output) {
             if (hookInput.tool !== "bash")
                 return;
             // bash/zsh retain the original display/permission command and wrap via
-            // shell.env. sh/dash need a short wrapper-file command because their
+            // shell.env. sh/dash disclose the managed launcher inline because their
             // non-interactive `-c` path ignores BASH_ENV / ZDOTDIR.
-            prepareCursorShellArgs(hookInput.callID, output.args);
+            prepareCursorShellArgs(hookInput.callID, output.args, {
+                shellPath: resolveCursorShellPath(undefined, input.directory),
+            });
         },
         async "shell.env"(hookInput, output) {
             const env = cursorShellEnvForCall(hookInput.callID);
@@ -302,6 +320,11 @@ export async function CursorPlugin(input) {
                     if (typeof metadata.output === "string") {
                         metadata.output = sanitizeRegisteredCursorShellOutput(hookInput.callID, metadata.output);
                     }
+                    // The stored output keeps only a display notice, and the saved
+                    // outcome does not survive consumption or a restart.
+                    const timeoutMs = cursorShellTimeoutMs(hookInput.callID);
+                    if (timeoutMs !== undefined)
+                        metadata.cursorShellTimeoutMs = timeoutMs;
                 }
             }
             finally {
@@ -339,7 +362,7 @@ export async function CursorPlugin(input) {
             }
         },
         async config(cfg) {
-            setCursorShellPath(cfg.shell);
+            setCursorShellPath(cfg.shell, input.directory);
             cfg.provider ??= {};
             const models = await loadModels();
             const existing = cfg.provider[CURSOR_PROVIDER_ID];

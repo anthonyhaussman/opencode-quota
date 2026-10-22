@@ -37,10 +37,18 @@ function entryFor(sessionKey, conversationId) {
 function appendCapped(value, delta) {
     return value.length < MAX_TEXT_CHARS ? (value + delta).slice(0, MAX_TEXT_CHARS) : value;
 }
+function hasContent(step) {
+    return step.toolCallIds.length > 0 || !!step.text || !!step.textWithReasoning;
+}
+function copyStep(step) {
+    return { toolCallIds: [...step.toolCallIds], text: step.text, textWithReasoning: step.textWithReasoning };
+}
 function contentEntry(sessionKey, conversationId) {
     const entry = entryFor(sessionKey, conversationId);
     if (entry.stepPending) {
+        entry.previous = hasContent(entry) ? copyStep(entry) : undefined;
         entry.stepPending = false;
+        entry.unfinished = true;
         entry.toolCallIds = [];
         entry.text = "";
         entry.textWithReasoning = "";
@@ -73,6 +81,21 @@ export function recordEmittedPart(sessionKey, conversationId, part) {
             entry.toolCallIds.push(part.toolCallId);
     }
 }
+/** The host step's stream finished normally; an empty step leaves the previous one recorded. */
+export function finishEmittedStep(sessionKey, conversationId) {
+    const entry = provenanceBySession.get(sessionKey);
+    if (!entry || entry.conversationId !== conversationId || entry.stepPending)
+        return;
+    entry.unfinished = false;
+    entry.previous = undefined;
+}
+/** The finished step goes on in the same host step (a progress-only continuation Run). */
+export function resumeEmittedStep(sessionKey, conversationId) {
+    const entry = provenanceBySession.get(sessionKey);
+    if (!entry || entry.conversationId !== conversationId || entry.stepPending)
+        return;
+    entry.unfinished = true;
+}
 /**
  * Bind provenance to the conversation a Run was opened on. A reminted
  * conversation starts with an empty record, so it never inherits the previous
@@ -87,13 +110,19 @@ export function getTurnProvenance(sessionKey) {
         return undefined;
     return {
         conversationId: entry.conversationId,
-        toolCallIds: [...entry.toolCallIds],
-        text: entry.text,
-        textWithReasoning: entry.textWithReasoning,
+        ...copyStep(entry),
+        ...(entry.unfinished ? { unfinished: true } : {}),
+        ...(entry.unfinished && entry.previous ? { previous: copyStep(entry.previous) } : {}),
     };
 }
 export function restoreTurnProvenance(sessionKey, value) {
-    touch(sessionKey, { ...value, toolCallIds: [...value.toolCallIds], stepPending: false });
+    touch(sessionKey, {
+        conversationId: value.conversationId,
+        ...copyStep(value),
+        ...(value.unfinished ? { unfinished: true } : {}),
+        ...(value.unfinished && value.previous ? { previous: copyStep(value.previous) } : {}),
+        stepPending: false,
+    });
 }
 export function resetTurnProvenanceForTests() {
     provenanceBySession.clear();
@@ -101,20 +130,31 @@ export function resetTurnProvenanceForTests() {
 export function serializeTurnProvenance(value) {
     return JSON.stringify(value);
 }
+function parseStep(value) {
+    return {
+        toolCallIds: Array.isArray(value.toolCallIds)
+            ? value.toolCallIds.filter((id) => typeof id === "string").slice(0, MAX_TOOL_CALL_IDS)
+            : [],
+        text: typeof value.text === "string" ? value.text.slice(0, MAX_TEXT_CHARS) : "",
+        textWithReasoning: typeof value.textWithReasoning === "string"
+            ? value.textWithReasoning.slice(0, MAX_TEXT_CHARS)
+            : "",
+    };
+}
 export function parseTurnProvenance(raw) {
     try {
         const value = JSON.parse(raw);
         if (typeof value.conversationId !== "string" || !value.conversationId)
             return undefined;
+        const unfinished = value.unfinished === true;
+        const previous = unfinished && value.previous && typeof value.previous === "object"
+            ? parseStep(value.previous)
+            : undefined;
         return {
             conversationId: value.conversationId,
-            toolCallIds: Array.isArray(value.toolCallIds)
-                ? value.toolCallIds.filter((id) => typeof id === "string").slice(0, MAX_TOOL_CALL_IDS)
-                : [],
-            text: typeof value.text === "string" ? value.text.slice(0, MAX_TEXT_CHARS) : "",
-            textWithReasoning: typeof value.textWithReasoning === "string"
-                ? value.textWithReasoning.slice(0, MAX_TEXT_CHARS)
-                : "",
+            ...parseStep(value),
+            ...(unfinished ? { unfinished } : {}),
+            ...(previous ? { previous } : {}),
         };
     }
     catch {
@@ -158,17 +198,34 @@ export function detectForeignHistory(input) {
     // A turn carrying only typed reasoning gives no evidence either way.
     if (toolCallIds.length === 0 && !text)
         return undefined;
-    if (toolCallIds.some((id) => entry.toolCallIds.includes(id)))
-        return undefined;
+    const host = { toolCallIds, text: text.slice(0, MAX_TEXT_CHARS), textWithReasoning: textWithReasoning.slice(0, MAX_TEXT_CHARS) };
     // Compare against the latest step only: a foreign "Done." must not match an
-    // older Cursor turn that happened to contain the same words. Same model: the
-    // host keeps our reasoning typed, so its text parts match our text. After a
-    // model switch OpenCode 1.x replays that reasoning as text parts in place,
-    // so the turn matches our reasoning and text in emission order instead.
-    if (entry.text && text.slice(0, MAX_TEXT_CHARS) === entry.text)
+    // older Cursor turn that happened to contain the same words.
+    if (sameStep(entry, host))
         return undefined;
-    if (entry.textWithReasoning && textWithReasoning.slice(0, MAX_TEXT_CHARS) === entry.textWithReasoning) {
-        return undefined;
+    if (entry.unfinished) {
+        // A stopped step: the host drops it when it holds nothing, so its history
+        // still ends on the step before. Otherwise it keeps what it had read,
+        // which can miss the last parts this provider emitted.
+        if (entry.previous && sameStep(entry.previous, host))
+            return undefined;
+        // A tool call this provider did not emit makes the turn someone else's.
+        if (host.toolCallIds.length === 0) {
+            if (host.text && entry.text.startsWith(host.text))
+                return undefined;
+            if (host.textWithReasoning && entry.textWithReasoning.startsWith(host.textWithReasoning))
+                return undefined;
+        }
     }
     return "foreign-assistant";
+}
+function sameStep(step, host) {
+    if (host.toolCallIds.some((id) => step.toolCallIds.includes(id)))
+        return true;
+    // Same model: the host keeps our reasoning typed, so its text parts match our
+    // text. After a model switch OpenCode 1.x replays that reasoning as text
+    // parts in place, so the turn matches our reasoning and text in emission order.
+    if (step.text && host.text === step.text)
+        return true;
+    return !!step.textWithReasoning && host.textWithReasoning === step.textWithReasoning;
 }
