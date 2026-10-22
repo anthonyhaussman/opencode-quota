@@ -104,15 +104,15 @@ async function isAvailable(provider: QuotaProvider, ctx: QuotaProviderContext): 
  * same details its own check writes: whether a key is set, its source, and the files checked.
  * Nothing for a provider without an API key.
  */
-async function apiKeySetupDetails(providerId: string): Promise<DebugDetail[]> {
+async function apiKeySetupDetails(providerId: string, directory: string): Promise<DebugDetail[]> {
   if (Object.hasOwn(API_KEY_VENDORS, providerId)) {
     const vendor: ApiKeyLoginSpec = API_KEY_VENDORS[providerId as keyof typeof API_KEY_VENDORS];
     return vendor.skipBrokenLogins
-      ? vendorKeyDetails(vendor, await readVendorKeys(vendor))
-      : apiKeyStatusDetails(await getApiKeyLoginDiagnostics(vendor));
+      ? vendorKeyDetails(vendor, await readVendorKeys(vendor, directory), directory)
+      : apiKeyStatusDetails(await getApiKeyLoginDiagnostics(vendor, directory));
   }
   if (providerId === "openrouter") {
-    const resolved = await resolveOpenRouterApiKey();
+    const resolved = await resolveOpenRouterApiKey(directory);
     return simpleApiKeyStatusDetails({
       configured: Boolean(resolved.key),
       source: resolved.source,
@@ -148,7 +148,7 @@ async function localSetupDetails(
     details.push({ key: "opencode_provider", value: listed });
   }
   try {
-    details.push(...(await apiKeySetupDetails(providerId)));
+    details.push(...(await apiKeySetupDetails(providerId, ctx.locationDirectory)));
   } catch {
     details.push({ key: "api_key_configured", value: "unreadable" });
   }

@@ -62,8 +62,8 @@ function retainCurrentCredentialFingerprints(current: ReadonlySet<string>): void
  * connections: prefer native rows and collapse rows holding the same credential (e.g. Zen + Go
  * sharing a workspace key). Console OAuth credentials cannot authorize this API and are skipped.
  */
-async function readGoKeys(): Promise<VendorKeys> {
-  return await readVendorKeys(OPENCODE_GO_AUTH, {
+async function readGoKeys(directory: string): Promise<VendorKeys> {
+  return await readVendorKeys(OPENCODE_GO_AUTH, directory, {
     selectRows: (rows) =>
       selectConnectionCredentialRows(
         rows.filter((row) => row.value.type !== "oauth"),
@@ -96,8 +96,8 @@ export const opencodeGoProvider: QuotaProvider = {
      * since Go reads the Console first and falls back to the keys. A key login that is empty or
      * not an API key is left out, so it never hides a Console account switch.
      */
-    async resolveIdentity() {
-      const keys = await readVendorKeys(OPENCODE_GO_AUTH);
+    async resolveIdentity(ctx) {
+      const keys = await readVendorKeys(OPENCODE_GO_AUTH, ctx.locationDirectory);
       const consoleAuth = await resolveOpenCodeConsoleAuth();
       if (consoleAuth.state !== "configured") return await vendorKeysIdentity("opencode-go", keys);
       const consoleIdentity = await consoleLoginIdentity("opencode-go", consoleAuth.credential);
@@ -113,11 +113,11 @@ export const opencodeGoProvider: QuotaProvider = {
     },
   },
 
-  async isAvailable(_ctx: QuotaProviderContext): Promise<boolean> {
+  async isAvailable(ctx: QuotaProviderContext): Promise<boolean> {
     // Any Console sign-in counts, even a failed one, so fetch() can show its error when there
     // is no API key.
     if ((await resolveOpenCodeConsoleAuth()).state !== "none") return true;
-    if (vendorKeyState(await readGoKeys()).state === "configured") return true;
+    if (vendorKeyState(await readGoKeys(ctx.locationDirectory)).state === "configured") return true;
     notSubscribedCredentialFingerprints.clear();
     return false;
   },
@@ -133,9 +133,9 @@ export const opencodeGoProvider: QuotaProvider = {
     const consoleAuth = await resolveOpenCodeConsoleAuth();
 
     if (consoleAuth.state === "none") {
-      const keys = await readGoKeys();
+      const keys = await readGoKeys(ctx.locationDirectory);
       return await fetchWithApiKey(ctx, keys, [
-        ...vendorKeyDetails(OPENCODE_GO_AUTH, keys),
+        ...vendorKeyDetails(OPENCODE_GO_AUTH, keys, ctx.locationDirectory),
         selectedWindowsDetail,
       ]);
     }
@@ -182,12 +182,12 @@ export const opencodeGoProvider: QuotaProvider = {
     // The Console request or sign-in failed, or the sign-in expired: fall back to the API-key
     // path and surface the console error in diagnostics. Without an API key the failure is Go's
     // one error row.
-    const keys = await readGoKeys();
+    const keys = await readGoKeys(ctx.locationDirectory);
     return await fetchWithApiKey(
       ctx,
       keys,
       [
-        ...vendorKeyDetails(OPENCODE_GO_AUTH, keys),
+        ...vendorKeyDetails(OPENCODE_GO_AUTH, keys, ctx.locationDirectory),
         { key: "console_auth_state", value: consoleAuth.state },
         { key: "console_error", value: consoleError },
         { key: "go_source", value: "legacy_key" },

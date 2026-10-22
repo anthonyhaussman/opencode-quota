@@ -41,6 +41,7 @@ describe("CLI reports", () => {
         },
       },
       workspaceRoot: workspaceDir,
+      locationDirectory: workspaceDir,
       settings: () => loaded,
       providers: () => mockProviders,
     };

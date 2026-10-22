@@ -264,10 +264,10 @@ async function fetchMiniMaxQuota(
   spec: MiniMaxSpec,
   ctx: QuotaProviderContext,
 ): Promise<ProviderFetchResult> {
-  const keys = await readVendorKeys(spec.auth);
+  const keys = await readVendorKeys(spec.auth, ctx.locationDirectory);
   const configured = vendorKeyState(keys).state === "configured";
   const debug = [
-    ...vendorKeyDetails(spec.auth, keys),
+    ...vendorKeyDetails(spec.auth, keys, ctx.locationDirectory),
     ...statusDetailsFromRecord({ api_endpoint: configured ? spec.endpoint : undefined }),
   ];
   const query = (apiKey: string) =>
@@ -314,7 +314,7 @@ function minimaxProvider(spec: MiniMaxSpec): QuotaProvider {
         ctx,
         providerId: spec.id,
         availability: "listed-and-key",
-        readKeys: () => readVendorKeys(spec.auth),
+        readKeys: () => readVendorKeys(spec.auth, ctx.locationDirectory),
         // The China plan also counts OpenCode's `minimax` when the user enabled the China plan.
         isListed: async () =>
           (await isCanonicalProviderAvailable({

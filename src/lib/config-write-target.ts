@@ -85,20 +85,6 @@ export function configWriteTargetsEqual(
   );
 }
 
-export function assertSameConfigWriteTarget(
-  planned: ConfigWriteTargetSnapshot,
-  current: ConfigWriteTargetSnapshot,
-): void {
-  if (configWriteTargetsEqual(planned, current)) {
-    return;
-  }
-  throw new ConfigWriteTargetError(
-    `Config write target changed since preview: ${planned.configuredPath}`,
-    planned.configuredPath,
-    "changed",
-  );
-}
-
 export async function resolveConfigWriteTarget(path: string): Promise<ConfigWriteTargetSnapshot> {
   const configuredPath = resolve(path);
   const hops: ConfigWriteHop[] = [];

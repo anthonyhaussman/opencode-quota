@@ -6,13 +6,19 @@
 
 import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, parse } from "node:path";
 import { afterAll, afterEach, beforeEach } from "vite-plus/test";
 
 import {
   getOpencodeRuntimeDirs,
   type OpencodeRuntimeDirs,
 } from "../../src/lib/opencode-runtime-paths.js";
+
+/**
+ * A session folder for which no OpenCode project config counts: the file system root, so only
+ * the global config folder (and nothing of this machine's projects) is read.
+ */
+export const NO_PROJECT_DIRECTORY = parse(tmpdir()).root;
 
 export type OpencodeFolders = OpencodeRuntimeDirs & {
   /** The temp folder that holds them; a test may put other files here too. */

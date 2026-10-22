@@ -31,9 +31,10 @@ export type GoogleProviderFlavor<Key extends GoogleAuthSourceKey, Response, Buck
 /** Set up when a login OpenCode uses has an account and the companion plugin is installed. */
 export async function isGoogleProviderAvailable<Key extends GoogleAuthSourceKey, Response, Bucket>(
   flavor: GoogleProviderFlavor<Key, Response, Bucket>,
+  ctx: QuotaProviderContext,
 ): Promise<boolean> {
   try {
-    return await hasGoogleQuotaRuntimeAvailable(flavor.quota);
+    return await hasGoogleQuotaRuntimeAvailable(flavor.quota, ctx.locationDirectory);
   } catch {
     return false;
   }
@@ -45,8 +46,11 @@ export function googleCachePolicy<Key extends GoogleAuthSourceKey, Response, Buc
 ): QuotaProviderCachePolicy {
   return {
     kind: "resolved-auth",
-    resolveIdentity: async () =>
-      googleLoginsIdentity(flavor.quota, await readGoogleLogins(flavor.quota)),
+    resolveIdentity: async (ctx) =>
+      googleLoginsIdentity(
+        flavor.quota,
+        await readGoogleLogins(flavor.quota, ctx.locationDirectory),
+      ),
   };
 }
 
@@ -70,7 +74,7 @@ export async function fetchGoogleProviderQuota<Key extends GoogleAuthSourceKey, 
 ): Promise<ProviderFetchResult> {
   const { quota } = flavor;
   const [logins, companion] = await Promise.all([
-    readGoogleLogins(quota),
+    readGoogleLogins(quota, ctx.locationDirectory),
     quota.companion.inspect(),
   ]);
   const auth = inspectGoogleAuthPresence(quota, logins);
@@ -98,6 +102,7 @@ export async function fetchGoogleProviderQuota<Key extends GoogleAuthSourceKey, 
           : await queryGoogleQuota(quota, {
               requestTimeoutMs,
               login: row,
+              directory: ctx.locationDirectory,
             });
       if (!result) return null;
       if (!result.success) return { rows: [], errors: [fetchError(result.error, result.facts)] };

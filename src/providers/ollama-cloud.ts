@@ -259,7 +259,7 @@ export const ollamaCloudProvider: QuotaProvider = {
       ctx,
       providerId: "ollama-cloud",
       availability: "key",
-      readKeys: () => readVendorKeys(SPEC),
+      readKeys: () => readVendorKeys(SPEC, ctx.locationDirectory),
     });
   },
 
@@ -268,8 +268,8 @@ export const ollamaCloudProvider: QuotaProvider = {
   },
 
   async fetch(ctx: QuotaProviderContext): Promise<ProviderFetchResult> {
-    const keys = await readVendorKeys(SPEC);
-    const keyDetails = vendorKeyDetails(SPEC, keys);
+    const keys = await readVendorKeys(SPEC, ctx.locationDirectory);
+    const keyDetails = vendorKeyDetails(SPEC, keys, ctx.locationDirectory);
     const query = (apiKey: string) => queryOllamaCloudQuota(apiKey, ctx.config?.requestTimeoutMs);
 
     if (keys.envOrConfig) {

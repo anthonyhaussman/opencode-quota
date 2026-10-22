@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 import { kimiCodePlanCnProvider, kimiCodePlanGlobalProvider } from "../src/providers/kimi-code.js";
+import { NO_PROJECT_DIRECTORY } from "./helpers/opencode-folders.js";
 import {
   fakeHttp,
   fetchRows,
@@ -120,7 +121,11 @@ describe.each(REGIONS)("Kimi Code $region", ({ provider, envVar, integrationId, 
       { id: "oauth", integrationId, active: null, updated: 1, value: { type: "oauth" } },
     ]);
     const http = fakeHttp(() => weeklyReply(10));
-    const ctx = { config: {}, resolveRuntimeProviderIds: async () => new Set([id]) };
+    const ctx = {
+      config: {},
+      locationDirectory: NO_PROJECT_DIRECTORY,
+      resolveRuntimeProviderIds: async () => new Set([id]),
+    };
 
     await expect(provider.isAvailable(ctx as never)).resolves.toBe(true);
     const fetched = await fetchRows(provider);
@@ -213,7 +218,11 @@ describe("Kimi Code regions", () => {
     { name: "no key", runtimeIds: ["kimi-code-plan-global"], env: false, available: false },
   ])("is available with $name: $available", async ({ runtimeIds, env, available }) => {
     if (env) process.env.KIMI_GLOBAL_API_KEY = "env-key";
-    const ctx = { config: {}, resolveRuntimeProviderIds: async () => new Set(runtimeIds) };
+    const ctx = {
+      config: {},
+      locationDirectory: NO_PROJECT_DIRECTORY,
+      resolveRuntimeProviderIds: async () => new Set(runtimeIds),
+    };
 
     await expect(kimiCodePlanGlobalProvider.isAvailable(ctx as never)).resolves.toBe(available);
   });
@@ -222,6 +231,7 @@ describe("Kimi Code regions", () => {
     world.storeLogins([keyLogin("broken", "kimi-code-plan-cn", "")]);
     const ctx = {
       config: {},
+      locationDirectory: NO_PROJECT_DIRECTORY,
       resolveRuntimeProviderIds: async () => new Set(["kimi-code-plan-cn"]),
     };
 

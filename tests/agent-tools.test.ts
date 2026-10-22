@@ -81,7 +81,11 @@ type Answer = {
 async function call(name: string, input: unknown): Promise<Answer> {
   const settings = await createLiveSettings({ projectDir: root });
   try {
-    const host = { openCodeProviderIds: async () => openCodeProviderIds, settings };
+    const host = {
+      openCodeProviderIds: async () => openCodeProviderIds,
+      locationDirectory: root,
+      settings,
+    };
     const tool = quotaAgentTools(host).find((item) => item.name === name);
     if (!tool) throw new Error(`tool not registered: ${name}`);
     const { content } = await tool.execute(input);
@@ -409,6 +413,26 @@ describe("quota_settings_set", () => {
     expect(result.text).not.toContain("router-key-saved-in-opencode");
   });
 
+  it("never shows a key saved in a project config file that counts for the session", async () => {
+    mkdirSync(join(root, ".opencode"), { recursive: true });
+    writeFileSync(
+      join(root, ".opencode", "opencode.jsonc"),
+      '{\n  // project keys\n  "provider": { "deepseek": { "options": { "apiKey": "project-key-in-dot-folder" } } },\n}\n',
+    );
+    writeSettings(
+      JSON.stringify({
+        providers: { anthropic: { binaryPath: "/opt/project-key-in-dot-folder/claude" } },
+      }),
+    );
+
+    const result = await call("quota_settings_get", {});
+
+    expect(result.settings?.["providers.anthropic.binaryPath"]).toMatchObject({
+      value: "/opt/[redacted]/claude",
+    });
+    expect(result.text).not.toContain("project-key-in-dot-folder");
+  });
+
   it.each([
     {
       name: "an unknown key, with the valid ones",
@@ -474,7 +498,11 @@ describe("quota_settings_set", () => {
   it("is in the settings the server holds once it answers", async () => {
     const settings = await createLiveSettings({ projectDir: root });
     try {
-      const tools = quotaAgentTools({ openCodeProviderIds: async () => [], settings });
+      const tools = quotaAgentTools({
+        openCodeProviderIds: async () => [],
+        locationDirectory: root,
+        settings,
+      });
       const set = tools.find((tool) => tool.name === "quota_settings_set");
 
       await set?.execute({ patch: { providers: { checking: { minIntervalMs: 600_000 } } } });
@@ -652,9 +680,9 @@ describe("quota_provider_add", () => {
 
     await call("quota_provider_add", { definition: GATEWAY });
     const [off] = await savedProviders();
-    expect((await resolveQuotaProviderApiKey(off as RemoteApiQuotaProviderDefinition)).key).toBe(
-      undefined,
-    );
+    expect(
+      (await resolveQuotaProviderApiKey(off as RemoteApiQuotaProviderDefinition, root)).key,
+    ).toBe(undefined);
     // The user switches it on in /quota_settings → Providers.
     const file = parse(settingsText());
     file.providers.custom[0].enabled = true;
@@ -662,13 +690,13 @@ describe("quota_provider_add", () => {
     const [on] = await savedProviders();
 
     // Read the way a hand-written provider's key is: the variable, then OpenCode's key.
-    expect((await resolveQuotaProviderApiKey(on as RemoteApiQuotaProviderDefinition)).key).toBe(
-      "gateway-key-saved-in-opencode",
-    );
+    expect(
+      (await resolveQuotaProviderApiKey(on as RemoteApiQuotaProviderDefinition, root)).key,
+    ).toBe("gateway-key-saved-in-opencode");
     vi.stubEnv(GATEWAY_VARIABLE, "gateway-key");
-    expect((await resolveQuotaProviderApiKey(on as RemoteApiQuotaProviderDefinition)).key).toBe(
-      "gateway-key",
-    );
+    expect(
+      (await resolveQuotaProviderApiKey(on as RemoteApiQuotaProviderDefinition, root)).key,
+    ).toBe("gateway-key");
   });
 
   it("never returns the key, even when the endpoint echoes it into a row id", async () => {

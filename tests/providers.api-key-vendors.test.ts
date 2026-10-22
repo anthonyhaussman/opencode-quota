@@ -17,6 +17,7 @@ import {
 } from "../src/providers/minimax-coding-plan.js";
 import { ollamaCloudProvider } from "../src/providers/ollama-cloud.js";
 import { openRouterProvider } from "../src/providers/openrouter.js";
+import { NO_PROJECT_DIRECTORY } from "./helpers/opencode-folders.js";
 import {
   fakeHttp,
   fetchRows,
@@ -452,7 +453,8 @@ it.runIf(POSIX_IDENTITY_STORAGE)(
   async () => {
     const policy = openRouterProvider.cachePolicy;
     if (policy.kind !== "resolved-auth") throw new Error("expected a resolved-auth policy");
-    const identity = () => policy.resolveIdentity({} as never, {});
+    const identity = () =>
+      policy.resolveIdentity({ locationDirectory: NO_PROJECT_DIRECTORY } as never, {});
     await expect(identity()).resolves.toBeNull();
 
     setKey("openrouter");
@@ -548,7 +550,8 @@ describe("availability and model matching", () => {
       vi.mocked(isCanonicalProviderAvailable).mockResolvedValue(configured);
       if (withKey) setKey(id);
 
-      await expect(VENDORS[id].provider.isAvailable({} as never)).resolves.toBe(expected);
+      const ctx = { locationDirectory: NO_PROJECT_DIRECTORY } as never;
+      await expect(VENDORS[id].provider.isAvailable(ctx)).resolves.toBe(expected);
     },
   );
 

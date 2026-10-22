@@ -138,7 +138,7 @@ export const deepseekProvider: QuotaProvider = {
       ctx,
       providerId: "deepseek",
       availability: "listed-or-key",
-      readKeys: () => readVendorKeys(SPEC),
+      readKeys: () => readVendorKeys(SPEC, ctx.locationDirectory),
     });
   },
 
@@ -147,8 +147,8 @@ export const deepseekProvider: QuotaProvider = {
   },
 
   async fetch(ctx: QuotaProviderContext): Promise<ProviderFetchResult> {
-    const keys = await readVendorKeys(SPEC);
-    const debug = vendorKeyDetails(SPEC, keys);
+    const keys = await readVendorKeys(SPEC, ctx.locationDirectory);
+    const debug = vendorKeyDetails(SPEC, keys, ctx.locationDirectory);
     const query = (apiKey: string) => queryDeepSeekBalance(apiKey, ctx.config?.requestTimeoutMs);
 
     if (keys.envOrConfig) {

@@ -4,6 +4,7 @@ import {
   minimaxChinaCodingPlanProvider,
   minimaxCodingPlanProvider,
 } from "../src/providers/minimax-coding-plan.js";
+import { NO_PROJECT_DIRECTORY } from "./helpers/opencode-folders.js";
 import {
   fakeHttp,
   fetchRows,
@@ -278,6 +279,7 @@ describe("MiniMax availability and models", () => {
     if (testCase.envVar) process.env[testCase.envVar] = "env-key";
     const ctx = {
       config: { enabledProviders: testCase.enabledProviders },
+      locationDirectory: NO_PROJECT_DIRECTORY,
       resolveRuntimeProviderIds: async () => new Set(testCase.runtimeIds),
     };
 

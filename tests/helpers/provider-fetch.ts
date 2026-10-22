@@ -15,7 +15,7 @@ import type { QuotaProvider } from "../../src/lib/entries.js";
 import { createSqliteCredentialSource } from "../../src/lib/opencode-auth-sqlite.js";
 import { bindCredentialSource, notifyCredentialsChanged } from "../../src/lib/opencode-auth.js";
 import { type CredentialDatabaseRow, writeCredentialDatabase } from "./credential-database.js";
-import { useOpencodeFolders } from "./opencode-folders.js";
+import { NO_PROJECT_DIRECTORY, useOpencodeFolders } from "./opencode-folders.js";
 import { isLedgerRowKey } from "./provider-assertions.js";
 
 /** Environment variables a vendor may read a key, cookie or folder from. */
@@ -123,6 +123,7 @@ export async function fetchRows(
   config: Record<string, unknown> = {},
 ) {
   const result = await provider.fetch({
+    locationDirectory: NO_PROJECT_DIRECTORY,
     config: { requestTimeoutMs: 5_000, enabledProviders: [], ...config },
   } as never);
   const fetched = rowsFromProviderResult(provider.id, result, Date.now());

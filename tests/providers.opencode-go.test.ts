@@ -5,6 +5,7 @@ import {
   opencodeGoProvider,
 } from "../src/providers/opencode-go.js";
 import type { CredentialDatabaseRow } from "./helpers/credential-database.js";
+import { NO_PROJECT_DIRECTORY } from "./helpers/opencode-folders.js";
 import {
   fakeHttp,
   fetchRows,
@@ -15,6 +16,7 @@ import {
 } from "./helpers/provider-fetch.js";
 
 const world = useProviderWorld();
+const NO_PROJECT_CTX = { config: {}, locationDirectory: NO_PROJECT_DIRECTORY } as never;
 
 beforeEach(() => {
   __resetOpenCodeGoNotSubscribedForTests();
@@ -278,7 +280,7 @@ describe("OpenCode Go with an API key", () => {
     await fetchRows(opencodeGoProvider);
 
     delete process.env.OPENCODE_API_KEY;
-    await expect(opencodeGoProvider.isAvailable({ config: {} } as never)).resolves.toBe(false);
+    await expect(opencodeGoProvider.isAvailable(NO_PROJECT_CTX)).resolves.toBe(false);
     process.env.OPENCODE_API_KEY = "free-key";
     await fetchRows(opencodeGoProvider);
 
@@ -371,7 +373,7 @@ describe("OpenCode Go availability and models", () => {
     if (apiKey) process.env.OPENCODE_API_KEY = "go-key";
     const http = fakeHttp(() => USAGE_REPLY);
 
-    await expect(opencodeGoProvider.isAvailable({ config: {} } as never)).resolves.toBe(available);
+    await expect(opencodeGoProvider.isAvailable(NO_PROJECT_CTX)).resolves.toBe(available);
     expect(http).not.toHaveBeenCalled();
   });
 

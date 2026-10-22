@@ -27,7 +27,7 @@ import {
   type UsageReport,
   usageReport,
 } from "./core/usage.js";
-import { resolveOpenCodeLocationRoots } from "./lib/config-file-utils.js";
+import { findGitWorktreeRoot } from "./lib/config-file-utils.js";
 import { sanitizeDisplayText } from "./lib/display-sanitize.js";
 import { homeNoticeLine, listNotices } from "./lib/maintainer-home-notice.js";
 import { downloadPrices, refreshPricesIfDue } from "./lib/modelsdev-pricing.js";
@@ -102,8 +102,8 @@ export function createQuotaServerPlugin(
   return Plugin.define({
     id: "@slkiser/opencode-quota.server",
     async setup(ctx) {
-      const roots = resolveOpenCodeLocationRoots(ctx.location.directory);
-      const projectDir = roots.workspaceRoot;
+      const locationDirectory = ctx.location.directory;
+      const projectDir = findGitWorktreeRoot(locationDirectory) ?? locationDirectory;
       // The providers ask OpenCode which providers it has through this small client.
       const client = {
         config: {
@@ -136,7 +136,7 @@ export function createQuotaServerPlugin(
         if (options.reconcileDetectedProviders && detected.length > 0) {
           try {
             await reconcileDetectedProvidersInGlobalConfig({
-              configRootDir: roots.configRoot,
+              directory: locationDirectory,
               detectedProviderIds: detected,
             });
           } catch (error) {
@@ -150,7 +150,8 @@ export function createQuotaServerPlugin(
       // Building it reads nothing; the first snapshot or refresh call loads the file.
       const sourceHost: ProviderSourceHost = {
         client,
-        workspaceRoot: roots.workspaceRoot,
+        workspaceRoot: projectDir,
+        locationDirectory,
         settings: liveSettings.current,
         providers: options.providers,
       };
@@ -307,6 +308,7 @@ export function createQuotaServerPlugin(
         // Agent tools: read and change the settings file, add, test and remove custom providers.
         const host = {
           openCodeProviderIds: async () => (await ctx.provider.list()).data.map(({ id }) => id),
+          locationDirectory,
           settings: liveSettings,
         };
         for (const tool of quotaAgentTools(host)) editor.add(tool);

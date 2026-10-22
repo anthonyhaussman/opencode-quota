@@ -127,9 +127,10 @@ function failedRequestParts(
 
 async function executeRemote(
   definition: RemoteApiQuotaProviderDefinition,
+  directory: string,
   requestTimeoutMs?: number,
 ): Promise<DefinitionResult> {
-  const auth = await resolveQuotaProviderApiKey(definition);
+  const auth = await resolveQuotaProviderApiKey(definition, directory);
   if (!auth.key) {
     return {
       account: customAccount(definition, [], [fetchError("API key not configured")]),
@@ -195,11 +196,12 @@ function failedDefinition(definition: QuotaProviderDefinition): DefinitionResult
  */
 export async function checkDefinition(
   definition: QuotaProviderDefinition,
+  directory: string,
   requestTimeoutMs?: number,
 ): Promise<DefinitionResult> {
   try {
     return definition.mode === "remote-api"
-      ? await executeRemote(definition, requestTimeoutMs)
+      ? await executeRemote(definition, directory, requestTimeoutMs)
       : await executeLocal(definition);
   } catch {
     return failedDefinition(definition);
@@ -208,6 +210,7 @@ export async function checkDefinition(
 
 async function resolveQuotaProviderDefinitionAuthIdentity(
   definition: QuotaProviderDefinition,
+  directory: string,
 ): Promise<ResolvedAuthIdentity | null> {
   if (definition.mode === "local-estimate") {
     return deriveResolvedAuthIdentity({
@@ -216,7 +219,10 @@ async function resolveQuotaProviderDefinitionAuthIdentity(
     });
   }
 
-  const resolved = await resolveQuotaProviderApiKey(definition as RemoteApiQuotaProviderDefinition);
+  const resolved = await resolveQuotaProviderApiKey(
+    definition as RemoteApiQuotaProviderDefinition,
+    directory,
+  );
   return deriveResolvedAuthIdentity({
     providerId: `quota-providers:${definition.id}`,
     principal: resolved.key
@@ -228,12 +234,14 @@ async function resolveQuotaProviderDefinitionAuthIdentity(
 
 const quotaProvidersCachePolicy: QuotaProviderCachePolicy = {
   kind: "resolved-auth",
-  async resolveIdentity(_ctx, cacheContext) {
+  async resolveIdentity(ctx, cacheContext) {
     const definitions = cacheContext.runtimeEligibleQuotaProviders;
     if (!definitions || definitions.length === 0) return null;
 
     const identities = await Promise.all(
-      definitions.map(resolveQuotaProviderDefinitionAuthIdentity),
+      definitions.map((definition) =>
+        resolveQuotaProviderDefinitionAuthIdentity(definition, ctx.locationDirectory),
+      ),
     );
     if (identities.some((identity) => identity === null)) return null;
 
@@ -292,7 +300,7 @@ export const quotaProvidersProvider: QuotaProvider = {
     }
 
     const results = await mapWithConcurrency(selected, DEFINITION_CONCURRENCY, (definition) =>
-      checkDefinition(definition, ctx.config.requestTimeoutMs),
+      checkDefinition(definition, ctx.locationDirectory, ctx.config.requestTimeoutMs),
     );
 
     return {

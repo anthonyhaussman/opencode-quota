@@ -86,11 +86,11 @@ Rules:
 - Local estimates support 1–16 UTC-day or rolling request windows. Each check counts the completed requests in OpenCode's own messages; nothing else is stored.
 - Automatic matching (models.dev, and Cursor's own prices for Auto, Composer and Grok) runs first. Add `pricingModelMap` only when it finds no price. `pricingModelMap` cannot override a successful automatic match.
 - If any request cannot be priced, request counts stay visible and the budget percentage is reported unavailable.
-- Credentials resolve from `apiKeyEnv`, trusted global `provider.<providerId>.options.apiKey`, then API-key logins saved in OpenCode 2 (`opencode.db`).
+- Credentials resolve from `apiKeyEnv`, `provider.<providerId>.options.apiKey` in the [OpenCode config files](troubleshooting.md#opencode-config-files), then API-key logins saved in OpenCode 2 (`opencode.db`).
 - `"enabled": false` switches a definition off: it is never fetched, its key is never sent, and `/quota_status` shows it as off. Without `enabled` (or with `true`) it is on. Providers an agent adds start switched off; switch one on by setting `"enabled": true` in `opencode-quota/settings.jsonc`, or in `/quota_settings` → **Providers**, which shows each custom provider's web address and the key it sends (and warns about plain `http`) next to its switch.
 - Definitions run when `custom` is absent from `providers.off`. Adding `custom` there skips every custom definition. Each definition also has its own `enabled` switch.
 - To tune maintained estimates, use the reserved `alibaba-coding-plan` ID and its window shape. Do not add a duplicate normal provider block.
-- Not accepted: project secrets, scripts, methods, custom headers, templates, executable mappings, regular expressions, JSONPath, and automatic endpoint discovery.
+- Not accepted: scripts, methods, custom headers, templates, executable mappings, regular expressions, JSONPath, and automatic endpoint discovery.
 - A custom model provider still needs its normal OpenCode `provider` block in `opencode.json`: that block tells OpenCode how to use the model, and `providers.custom` tells OpenCode Quota how to measure it.
 - `/quota_status` shows each definition as `custom 1`, `custom 2`, … with its mode, model count, check outcome and credential source, never its id, URLs, keys, headers, response bodies, or raw errors.
 

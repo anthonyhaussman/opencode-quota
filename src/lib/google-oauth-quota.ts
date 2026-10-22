@@ -1,5 +1,5 @@
 import type { ErrorFacts } from "../core/errors.js";
-import { readGlobalProviderConfigString } from "./api-key-resolver.js";
+import { readProviderConfigString } from "./api-key-resolver.js";
 import type {
   GoogleCompanionConfiguredCredentials,
   GoogleCompanionResolver,
@@ -90,26 +90,25 @@ export type GoogleQuotaFlavor<
 
 type AccessTokenResult = { accessToken: string } | { error: string; facts?: ErrorFacts };
 
-export async function resolveGoogleConfiguredProjectId(flavor: {
-  projectIdEnvVar: string;
-  projectIdConfigProvider: string;
-}): Promise<string | undefined> {
+export async function resolveGoogleConfiguredProjectId(
+  flavor: { projectIdEnvVar: string; projectIdConfigProvider: string },
+  directory: string,
+): Promise<string | undefined> {
   return (
     nonEmptyString(process.env[flavor.projectIdEnvVar]) ??
-    (await readGlobalProviderConfigString(flavor.projectIdConfigProvider, "projectId")) ??
+    (await readProviderConfigString(flavor.projectIdConfigProvider, "projectId", directory)) ??
     nonEmptyString(process.env.GOOGLE_CLOUD_PROJECT) ??
     nonEmptyString(process.env.GOOGLE_CLOUD_PROJECT_ID)
   );
 }
 
-export async function readGoogleLogins(flavor: {
-  authKeys: readonly string[];
-  projectIdEnvVar: string;
-  projectIdConfigProvider: string;
-}): Promise<GoogleLogins> {
+export async function readGoogleLogins(
+  flavor: { authKeys: readonly string[]; projectIdEnvVar: string; projectIdConfigProvider: string },
+  directory: string,
+): Promise<GoogleLogins> {
   const [rows, configuredProjectId] = await Promise.all([
     readCredentialRows(flavor.authKeys, { methods: ["oauth"] }),
-    resolveGoogleConfiguredProjectId(flavor),
+    resolveGoogleConfiguredProjectId(flavor, directory),
   ]);
   return { rows, configuredProjectId };
 }
@@ -208,9 +207,10 @@ export function inspectGoogleAuthPresence<Key extends GoogleAuthSourceKey>(
 
 export async function hasGoogleQuotaRuntimeAvailable<Key extends GoogleAuthSourceKey>(
   flavor: GoogleAuthFlavor<Key>,
+  directory: string,
 ): Promise<boolean> {
   const [logins, companion] = await Promise.all([
-    readGoogleLogins(flavor),
+    readGoogleLogins(flavor, directory),
     flavor.companion.inspect(),
   ]);
   return (
@@ -434,9 +434,9 @@ async function fetchAccountBuckets<Key extends GoogleAuthSourceKey, Response, Bu
 /** The quota of the account of one login; null when the login has no usable account. */
 export async function queryGoogleQuota<Key extends GoogleAuthSourceKey, Response, Bucket>(
   flavor: GoogleQuotaFlavor<Key, Response, Bucket>,
-  options: { requestTimeoutMs?: number; login: CredentialRow },
+  options: { requestTimeoutMs?: number; login: CredentialRow; directory: string },
 ): Promise<GoogleQuotaResult<Bucket>> {
-  const configuredProjectId = await resolveGoogleConfiguredProjectId(flavor);
+  const configuredProjectId = await resolveGoogleConfiguredProjectId(flavor, options.directory);
   const [account] = resolveGoogleAccounts(flavor, [options.login], configuredProjectId);
   if (!account) return null;
 

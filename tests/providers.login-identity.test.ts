@@ -15,6 +15,7 @@ import { __resetResolvedAuthIdentityForTests } from "../src/lib/resolved-auth-id
 import { getProviders } from "../src/providers/registry.js";
 import { defaultSettings } from "../src/settings/index.js";
 import type { CredentialDatabaseRow } from "./helpers/credential-database.js";
+import { NO_PROJECT_DIRECTORY } from "./helpers/opencode-folders.js";
 import { fakeHttp, keyLogin, requestHeader, useProviderWorld } from "./helpers/provider-fetch.js";
 
 const world = useProviderWorld();
@@ -171,7 +172,12 @@ function storeFor(providerId: string) {
   const client = {
     config: { providers: async () => ({ data: { providers: [{ id: providerId }] } }) },
   };
-  const host = { client, workspaceRoot: world.configDir, settings: () => loaded };
+  const host = {
+    client,
+    workspaceRoot: world.configDir,
+    locationDirectory: NO_PROJECT_DIRECTORY,
+    settings: () => loaded,
+  };
   return createQuotaStore({
     source: () => loadProviderSource(host),
     file: join(world.configDir, "snapshot-v6.json"),

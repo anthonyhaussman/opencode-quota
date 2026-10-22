@@ -61,7 +61,9 @@ export type ServerCommand = {
  * the providers `openCodeProviders` names, and `sessionGet` answers for every session.
  */
 export function createServerContext({
-  directory = process.cwd(),
+  // The test file's own temp home (tests/setup.ts), so OpenCode's project config is read only
+  // from temp folders.
+  directory = process.env.HOME!,
   openCodeProviders = [],
   sessionGet = vi.fn().mockResolvedValue({}),
   events = { async *[Symbol.asyncIterator]() {} },

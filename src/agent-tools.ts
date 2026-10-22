@@ -12,14 +12,11 @@
  */
 import { looksSecret, REDACTED, redactJson, secretValuesRedactor } from "./core/redact.js";
 import { rowsFromProviderResult } from "./core/rows.js";
-import {
-  getGlobalOpencodeConfigCandidatePaths,
-  getProviderConfigSettings,
-  readConfigCandidate,
-} from "./lib/api-key-resolver.js";
+import { getProviderConfigSettings } from "./lib/api-key-resolver.js";
 import { resolveEnvTemplate } from "./lib/env-template.js";
 import { isRecord } from "./lib/json-guards.js";
 import { readCredentialRows } from "./lib/opencode-auth.js";
+import { readOpenCodeConfigs } from "./lib/opencode-config-files.js";
 import {
   describeQuotaProviderRequest,
   QUOTA_PROVIDER_FIELDS,
@@ -42,6 +39,8 @@ import {
 type QuotaAgentToolsHost = {
   /** The providers OpenCode serves now; a custom provider shows only when its providerId is one. */
   openCodeProviderIds(): Promise<readonly string[]>;
+  /** The folder OpenCode runs the session in; OpenCode's config files that count start here. */
+  locationDirectory: string;
   /** The settings the server holds; an edit through them is in use when it resolves. */
   settings: Pick<LiveSettings, "current" | "edit" | "editFile">;
 };
@@ -147,10 +146,10 @@ function definitionSecretIssues(definition: Record<string, unknown>): SettingsIs
 
 /**
  * Every key the plugin can read: variables named like keys or named by a switched-on custom
- * provider; keys in the global opencode.json(c); and API-key logins saved in OpenCode for the
- * providers OpenCode has. OAuth tokens are not read (that could refresh them); the key shapes in
- * core/redact.ts cover them. The key of a switched-off provider (and of one a tool saves, always
- * switched off) is never read: until the user switches it on, nothing touches it.
+ * provider; keys in the OpenCode config files that count; and API-key logins saved in OpenCode
+ * for the providers OpenCode has. OAuth tokens are not read (that could refresh them); the key
+ * shapes in core/redact.ts cover them. The key of a switched-off provider (and of one a tool
+ * saves, always switched off) is never read: until the user switches it on, nothing touches it.
  */
 async function credentialValues(host: QuotaAgentToolsHost): Promise<string[]> {
   // Each provider's key variable and OpenCode provider.
@@ -169,9 +168,7 @@ async function credentialValues(host: QuotaAgentToolsHost): Promise<string[]> {
   }
   const values: unknown[] = [...variables].map((name) => process.env[name]);
 
-  for (const candidate of getGlobalOpencodeConfigCandidatePaths()) {
-    const config = await readConfigCandidate(candidate);
-    if (!isRecord(config)) continue;
+  for (const { config } of await readOpenCodeConfigs(host.locationDirectory)) {
     const providerIds = [config.provider, config.providers].flatMap((group) =>
       isRecord(group) ? Object.keys(group) : [],
     );
@@ -371,13 +368,14 @@ function testedRows(account: AccountResult, redact: Redact): ToolResult {
  */
 async function testFetch(
   definition: QuotaProviderDefinition,
+  directory: string,
   requestTimeoutMs: number,
   redact: Redact,
 ): Promise<ToolResult> {
   if (definition.enabled === false) {
     return { ok: false, error: `Not tested: it is switched off. ${switchOnStep()}; then test it.` };
   }
-  const checked = await checkDefinition(definition, requestTimeoutMs);
+  const checked = await checkDefinition(definition, directory, requestTimeoutMs);
   if (checked.missingKey) {
     return {
       ok: false,
@@ -495,6 +493,7 @@ async function testProvider(
   }
   const test = await testFetch(
     definition,
+    host.locationDirectory,
     loaded.settings.providers.checking.requestTimeoutMs,
     redact,
   );

@@ -1,20 +1,6 @@
 import { existsSync } from "fs";
 import { dirname, join } from "path";
 
-type ConfigFileKind = "opencode";
-export type ConfigFileFormat = "json" | "jsonc";
-
-export interface EditableConfigPath {
-  path: string;
-  format: ConfigFileFormat;
-  existed: boolean;
-}
-
-interface RuntimeContextRoots {
-  workspaceRoot: string;
-  configRoot: string;
-}
-
 export function dedupeNonEmptyStrings(items: string[]): string[] {
   return [...new Set(items.map((item) => item.trim()).filter(Boolean))];
 }
@@ -33,44 +19,6 @@ export function findGitWorktreeRoot(startDir: string): string | null {
     }
     current = parent;
   }
-}
-
-/**
- * Roots for an OpenCode location, shared by the server plugin and the TUI so both
- * read the same project config: the enclosing Git worktree, else the location directory.
- */
-export function resolveOpenCodeLocationRoots(
-  directory: string,
-): RuntimeContextRoots & { fallbackDirectory: string } {
-  const workspaceRoot = findGitWorktreeRoot(directory) ?? directory;
-  return { workspaceRoot, configRoot: workspaceRoot, fallbackDirectory: directory };
-}
-
-function getConfigFileCandidatePaths(dir: string, kind: ConfigFileKind): string[] {
-  return [join(dir, `${kind}.jsonc`), join(dir, `${kind}.json`)];
-}
-
-export function resolveExistingConfigPath(dir: string, kind: ConfigFileKind): string | null {
-  return getConfigFileCandidatePaths(dir, kind).find((path) => existsSync(path)) ?? null;
-}
-
-export function resolveEditableConfigPath(params: {
-  dir: string;
-  kind: ConfigFileKind;
-  preferredFormat?: ConfigFileFormat;
-}): EditableConfigPath {
-  const jsoncPath = join(params.dir, `${params.kind}.jsonc`);
-  if (existsSync(jsoncPath)) {
-    return { path: jsoncPath, format: "jsonc", existed: true };
-  }
-
-  const jsonPath = join(params.dir, `${params.kind}.json`);
-  if (existsSync(jsonPath)) {
-    return { path: jsonPath, format: "json", existed: true };
-  }
-
-  const format = params.preferredFormat ?? "jsonc";
-  return { path: join(params.dir, `${params.kind}.${format}`), format, existed: false };
 }
 
 /** Reads the package spec from a legacy `plugin` entry or an OpenCode 2 native `plugins` entry. */

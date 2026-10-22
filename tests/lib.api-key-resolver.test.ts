@@ -1,4 +1,4 @@
-import { homedir } from "os";
+import { tmpdir } from "os";
 import { join } from "path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 import type { CredentialRow } from "../src/lib/opencode-auth.js";
@@ -35,19 +35,22 @@ import {
   type ApiKeyLoginSpec,
   getApiKeyLoginDiagnostics,
   firstLoginRow,
-  getGlobalOpencodeConfigCandidatePaths,
   parseApiKeyLogin,
   resolveApiKey,
   resolveApiKeyFromEnvAndConfig,
   resolveApiKeyLogin,
 } from "../src/lib/api-key-resolver.js";
 
-const CONFIG_DIR = join(homedir(), ".config", "opencode");
+// Never created: every config file read and existence check below is mocked.
+const FAKE_ROOT = join(tmpdir(), "opencode-quota-api-key-resolver");
+const CONFIG_DIR = join(FAKE_ROOT, "config", "opencode");
 const TRUSTED = {
   jsonc: join(CONFIG_DIR, "opencode.jsonc"),
   json: join(CONFIG_DIR, "opencode.json"),
 };
-const WORKSPACE = [join(process.cwd(), "opencode.json"), join(process.cwd(), "opencode.jsonc")];
+/** The session's folder; its own config file is `PROJECT_FILE`. */
+const PROJECT = join(FAKE_ROOT, "project");
+const PROJECT_FILE = join(PROJECT, "opencode.json");
 const DB_PATHS = ["/tmp/opencode.db"];
 
 // The vendor contract, written out by hand instead of read from the production
@@ -192,9 +195,19 @@ const originalEnv = process.env;
 
 beforeEach(() => {
   process.env = { ...originalEnv };
-  for (const name of [...ALL_ENV_VARS, "NOT_ALLOWED", "XDG_CONFIG_HOME", "XDG_DATA_HOME"]) {
+  for (const name of [
+    ...ALL_ENV_VARS,
+    "NOT_ALLOWED",
+    "XDG_DATA_HOME",
+    "OPENCODE_CONFIG",
+    "OPENCODE_CONFIG_DIR",
+    "OPENCODE_CONFIG_PROJECT_DISABLE",
+    "OPENCODE_DISABLE_PROJECT_CONFIG",
+  ]) {
     delete process.env[name];
   }
+  process.env.HOME = FAKE_ROOT;
+  process.env.XDG_CONFIG_HOME = join(FAKE_ROOT, "config");
   mockConfigFiles({});
   mocks.readActiveCredentialRowsCached.mockReset().mockResolvedValue([]);
 });
@@ -213,7 +226,7 @@ describe("vendor contract", () => {
     async (_id, expected, spec) => {
       for (const [index, name] of expected.envVars.entries()) {
         for (const later of expected.envVars.slice(index)) process.env[later] = `${later}-value`;
-        await expect(resolveApiKeyFromEnvAndConfig(spec)).resolves.toEqual({
+        await expect(resolveApiKeyFromEnvAndConfig(spec, PROJECT)).resolves.toEqual({
           key: `${name}-value`,
           source: `env:${name}`,
         });
@@ -222,7 +235,7 @@ describe("vendor contract", () => {
       for (const [index, alias] of expected.providerKeys.entries()) {
         const aliases = expected.providerKeys.slice(index);
         mockConfigFiles({ [TRUSTED.json]: legacyConfig(entriesFor(aliases, (id) => `${id}-key`)) });
-        await expect(resolveApiKeyFromEnvAndConfig(spec)).resolves.toEqual({
+        await expect(resolveApiKeyFromEnvAndConfig(spec, PROJECT)).resolves.toEqual({
           key: `${alias}-key`,
           source: "opencode.json",
         });
@@ -234,24 +247,85 @@ describe("vendor contract", () => {
 describe("trusted config parsing", () => {
   const spec = API_KEY_VENDORS.deepseek;
 
-  it("lists only the global jsonc and json files", () => {
-    expect(getGlobalOpencodeConfigCandidatePaths()).toEqual([
-      { path: TRUSTED.jsonc, isJsonc: true },
-      { path: TRUSTED.json, isJsonc: false },
-    ]);
-  });
-
-  it("prefers opencode.jsonc and stops reading once it has a key", async () => {
+  it("prefers opencode.jsonc over opencode.json in one folder", async () => {
     mockConfigFiles({
       [TRUSTED.jsonc]:
         '{ // preferred\n "provider": { "deepseek": { "options": { "apiKey": "jsonc-key" } } },\n}',
       [TRUSTED.json]: legacyConfig({ deepseek: "json-key" }),
     });
-    await expect(resolveApiKey(spec)).resolves.toEqual({
+    await expect(resolveApiKey(spec, PROJECT)).resolves.toEqual({
       key: "jsonc-key",
       source: "opencode.jsonc",
     });
-    expect(mocks.readFile.mock.calls.map((call) => call[0])).toEqual([TRUSTED.jsonc]);
+  });
+
+  it("prefers the session folder's file over the global files", async () => {
+    mockConfigFiles({
+      [TRUSTED.jsonc]: legacyConfig({ deepseek: "global-key" }),
+      [PROJECT_FILE]: legacyConfig({ deepseek: "project-key" }),
+    });
+    await expect(resolveApiKey(spec, PROJECT)).resolves.toEqual({
+      key: "project-key",
+      source: "opencode.json",
+    });
+  });
+
+  it("leaves a project template naming another variable unresolved, with no config key", async () => {
+    process.env.NOT_ALLOWED = "some-other-secret";
+    mockConfigFiles({
+      [TRUSTED.json]: legacyConfig({ deepseek: "global-key" }),
+      [PROJECT_FILE]: legacyConfig({ deepseek: "{env:NOT_ALLOWED}" }),
+    });
+    // OpenCode uses the project's value there, so the global key is not the one it has.
+    await expect(resolveApiKey(spec, PROJECT)).resolves.toBeNull();
+  });
+
+  it("a key the project clears falls through to the stored login; an env key still wins", async () => {
+    mockConfigFiles({
+      [TRUSTED.json]: legacyConfig({ deepseek: "global-key" }),
+      [PROJECT_FILE]: JSON.stringify({ providers: { deepseek: { settings: { apiKey: null } } } }),
+    });
+    mocks.readActiveCredentialRowsCached.mockResolvedValue(
+      asRows({ deepseek: { type: "api", key: "stored-key" } }),
+    );
+    await expect(resolveApiKeyLogin(spec, PROJECT)).resolves.toEqual({
+      state: "configured",
+      apiKey: "stored-key",
+    });
+
+    process.env.DEEPSEEK_API_KEY = "env-key";
+    await expect(resolveApiKeyLogin(spec, PROJECT)).resolves.toEqual({
+      state: "configured",
+      apiKey: "env-key",
+    });
+  });
+
+  it.each([
+    ["apiKey: null", { options: { apiKey: null } }],
+    ["a baseURL that is not a string", { options: { apiKey: "", baseURL: null } }],
+    ["a timeout that is not a positive integer", { options: { apiKey: "", timeout: 0 } }],
+    ["a header that is not a string", { options: { apiKey: "", headers: { "X-Retry": 1 } } }],
+    ["env that is not a list", { env: "DEEPSEEK_API_KEY", options: { apiKey: "project-key" } }],
+  ])("a legacy project entry OpenCode drops (%s) sets nothing", async (_label, entry) => {
+    mockConfigFiles({
+      [TRUSTED.json]: legacyConfig({ deepseek: "global-key" }),
+      [PROJECT_FILE]: JSON.stringify({ provider: { deepseek: entry } }),
+    });
+    await expect(resolveApiKey(spec, PROJECT)).resolves.toEqual({
+      key: "global-key",
+      source: "opencode.json",
+    });
+  });
+
+  it("a provider id the project clears leaves the vendor's next id as OpenCode has it", async () => {
+    mockConfigFiles({
+      [TRUSTED.json]: legacyConfig({ zai: "global-zai-key", "zai-coding-plan": "global-plan-key" }),
+      [PROJECT_FILE]: legacyConfig({ zai: "" }),
+    });
+    await expect(resolveApiKeyFromEnvAndConfig(API_KEY_VENDORS.zai, PROJECT)).resolves.toEqual({
+      key: "global-plan-key",
+      source: "opencode.json",
+    });
   });
 
   it.each([
@@ -291,7 +365,7 @@ describe("trusted config parsing", () => {
     ],
   ])("reads %s", async (_label, config, expected) => {
     mockConfigFiles({ [TRUSTED.json]: JSON.stringify(config) });
-    const result = await resolveApiKey(spec);
+    const result = await resolveApiKey(spec, PROJECT);
     expect(result?.key ?? null).toBe(expected);
   });
 
@@ -302,7 +376,7 @@ describe("trusted config parsing", () => {
     mockConfigFiles({
       [TRUSTED.json]: legacyConfig({ zai: "{env:ZAI_CODING_PLAN_API_KEY}" }),
     });
-    await expect(resolveApiKeyLogin(API_KEY_VENDORS.zai)).resolves.toEqual({
+    await expect(resolveApiKeyLogin(API_KEY_VENDORS.zai, PROJECT)).resolves.toEqual({
       state: "configured",
       apiKey: "templated-key",
     });
@@ -373,7 +447,7 @@ describe("API key login vendors (a broken stored login is reported, not skipped)
     mocks.readActiveCredentialRowsCached.mockResolvedValue(
       asRows({ "opencode-go": { type: secret, key: secret } }),
     );
-    const diagnostics = await getApiKeyLoginDiagnostics(API_KEY_VENDORS["opencode-go"]);
+    const diagnostics = await getApiKeyLoginDiagnostics(API_KEY_VENDORS["opencode-go"], PROJECT);
     expect(diagnostics).toMatchObject({
       state: "invalid",
       error: "OpenCode Go auth entry has unsupported type",
@@ -388,7 +462,7 @@ describe("API key login vendors (a broken stored login is reported, not skipped)
       mocks.readActiveCredentialRowsCached.mockResolvedValue(
         asRows({ [expected.authKeys[0]]: { type: "oauth" } }),
       );
-      await expect(resolveApiKeyLogin(spec)).resolves.toEqual({
+      await expect(resolveApiKeyLogin(spec, PROJECT)).resolves.toEqual({
         state: "configured",
         apiKey: `${expected.envVars[0]}-value`,
       });
@@ -396,7 +470,7 @@ describe("API key login vendors (a broken stored login is reported, not skipped)
 
       const lastEnvVar = expected.envVars.at(-1)!;
       for (const name of expected.envVars.slice(0, -1)) delete process.env[name];
-      await expect(getApiKeyLoginDiagnostics(spec)).resolves.toEqual({
+      await expect(getApiKeyLoginDiagnostics(spec, PROJECT)).resolves.toEqual({
         state: "configured",
         source: `env:${lastEnvVar}`,
         checkedPaths: [`env:${lastEnvVar}`],
@@ -406,7 +480,7 @@ describe("API key login vendors (a broken stored login is reported, not skipped)
   );
 
   it.each(LOGIN_VENDORS)(
-    "%s: trusted config aliases win over a broken stored login",
+    "%s: config aliases, global or project, win over a broken stored login",
     async (_id, expected, spec) => {
       mocks.readActiveCredentialRowsCached.mockResolvedValue(
         asRows({ [expected.authKeys[0]]: { type: "oauth" } }),
@@ -417,7 +491,7 @@ describe("API key login vendors (a broken stored login is reported, not skipped)
           [expected.providerKeys.at(-1)!]: "alias-key",
         }),
       });
-      await expect(getApiKeyLoginDiagnostics(spec)).resolves.toEqual({
+      await expect(getApiKeyLoginDiagnostics(spec, PROJECT)).resolves.toEqual({
         state: "configured",
         source: "opencode.jsonc",
         checkedPaths: [TRUSTED.jsonc],
@@ -425,18 +499,14 @@ describe("API key login vendors (a broken stored login is reported, not skipped)
       });
       expect(mocks.readActiveCredentialRowsCached).not.toHaveBeenCalled();
 
-      mockConfigFiles(
-        Object.fromEntries(
-          WORKSPACE.map((path) => [path, legacyConfig({ [expected.providerKeys[0]]: "k" })]),
-        ),
-      );
-      mocks.readActiveCredentialRowsCached.mockResolvedValue([]);
-      await expect(getApiKeyLoginDiagnostics(spec)).resolves.toEqual({
-        state: "none",
-        source: null,
-        checkedPaths: [],
+      mockConfigFiles({ [PROJECT_FILE]: legacyConfig({ [expected.providerKeys[0]]: "k" }) });
+      await expect(getApiKeyLoginDiagnostics(spec, PROJECT)).resolves.toEqual({
+        state: "configured",
+        source: "opencode.json",
+        checkedPaths: [PROJECT_FILE],
         credentialDatabasePaths: DB_PATHS,
       });
+      expect(mocks.readActiveCredentialRowsCached).not.toHaveBeenCalled();
     },
   );
 
@@ -448,7 +518,7 @@ describe("API key login vendors (a broken stored login is reported, not skipped)
           [expected.authKeys[0]]: { type: "api", key: "auth-key" },
         }),
       );
-      await expect(resolveApiKeyLogin(spec)).resolves.toEqual({
+      await expect(resolveApiKeyLogin(spec, PROJECT)).resolves.toEqual({
         state: "configured",
         apiKey: "auth-key",
       });
@@ -459,7 +529,7 @@ describe("API key login vendors (a broken stored login is reported, not skipped)
       mocks.readActiveCredentialRowsCached.mockResolvedValue(
         asRows({ [expected.authKeys[0]]: { type: "oauth" } }),
       );
-      await expect(getApiKeyLoginDiagnostics(spec)).resolves.toEqual({
+      await expect(getApiKeyLoginDiagnostics(spec, PROJECT)).resolves.toEqual({
         state: "invalid",
         source: "opencode.db",
         error: unsupportedTypeError(expected, "oauth"),
@@ -482,12 +552,14 @@ describe("per-vendor differences", () => {
     });
 
     process.env.MINIMAX_CHINA_CODING_PLAN_API_KEY = "china-key";
-    await expect(resolveApiKeyLogin(API_KEY_VENDORS["minimax-coding-plan"])).resolves.toEqual({
+    await expect(
+      resolveApiKeyLogin(API_KEY_VENDORS["minimax-coding-plan"], PROJECT),
+    ).resolves.toEqual({
       state: "none",
     });
-    await expect(resolveApiKeyLogin(API_KEY_VENDORS["minimax-china-coding-plan"])).resolves.toEqual(
-      { state: "configured", apiKey: "china-key" },
-    );
+    await expect(
+      resolveApiKeyLogin(API_KEY_VENDORS["minimax-china-coding-plan"], PROJECT),
+    ).resolves.toEqual({ state: "configured", apiKey: "china-key" });
   });
 
   it.each([
@@ -523,7 +595,9 @@ describe("per-vendor differences", () => {
 
   it("uses the fallback Alibaba tier for env keys and reports a bad stored tier", async () => {
     process.env.ALIBABA_API_KEY = "env-key";
-    await expect(resolveAlibabaCodingPlanAuthCached({ fallbackTier: "pro" })).resolves.toEqual({
+    await expect(
+      resolveAlibabaCodingPlanAuthCached(PROJECT, { fallbackTier: "pro" }),
+    ).resolves.toEqual({
       state: "configured",
       apiKey: "env-key",
       tier: "pro",
@@ -534,7 +608,7 @@ describe("per-vendor differences", () => {
     mocks.readActiveCredentialRowsCached.mockResolvedValue(
       asRows({ alibaba: { type: "api", key: "k", tier: "max" } }),
     );
-    await expect(getAlibabaCodingPlanAuthDiagnostics()).resolves.toEqual({
+    await expect(getAlibabaCodingPlanAuthDiagnostics(PROJECT)).resolves.toEqual({
       state: "invalid",
       source: "opencode.db",
       error: "Unsupported Alibaba Coding Plan tier: max",
@@ -585,12 +659,12 @@ describe("per-vendor differences", () => {
     }
 
     await withLogins([consoleSignIn, workspaceKey], async (signedIn) => {
-      await expect(resolveApiKeyLogin(spec)).resolves.toEqual({ state: "none" });
+      await expect(resolveApiKeyLogin(spec, PROJECT)).resolves.toEqual({ state: "none" });
       expect(signedIn.connection.active.mock.calls).toEqual([["opencode-go"], ["opencode"]]);
       expect(signedIn.connection.resolve).not.toHaveBeenCalled();
     });
     await withLogins([workspaceKey], async () => {
-      await expect(resolveApiKeyLogin(spec)).resolves.toEqual({
+      await expect(resolveApiKeyLogin(spec, PROJECT)).resolves.toEqual({
         state: "configured",
         apiKey: "workspace-key",
       });

@@ -317,10 +317,11 @@ async function runSeedProductionOpenRouter() {
   };
   const host = {
     client: createCliQuotaClient({
-      configRootDir: workspaceRoot,
+      directory: workspaceRoot,
       anthropicBinaryPath: settings.providers.anthropic.binaryPath,
     }),
     workspaceRoot,
+    locationDirectory: workspaceRoot,
     settings: () => ({ ...loaded, settings }),
   };
   const provider = getProviders().find(({ id }) => id === "openrouter");

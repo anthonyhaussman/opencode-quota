@@ -1,6 +1,6 @@
 import { existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
-import { homedir } from "node:os";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
 import {
@@ -26,7 +26,10 @@ import {
 import { createFakeIntegration } from "./helpers/fake-integration.js";
 
 // The key tests fake OpenCode's folders under the test home and the files in them.
-vi.mock("fs", () => ({ existsSync: vi.fn() }));
+vi.mock("fs", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("fs")>()),
+  existsSync: vi.fn(),
+}));
 vi.mock("fs/promises", () => ({ readFile: vi.fn() }));
 
 type JsonV1Source = Extract<RemoteApiQuotaProviderDefinition, { format: "json-v1" }>;
@@ -891,9 +894,12 @@ describe("json-v1", () => {
 });
 
 describe("quota provider key resolution", () => {
-  const trustedJson = join(homedir(), ".config", "opencode", "opencode.json");
-  const trustedJsonc = join(homedir(), ".config", "opencode", "opencode.jsonc");
-  const workspaceJson = join(process.cwd(), "opencode.json");
+  // Never created: every config file read and existence check is faked by `files`.
+  const fakeRoot = join(tmpdir(), "opencode-quota-remote-keys");
+  const trustedJson = join(fakeRoot, "config", "opencode", "opencode.json");
+  const trustedJsonc = join(fakeRoot, "config", "opencode", "opencode.jsonc");
+  /** The session's folder. */
+  const project = join(fakeRoot, "project");
 
   /** Fakes the files on disk: path -> JSON content. Every other path is missing. */
   function files(contents: Record<string, unknown>): void {
@@ -910,14 +916,20 @@ describe("quota provider key resolution", () => {
     ),
   });
 
-  beforeEach(() => files({}));
+  beforeEach(() => {
+    files({});
+    vi.stubEnv("HOME", fakeRoot);
+    vi.stubEnv("XDG_CONFIG_HOME", join(fakeRoot, "config"));
+    vi.stubEnv("OPENCODE_CONFIG_DIR", undefined);
+    vi.stubEnv("OPENCODE_CONFIG", undefined);
+  });
 
   it("uses explicit environment auth before trusted config", async () => {
     vi.stubEnv("EXPLICIT_KEY", "env-secret");
     files({ [trustedJson]: providerKeys({ "provider-one": "config-secret" }) });
 
     await expect(
-      resolveQuotaProviderApiKey(source({ apiKeyEnv: "EXPLICIT_KEY" })),
+      resolveQuotaProviderApiKey(source({ apiKeyEnv: "EXPLICIT_KEY" }), project),
     ).resolves.toMatchObject({ key: "env-secret", source: "env" });
   });
 
@@ -929,7 +941,7 @@ describe("quota provider key resolution", () => {
       }),
     });
 
-    await expect(resolveQuotaProviderApiKey(source())).resolves.toMatchObject({
+    await expect(resolveQuotaProviderApiKey(source(), project)).resolves.toMatchObject({
       key: "exact-secret",
       source: "opencode.json",
     });
@@ -940,23 +952,30 @@ describe("quota provider key resolution", () => {
     vi.stubEnv("OTHER_KEY", "other-secret");
     files({ [trustedJsonc]: providerKeys({ "provider-one": "{env:OTHER_KEY}" }) });
 
-    const result = await resolveQuotaProviderApiKey(source({ apiKeyEnv: "EXPLICIT_KEY" }));
+    const result = await resolveQuotaProviderApiKey(source({ apiKeyEnv: "EXPLICIT_KEY" }), project);
     expect(result.key).toBe("explicit-secret");
 
     vi.stubEnv("EXPLICIT_KEY", undefined);
-    const disallowed = await resolveQuotaProviderApiKey(source({ apiKeyEnv: "EXPLICIT_KEY" }));
+    const disallowed = await resolveQuotaProviderApiKey(
+      source({ apiKeyEnv: "EXPLICIT_KEY" }),
+      project,
+    );
     expect(disallowed.key).toBeUndefined();
     expect(JSON.stringify(disallowed)).not.toContain("other-secret");
   });
 
-  it("never reads workspace config, SDK config, aliases, or derived env names", async () => {
+  it("reads the session folder's config, never another folder's or derived env names", async () => {
     vi.stubEnv("PROVIDER_ONE_API_KEY", "derived-secret");
-    files({ [workspaceJson]: providerKeys({ "provider-one": "workspace-secret" }) });
+    const projectJson = join(project, "opencode.json");
+    files({
+      [projectJson]: providerKeys({ "provider-one": "project-secret" }),
+      [join(fakeRoot, "other", "opencode.json")]: providerKeys({ "provider-one": "other-secret" }),
+    });
 
-    const result = await resolveQuotaProviderApiKey(source());
-    expect(result.key).toBeUndefined();
-    expect(result.checkedPaths).not.toContain(workspaceJson);
-    expect(JSON.stringify(result)).not.toMatch(/workspace-secret|derived-secret/);
+    const result = await resolveQuotaProviderApiKey(source(), project);
+    expect(result).toMatchObject({ key: "project-secret", source: "opencode.json" });
+    expect(result.checkedPaths).toEqual([projectJson]);
+    expect(JSON.stringify(result)).not.toMatch(/other-secret|derived-secret/);
   });
 
   it("reads only a key login for the providerId and never resolves an OAuth sign-in", async () => {
@@ -980,11 +999,11 @@ describe("quota provider key resolution", () => {
     ]);
     const unbind = bindCredentialSource(createIntegrationCredentialSource(integration as never));
     try {
-      const signIn = await resolveQuotaProviderApiKey(source({ providerId: "opencode" }));
+      const signIn = await resolveQuotaProviderApiKey(source({ providerId: "opencode" }), project);
       expect(signIn.key).toBeUndefined();
       expect(integration.connection.resolve).not.toHaveBeenCalled();
 
-      const keyLogin = await resolveQuotaProviderApiKey(source());
+      const keyLogin = await resolveQuotaProviderApiKey(source(), project);
       expect(keyLogin).toMatchObject({ key: "db-secret", source: "opencode.db" });
     } finally {
       unbind();
@@ -998,7 +1017,7 @@ describe("quota provider key resolution", () => {
     vi.stubGlobal("fetch", fetch);
     const off = source({ apiKeyEnv: "EXPLICIT_KEY", enabled: false });
 
-    await expect(resolveQuotaProviderApiKey(off)).resolves.toEqual({
+    await expect(resolveQuotaProviderApiKey(off, project)).resolves.toEqual({
       source: null,
       checkedPaths: [],
       credentialDatabasePaths: [],

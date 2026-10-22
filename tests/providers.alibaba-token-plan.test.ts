@@ -56,6 +56,7 @@ async function fetchTokenPlan(requestTimeoutMs = 5_000) {
     "alibaba-token-plan",
     await alibabaTokenPlanProvider.fetch({
       workspaceRoot: project,
+      locationDirectory: project,
       config: { requestTimeoutMs },
     } as never),
   );

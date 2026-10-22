@@ -5,8 +5,7 @@ import { join } from "path";
 import { getPluginSpecFromEntry } from "./config-file-utils.js";
 import { asRecord, isRecord } from "./json-guards.js";
 import { getCredentialDatabasePaths, readCredentialRows } from "./opencode-auth.js";
-import { parseConfigDocument } from "./opencode-config-editor.js";
-import { getOpencodeRuntimeDirs } from "./opencode-runtime-paths.js";
+import { existingOpenCodeConfigFiles, readOpenCodeConfigs } from "./opencode-config-files.js";
 import { getQuotaProviderRuntimeIds } from "./provider-metadata.js";
 
 interface CursorAuthPresence {
@@ -125,12 +124,10 @@ export async function inspectCursorAuthPresence(): Promise<CursorAuthPresence> {
 }
 
 /** OpenCode 2 reads both the legacy `plugin`/`provider` keys and the native `plugins`/`providers` keys. */
-function inspectOpenCodeConfig(
-  raw: string,
-  path: string,
-): { matchedPlugin: boolean; matchedProvider: boolean } {
-  // OpenCode reads both file kinds as JSONC.
-  const parsed = parseConfigDocument(raw, "jsonc", path);
+function inspectOpenCodeConfig(parsed: Record<string, unknown>): {
+  matchedPlugin: boolean;
+  matchedProvider: boolean;
+} {
   const pluginSpecs: unknown[] = [
     ...(Array.isArray(parsed.plugin) ? parsed.plugin : []),
     ...(Array.isArray(parsed.plugins) ? parsed.plugins.map(getPluginSpecFromEntry) : []),
@@ -148,33 +145,25 @@ function inspectOpenCodeConfig(
   };
 }
 
-export async function inspectCursorOpenCodeIntegration(): Promise<CursorOpenCodeIntegration> {
-  const { configDir } = getOpencodeRuntimeDirs();
-  const checkedPaths = dedupe(
-    [configDir, process.cwd()].flatMap((dir) => [
-      join(dir, "opencode.json"),
-      join(dir, "opencode.jsonc"),
-    ]),
-  );
-
+/**
+ * Whether an OpenCode config file that counts for a session in `directory` loads Cursor's
+ * plugin or declares its provider. Files that do not parse are left out.
+ */
+export async function inspectCursorOpenCodeIntegration(
+  directory: string,
+): Promise<CursorOpenCodeIntegration> {
+  const checkedPaths = existingOpenCodeConfigFiles(directory);
   const matchedPaths: string[] = [];
   let pluginEnabled = false;
   let providerConfigured = false;
 
-  for (const path of checkedPaths) {
-    if (!existsSync(path)) continue;
-
-    try {
-      const raw = await readFile(path, "utf8");
-      const { matchedPlugin, matchedProvider } = inspectOpenCodeConfig(raw, path);
-      if (matchedPlugin || matchedProvider) {
-        matchedPaths.push(path);
-      }
-      pluginEnabled ||= matchedPlugin;
-      providerConfigured ||= matchedProvider;
-    } catch {
-      // Ignore invalid user configs here and let status output show missing matches.
+  for (const { path, config } of await readOpenCodeConfigs(directory)) {
+    const { matchedPlugin, matchedProvider } = inspectOpenCodeConfig(config);
+    if (matchedPlugin || matchedProvider) {
+      matchedPaths.push(path);
     }
+    pluginEnabled ||= matchedPlugin;
+    providerConfigured ||= matchedProvider;
   }
 
   return { pluginEnabled, providerConfigured, matchedPaths, checkedPaths };

@@ -44,6 +44,7 @@ function storeFor(provider: QuotaProvider) {
   const host = {
     client: {} as never,
     workspaceRoot: runtime.root,
+    locationDirectory: runtime.root,
     settings: () => loaded,
     providers: () => registry.providers,
   };
@@ -87,6 +88,7 @@ describe("provider source logins", () => {
     const host = {
       client: {} as never,
       workspaceRoot: runtime.root,
+      locationDirectory: runtime.root,
       settings: () => loaded,
       providers: () => registry.providers,
     };
@@ -120,6 +122,7 @@ describe("provider source logins", () => {
           config: { providers: async () => ({ data: { providers: [{ id: runtimeId }] } }) },
         },
         workspaceRoot: runtime.root,
+        locationDirectory: runtime.root,
         settings: () => loaded,
         providers: () => registry.providers,
       };

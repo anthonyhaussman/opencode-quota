@@ -169,8 +169,8 @@ async function fetchGlmQuota(
   ctx: QuotaProviderContext,
 ): Promise<ProviderFetchResult> {
   const requestTimeoutMs = ctx.config?.requestTimeoutMs;
-  const keys = await readVendorKeys(endpoint.auth);
-  const authDetails = vendorKeyDetails(endpoint.auth, keys);
+  const keys = await readVendorKeys(endpoint.auth, ctx.locationDirectory);
+  const authDetails = vendorKeyDetails(endpoint.auth, keys, ctx.locationDirectory);
   if (!keys.envOrConfig) {
     const stored = await fetchStoredKeys({
       providerName: endpoint.label,
@@ -214,7 +214,7 @@ function glmProvider(
         ctx,
         providerId: id,
         availability: "listed-and-key",
-        readKeys: () => readVendorKeys(endpoint.auth),
+        readKeys: () => readVendorKeys(endpoint.auth, ctx.locationDirectory),
       });
     },
 

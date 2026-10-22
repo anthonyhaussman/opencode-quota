@@ -130,7 +130,7 @@ describe("createCliQuotaClient", () => {
     writeFileSync(join(workspaceDir, "opencode.json"), "{}", "utf8");
 
     const client = () =>
-      createCliQuotaClient({ configRootDir: workspaceDir, anthropicBinaryPath: "claude" });
+      createCliQuotaClient({ directory: workspaceDir, anthropicBinaryPath: "claude" });
     const unauthenticated = await client().config.providers();
     expect(unauthenticated.data?.providers).toEqual([]);
 
@@ -146,6 +146,26 @@ describe("createCliQuotaClient", () => {
       { id: "kimi-code-plan-global" },
       { id: "kimi-code-plan-cn" },
     ]);
+  });
+
+  it("lists the providers of every OpenCode config file that counts for its folder", async () => {
+    vi.stubEnv("HOME", tempDir);
+    // The global opencode.json counts next to an opencode.jsonc.
+    writeFileSync(join(globalConfigDir, "opencode.json"), '{ "provider": { "deepseek": {} } }');
+    writeFileSync(join(globalConfigDir, "opencode.jsonc"), '{ "theme": "dark" }');
+    // So do a parent folder's file and the folder's own .opencode folder.
+    writeFileSync(join(tempDir, "opencode.json"), '{ "provider": { "openai": {}, }, }');
+    mkdirSync(join(workspaceDir, ".opencode"));
+    writeFileSync(
+      join(workspaceDir, ".opencode", "opencode.jsonc"),
+      '{\n  // dot folder\n  "provider": { "zai": {} },\n}\n',
+    );
+
+    const client = createCliQuotaClient({ directory: workspaceDir, anthropicBinaryPath: "claude" });
+
+    await expect(client.config.providers()).resolves.toEqual({
+      data: { providers: [{ id: "deepseek" }, { id: "openai" }, { id: "zai" }] },
+    });
   });
 });
 
@@ -358,6 +378,7 @@ describe("runCliShowCommand", () => {
         loadProviderSource({
           client: { config: { providers: async () => ({ data: { providers: [] } }) } },
           workspaceRoot: workspaceDir,
+          locationDirectory: workspaceDir,
           settings: () => loaded,
           providers: () => mockProviders,
         }),
