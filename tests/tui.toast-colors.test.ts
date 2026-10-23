@@ -101,6 +101,9 @@ describe("colored quota toasts", () => {
     ]);
   });
 
+  /** The renderer's root in the fake OpenTUI trees below. */
+  const ROOT = { parent: null };
+
   /** A toast shown through an OpenCode toast that `show` stands for, once the TUI has drawn. */
   function showOn({
     show = () => {},
@@ -116,11 +119,16 @@ describe("colored quota toasts", () => {
       theme: () => THEME as unknown as Theme,
       display: defaultDisplaySettings,
       owner: () => owner,
+      root: () => ROOT,
     });
     const toast = lines();
     const message = plainMessage(toast);
-    showToast({ variant: "info", message, duration: 9_000 }, toast);
-    return { messages: shown.mock.calls.map(([options]) => options.message), message };
+    const drawnToast = showToast({ variant: "info", message, duration: 9_000 }, toast);
+    return {
+      messages: shown.mock.calls.map(([options]) => options.message),
+      message,
+      drawnToast,
+    };
   }
 
   it("sends the colored spans once the TUI has drawn", () => {
@@ -130,23 +138,79 @@ describe("colored quota toasts", () => {
     expect(spansText(messages[0])).toBe(message);
   });
 
+  /**
+   * The spans' toast as OpenTUI holds it: the toast's box under the renderer's root, its message
+   * box, OpenCode's <text>, and the root text node that keeps the <text>'s spans.
+   */
+  function drawnTree() {
+    const { messages, drawnToast } = showOn();
+    const first = (messages[0] as unknown as Array<string | (Node & { parent?: unknown })>).find(
+      (child) => typeof child !== "string",
+    )!;
+    const toastBox = { parent: ROOT as object | null, isDestroyed: false };
+    const messageBox = { parent: toastBox as object | null, isDestroyed: false };
+    const text = { parent: messageBox as object | null, isDestroyed: false };
+    const textRoot = { parent: null, textParent: text, children: [first] };
+    first.parent = textRoot;
+    return { onScreen: () => drawnToast?.onScreen(), first, toastBox, messageBox, text, textRoot };
+  }
+
+  it("tells that the spans' toast is on screen while they hang under the renderer's root", () => {
+    // Not in a <text> yet.
+    expect(showOn().drawnToast?.onScreen()).toBe(false);
+    expect(drawnTree().onScreen()).toBe(true);
+  });
+
+  it("tells that a titled toast replaced the spans' toast, also once their <text> is destroyed", () => {
+    const { onScreen, first, messageBox, text, textRoot } = drawnTree();
+    // OpenCode's toast draws a titled toast in another box: OpenTUI unlinks the old one at once...
+    messageBox.parent = null;
+    expect(onScreen()).toBe(false);
+    // ...and destroys it a moment later. The <text> empties its span list; the span keeps its parent.
+    messageBox.isDestroyed = true;
+    text.parent = null;
+    text.isDestroyed = true;
+    textRoot.children.length = 0;
+    expect(first.parent).toBe(textRoot);
+    expect(onScreen()).toBe(false);
+  });
+
+  it("tells that the toast closed, or that another message replaced the spans", () => {
+    const closed = drawnTree();
+    closed.toastBox.parent = null;
+    expect(closed.onScreen()).toBe(false);
+    const replaced = drawnTree();
+    replaced.first.parent = null;
+    expect(replaced.onScreen()).toBe(false);
+  });
+
+  it("answers false on a loop in the parents", () => {
+    const { onScreen, toastBox } = drawnTree();
+    toastBox.parent = toastBox;
+    expect(onScreen()).toBe(false);
+  });
+
   it("sends the plain message when OpenCode's toast throws on the spans", () => {
-    const { messages, message } = showOn({
+    const { messages, message, drawnToast } = showOn({
       show: (toast) => {
         if (typeof toast.message !== "string") throw new Error("message must be a string");
       },
     });
     expect(messages).toHaveLength(2);
     expect(messages[1]).toBe(message);
+    // A plain message can't tell whether it is on screen.
+    expect(drawnToast).toBeUndefined();
   });
 
   it("sends the plain message before the TUI has drawn, or when making the spans fails", () => {
     const before = showOn({ drawn: false });
     expect(before.messages).toEqual([before.message]);
+    expect(before.drawnToast).toBeUndefined();
     // Without a JSX runtime, making a span throws.
     vi.unstubAllGlobals();
-    const { messages, message } = showOn();
+    const { messages, message, drawnToast } = showOn();
     expect(messages).toEqual([message]);
+    expect(drawnToast).toBeUndefined();
   });
 
   it("sends a toast without lines as it is", () => {
@@ -156,6 +220,7 @@ describe("colored quota toasts", () => {
       theme: () => THEME as unknown as Theme,
       display: defaultDisplaySettings,
       owner: () => ({}) as Owner,
+      root: () => ROOT,
     });
     const toast = { variant: "success", title: "Quota available", message: "reset", duration: 1 };
     showToast(toast as ToastOptions);

@@ -14,7 +14,7 @@ import {
   TextAttributes,
 } from "@opentui/core";
 import type { JSX } from "@opentui/solid";
-import { createEffect, createMemo, createSignal, For, on, Show } from "solid-js";
+import { createEffect, createMemo, createSignal, For, on, onCleanup, Show } from "solid-js";
 import type { QuotaSnapshot } from "../../core/types.js";
 import { columnsOf } from "../../view/columns.js";
 import { fit } from "../../view/format.js";
@@ -314,7 +314,7 @@ export type SettingsEditor = ReturnType<typeof createSettingsEditor>;
 export function createSettingsEditor(
   api: WindowHost,
   display: DisplayStore,
-  previewToast: Toasts["preview"],
+  toasts: Pick<Toasts, "preview" | "closePreview">,
 ) {
   const [tab, setTabNow] = createSignal<SettingsTab>();
   const [selected, setSelected] = createSignal("");
@@ -327,6 +327,8 @@ export function createSettingsEditor(
   const [dragging, setDragging] = createSignal<string>();
   let draggedSincePress = false;
   let lastPress = { id: "", atMs: 0 };
+  /** Windows showing the Toast page: OpenCode can draw the window again before the old one goes. */
+  let toastPages = 0;
   /** The inline input while a line takes typing; its keys work only while it has the keyboard. */
   let typingInput: Renderable | undefined;
   const theme = () => api.theme;
@@ -612,14 +614,29 @@ export function createSettingsEditor(
       display.edit(surfaceEditor(current, snapshot()).drag(id, pointer));
     }
 
-    // On the Toast tab the real toast shows again after every change of what it shows.
+    // On the Toast page the real toast stays open until another toast replaces it, and shows
+    // again after every change of what it shows. Another page or tab, or closing the window,
+    // closes it (`toasts.ts`).
     createEffect(
       on(
         () => {
           return props.tab === "toast" && JSON.stringify(shown().toast);
         },
         (key) => {
-          if (key) previewToast(props.sessionID);
+          if (key) toasts.preview(props.sessionID);
+        },
+      ),
+    );
+    createEffect(
+      on(
+        () => props.tab === "toast",
+        (onToastPage) => {
+          if (!onToastPage) return;
+          toastPages += 1;
+          onCleanup(() => {
+            toastPages -= 1;
+            if (toastPages === 0) toasts.closePreview();
+          });
         },
       ),
     );
@@ -890,7 +907,7 @@ export function createSettingsEditor(
             )}
           </Show>
           <Show when={settingsTab() === "toast" && shown().toast.show}>
-            <Button label="Show toast" run={() => previewToast(props.sessionID)} />
+            <Button label="Show toast" run={() => toasts.preview(props.sessionID)} />
           </Show>
           <Cell fg={warning()}>{dirty() ? " unsaved changes" : ""}</Cell>
         </Show>

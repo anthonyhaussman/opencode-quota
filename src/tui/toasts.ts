@@ -4,8 +4,29 @@
  * after each reply, after a question, and on a limit reset only when turned on. A quota toast
  * shows its rows in the grouped or detailed layout (`toast.layout`), with bars in the sidebar's
  * bar shape; the host colors them where OpenCode can draw that (`toast-colors.tsx`). It has no
- * title: its rows say what it is. Every quota toast is made here, the Settings Toast tab's
- * preview too.
+ * title: its rows say what it is. Every quota toast is made here, the Toast page's preview too.
+ *
+ * The Toast page's preview stays open while the page shows, until another toast replaces it. The
+ * plugin API can only show a toast, for a duration; quota tells whether its toast is still on
+ * screen from the toast's colored spans (`toast-colors.tsx`). The preview first shows like any
+ * quota toast; while a copy of it is on screen, a new copy that lasts 3 s replaces it every
+ * second. Leaving the page stops that and closes the preview: a copy that lasts 1 ms replaces it,
+ * unless another toast already did. Without the spans the preview shows for `toast.seconds`, as
+ * other quota toasts do.
+ *
+ * Once another toast replaces the preview, or a copy runs out before the next one comes (the TUI
+ * stalled for over 2 s), the preview does not come back by itself: quota can't tell a copy that
+ * is gone from one OpenCode holds back, and a new copy would cut the other toast short. A change
+ * on the page, or Show toast, shows it again.
+ *
+ * While the mouse is on a toast, OpenCode pauses it and holds back the toasts shown meanwhile,
+ * the closing copy too. Quota then adds no copy, a change on the page included, until its
+ * held-back one shows. OpenCode shows each held-back toast in turn for its whole duration, and
+ * the plugin API can't take one back. So once the mouse moves away, a closed preview ends within
+ * about 6 s: the paused copy's rest, then the held-back copy. A copy held back behind another
+ * toast, such as a reset notice that came while the mouse was on the preview, brings the preview
+ * back after that toast; it shows then even when the page closed meanwhile, for 3 s, or for
+ * `toast.seconds` when it is the preview's first toast.
  *
  * Reset notices that arrive together show as one toast. While a turn's toast is being made,
  * they wait and show after it, so the turn's toast does not replace them at once. When the TUI
@@ -19,6 +40,7 @@ import { visibleRow } from "../view/select.js";
 import { type Line, lineText, type ToastInput, toastInput, toastLines } from "../view/text.js";
 import type { QuotaClient } from "./client.js";
 import type { DisplaySettings } from "./display.js";
+import type { DrawnToast } from "./toast-colors.js";
 
 /** The title of quota's one-line toasts (a hint, a wrong range); quota toasts have none. */
 export const TOAST_TITLE = "OpenCode Quota";
@@ -33,8 +55,11 @@ export type ToastOptions = {
 export type TurnEnd = "reply" | "compaction" | "question";
 
 export type ToastHost = {
-  /** Shows a toast. A quota toast brings its `lines` too; its message is their plain text. */
-  show: (toast: ToastOptions, lines?: Line[]) => void;
+  /**
+   * Shows a toast. A quota toast brings its `lines` too; its message is their plain text.
+   * Returns the toast when it can tell whether it is still on screen.
+   */
+  show: (toast: ToastOptions, lines?: Line[]) => DrawnToast | undefined;
   display: () => DisplaySettings;
   /** The terminal's columns, which a toast's width follows. */
   terminalWidth: () => number;
@@ -52,10 +77,39 @@ export type Toasts = {
   afterTurn(trigger: TurnEnd, sessionID: string): Promise<void>;
   /** Shows the reset notices of a snapshot that this TUI has not shown yet, in one toast. */
   showResetNotices(snapshot: QuotaSnapshot): void;
-  /** The Settings Toast tab's "Show toast": the toast a turn would show in `sessionID` now. */
+  /**
+   * The Toast page's preview: the toast a turn would show in `sessionID` now. It replaces the
+   * page's earlier preview and stays open until `closePreview` or another toast (see above).
+   */
   preview(sessionID: string): void;
+  /**
+   * The Toast page closed: closes its preview, when that is still the toast on screen. A copy
+   * that OpenCode holds back still shows (see above).
+   */
+  closePreview(): void;
   /** The TUI left its server: drops the notices still waiting, as not shown. */
   cancel(): void;
+};
+
+/** While the Toast page shows, a new copy of its preview comes this often (see above)... */
+const PREVIEW_STEP_MS = 1000;
+/** ...and lasts this long: past the next copy, and short once the page closes. */
+const PREVIEW_COPY_MS = 3000;
+/** A copy of the preview shown this long replaces it and closes right away. */
+const PREVIEW_CLOSE_MS = 1;
+
+/** The Toast page's preview while the page shows. */
+type Preview = {
+  toast: ToastOptions;
+  lines: Line[];
+  /** The copy last seen on screen. */
+  shown: DrawnToast | undefined;
+  /**
+   * The copy shown last, until it is seen on screen: OpenCode can hold it back, or another toast
+   * replaced it (see above).
+   */
+  next: DrawnToast | undefined;
+  timer: ReturnType<typeof setTimeout> | undefined;
 };
 
 /** What a toast without a title keeps right of its text: OpenCode's close "x", 2 columns in. */
@@ -113,6 +167,8 @@ export function createToasts(host: ToastHost): Toasts {
   /** Turns whose toast is being made; reset notices wait for them. */
   let turnsRunning = 0;
   let waitingNotices: Array<{ id: string; message: string }> = [];
+  /** The Toast page's preview, until the page closes or a newer preview replaces it. */
+  let preview: Preview | undefined;
 
   function showNotices(): void {
     if (turnsRunning > 0 || waitingNotices.length === 0) return;
@@ -138,6 +194,34 @@ export function createToasts(host: ToastHost): Toasts {
       nowMs: now(),
       width: toastRoom(host.terminalWidth()),
     });
+  }
+
+  /**
+   * Shows a new copy of `open` while its last copy is on screen, then checks again in a second.
+   * Until its newest copy is seen on screen it adds none: that copy may be held back or replaced
+   * (see above).
+   */
+  function keepPreview(open: Preview): void {
+    if (preview !== open) return;
+    if (open.next?.onScreen()) {
+      open.shown = open.next;
+      open.next = undefined;
+    }
+    if (open.next === undefined) {
+      if (!open.shown?.onScreen()) return;
+      open.next = host.show({ ...open.toast, duration: PREVIEW_COPY_MS }, open.lines);
+    }
+    open.timer = setTimeout(() => keepPreview(open), PREVIEW_STEP_MS);
+  }
+
+  /** Closes the Toast page's preview when it is still on screen; another toast stays. */
+  function closePreview(): void {
+    const open = preview;
+    preview = undefined;
+    if (!open) return;
+    clearTimeout(open.timer);
+    if (!open.shown?.onScreen() && !open.next?.onScreen()) return;
+    host.show({ ...open.toast, duration: PREVIEW_CLOSE_MS }, open.lines);
   }
 
   async function turnToast(trigger: TurnEnd, sessionID: string): Promise<void> {
@@ -200,9 +284,34 @@ export function createToasts(host: ToastHost): Toasts {
     preview(sessionID) {
       const snapshot = host.quota.snapshot(sessionID);
       const display = host.display();
-      if (!snapshot || !display.toast.show) return;
-      showQuota("info", quotaInput(snapshot, display), display.toast.seconds);
+      const lines = snapshot && display.toast.show ? toastLines(quotaInput(snapshot, display)) : [];
+      const message = lines.map(lineText).join("\n");
+      if (!message) {
+        closePreview();
+        return;
+      }
+      const old = preview;
+      clearTimeout(old?.timer);
+      const toast: ToastOptions = {
+        variant: "info",
+        message,
+        duration: display.toast.seconds * 1000,
+      };
+      const open: Preview = { toast, lines, shown: undefined, next: undefined, timer: undefined };
+      if (old?.shown?.onScreen() && old.next !== undefined && !old.next.onScreen()) {
+        // OpenCode holds back the old preview's last copy, and would hold this toast too: the new
+        // preview waits for that copy, then replaces it.
+        open.shown = old.shown;
+        open.next = old.next;
+      } else {
+        open.next = host.show(toast, lines);
+      }
+      preview = open;
+      // Inside a Solid update OpenCode draws the toast only when the update ends: after this call.
+      queueMicrotask(() => keepPreview(open));
     },
+
+    closePreview,
 
     cancel() {
       for (const notice of waitingNotices) shownNotices.delete(notice.id);

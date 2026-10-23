@@ -25,7 +25,7 @@
 opencode plugin add @slkiser/opencode-quota
 ```
 
-Restart OpenCode and type `/quota`. A window opens with your limits. Click a tab (Usage, Limits, Plugin, Settings) or press `tab` to move between them; click or press `esc` to close it.
+Restart OpenCode and type `/quota`. A window opens with your limits. Click a tab (Usage, Limits, Plugin, or a Settings tab) or press `tab` to move between them; click or press `esc` to close it.
 
 > [!IMPORTANT]
 > You need OpenCode `2.0.26+`; the terminal commands also need Node.js `22.13+` or `23.4+`. Still on OpenCode 1? Run `npx @slkiser/opencode-quota@4 init` instead.
