@@ -26,6 +26,7 @@ import {
   type UsageQuery,
   type UsageReport,
   usageReport,
+  withProviderNames,
 } from "./core/usage.js";
 import { findGitWorktreeRoot } from "./lib/config-file-utils.js";
 import { sanitizeDisplayText } from "./lib/display-sanitize.js";
@@ -207,10 +208,17 @@ export function createQuotaServerPlugin(
         };
       };
 
-      // The usage report with the configured price list, after a due price download had its chance.
+      // The usage report with the configured price list, after a due price download had its
+      // chance, and OpenCode's names for its providers. Without the names it shows their ids.
       const loadUsageReport = async (query: UsageQuery): Promise<UsageReport> => {
         await refreshPricesIfDue();
-        return usageReport(query);
+        const report = await usageReport(query);
+        try {
+          return withProviderNames(report, (await ctx.provider.list()).data);
+        } catch (error) {
+          console.warn(`[opencode-quota] provider names failed: ${safeErrorText(error)}`);
+          return report;
+        }
       };
 
       // A notice can target the users of some providers: the enabled and available ones,

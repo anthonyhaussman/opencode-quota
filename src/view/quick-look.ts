@@ -7,15 +7,12 @@
 import type { QuotaSnapshot, Words } from "../core/types.js";
 import { type UsageRange, usageRangeLabel } from "../core/usage-ranges.js";
 import type { UsageProviderRow, UsageReport } from "../core/usage.js";
-import {
-  getQuotaProviderDisplayLabel,
-  getQuotaProviderIdsForRuntimeId,
-} from "../lib/provider-metadata.js";
+import { getQuotaProviderIdsForRuntimeId } from "../lib/provider-metadata.js";
 import { columnsOf } from "./columns.js";
 import { DEFAULT_WORDS, fit, formatTokens, formatUsd } from "./format.js";
 import { errorWords, type Place, rowFacts } from "./row-facts.js";
 import { type Group, type RowSettings, visibleGroups } from "./select.js";
-import { costText } from "./usage.js";
+import { costText, usageProviderName } from "./usage.js";
 
 /** The range of the usage `/quota` shows. */
 export const DEFAULT_QUICK_LOOK_RANGE: Exclude<UsageRange, "between"> = "7d";
@@ -97,7 +94,11 @@ function blocksOf(
     for (const group of own) claimed.add(group);
     // One group: its title names the account ("Custom providers (Team)").
     const name = own.length === 1 ? own[0].title : own[0]?.name;
-    return { name: name ?? getQuotaProviderDisplayLabel(row.providerID), usage: row, groups: own };
+    return {
+      name: name ?? usageProviderName(row.providerID, report?.providerNames),
+      usage: row,
+      groups: own,
+    };
   });
   const unused = groups.filter((group) => !claimed.has(group));
   const quotaBlocks = unused.map((group): Block => ({ name: group.title, groups: [group] }));

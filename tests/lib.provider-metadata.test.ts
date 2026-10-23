@@ -4,6 +4,7 @@ import {
   getCanonicalQuotaProviderId,
   getQuotaProviderDisplayLabel,
   getQuotaProviderIdsForRuntimeId,
+  getQuotaProviderLabel,
   getQuotaProviderRuntimeIds,
   QUOTA_PROVIDER_CATALOG,
 } from "../src/lib/provider-metadata.js";
@@ -57,6 +58,8 @@ describe("provider-metadata", () => {
   ])("knows %j as %s (%s)", (input, id, label, runtimeIds) => {
     expect(getCanonicalQuotaProviderId(input)).toBe(id);
     expect(getQuotaProviderDisplayLabel(input)).toBe(label);
+    // An unknown id has no label of its own.
+    expect(getQuotaProviderLabel(input)).toBe(id === undefined ? undefined : label);
     expect(getQuotaProviderRuntimeIds(input)).toEqual(runtimeIds);
   });
 

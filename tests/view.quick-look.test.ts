@@ -172,6 +172,15 @@ describe("quick look: short text", () => {
     );
   });
 
+  it("names a used provider without quota as OpenCode does, else by its id", () => {
+    const usage = {
+      ...report([usageRow("moonshotai", 3, 1_000_000, 1), usageRow("ollama", 0, 500_000, 1)]),
+      providerNames: { moonshotai: "Moonshot AI" },
+    };
+    const lines = shortText({ snapshot: snapshot([]), usage }).split("\n");
+    expect(lines.slice(1)).toEqual(["● Moonshot AI  $3.00", "● ollama       $0.00"]);
+  });
+
   it("says when quota found no provider", () => {
     expect(shortText({ snapshot: snapshot([]), usage: report([]) })).toBe(
       "Quota · 7 days · no usage\nNo quota providers found. Run /quota_status to see why.",

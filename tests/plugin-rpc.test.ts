@@ -253,6 +253,51 @@ describe("server quota RPC", () => {
     expect(all.report.totals.tokens.processed).toBe(1_500);
   });
 
+  it("names the usage report's providers as OpenCode does, and keeps their ids when it can't", async () => {
+    vi.setSystemTime(new Date(2026, 9, 10, 12));
+    const databaseDir = await mkdtemp(join(tmpdir(), "opencode-quota-usage-names-"));
+    onTestFinished(() => rm(databaseDir, { recursive: true, force: true }));
+    const databasePath = join(databaseDir, "opencode.db");
+    vi.stubEnv("OPENCODE_DB", databasePath);
+    const now = Date.now();
+    writeSessionDatabase(databasePath, {
+      sessions: [{ id: "session-1", created: now - 120_000 }],
+      messages: [
+        {
+          id: "msg_1",
+          sessionID: "session-1",
+          created: now - 60_000,
+          completed: now - 59_000,
+          providerID: "moonshotai",
+          modelID: "kimi-k3",
+          tokens: { input: 1_000 },
+        },
+      ],
+    });
+    const { call, runCommand, ctx } = await setupServer({
+      openCodeProviders: [
+        { id: "moonshotai", name: "Moonshot AI" },
+        { id: "openai", name: "OpenAI" },
+      ],
+    });
+
+    const named = (await call("usage", { range: "today" })) as { report: UsageReport };
+    expect(named.report.providerNames).toEqual({ moonshotai: "Moonshot AI" });
+    // /quota_usage posts the report with the same names.
+    await runCommand("quota_usage");
+    const [posted] = ctx.session.prompt.mock.calls.at(-1) ?? [];
+    expect(posted?.text).toMatch(/^● Moonshot AI +<\$0\.01 +100\.0%/m);
+
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    ctx.provider.list.mockRejectedValueOnce(new Error("provider list offline"));
+    const unnamed = (await call("usage", { range: "today" })) as { report: UsageReport };
+    expect(unnamed.report).not.toHaveProperty("providerNames");
+    expect(unnamed.report.providers.map((row) => row.providerID)).toEqual(["moonshotai"]);
+    expect(warn).toHaveBeenCalledWith(
+      "[opencode-quota] provider names failed: provider list offline",
+    );
+  });
+
   it("serves v6 rows from the store, saves them and emits changed", async () => {
     // A long interval: the snapshot call below answers from memory without a new fetch.
     useSettings({ providers: { checking: { minIntervalMs: 60_000 } } });

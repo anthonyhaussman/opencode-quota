@@ -947,6 +947,66 @@ describe("usageView", () => {
   });
 });
 
+describe("provider names", () => {
+  /** Copilot (a quota provider), two providers only OpenCode names, and one nobody names. */
+  function namedReport(): UsageReport {
+    const report = buildReport({
+      range: "7d",
+      sessions: 4,
+      providers: [
+        ["github-copilot", 1, 4, 4 * M],
+        ["moonshotai", 1, 3, 3 * M],
+        ["zai-coding-plan", 1, 2, 2 * M],
+        ["ollama", 1, 0, 1 * M, 1 * M],
+      ],
+      models: [
+        ["github-copilot", "claude-sonnet-5", 4, 4 * M],
+        ["moonshotai", "kimi-k3", 3, 3 * M],
+        ["zai-coding-plan", "glm-5.3", 2, 2 * M],
+        ["ollama", "qwen3-coder:30b", 0, 1 * M, 1 * M],
+      ],
+      days: [[9, 10 * M, 1 * M]],
+      tokens: { cachedInput: 0, uncachedInput: 10 * M, output: 0 },
+      costByType: { input: 9, cacheRead: 0, cacheWrite: 0, output: 0 },
+      cacheSavingsUsd: 0,
+    });
+    return {
+      ...report,
+      providerNames: {
+        "github-copilot": "GitHub Copilot",
+        moonshotai: "Moonshot AI",
+        "zai-coding-plan": "Z.ai Coding Plan",
+      },
+    };
+  }
+
+  /** The provider table's names, top to bottom. */
+  const names = (lines: string[]) =>
+    lines
+      .slice(lines.findIndex((line) => line.startsWith("Provider")) + 1)
+      .slice(0, 4)
+      .map((line) => line.slice(2).split(/ {2,}/)[0]);
+
+  it("names a quota provider as the sidebar does, else as OpenCode does, else by its id", () => {
+    const expected = ["Copilot", "Moonshot AI", "Z.ai Coding Plan", "ollama"];
+    const view = render(namedReport(), { mode: "cost", breakdown: "model", width: 80 });
+    const text = usageText(namedReport(), { mode: "cost", breakdown: "model" }).split("\n");
+
+    expect(names(view)).toEqual(expected);
+    expect(names(text)).toEqual(expected);
+  });
+
+  it("names the provider in a model's details", () => {
+    const report = namedReport();
+    const detail = (index: number) =>
+      textOf(modelDetailView(report, report.models[index], { mode: "cost", width: 80 })[1]);
+
+    expect(detail(0)).toMatch(/^Copilot · /);
+    expect(detail(1)).toMatch(/^Moonshot AI · /);
+    expect(detail(3)).toMatch(/^ollama · /);
+  });
+});
+
 describe("usageText", () => {
   it("is plain text of at most 64 columns, with a range title, no chart and 10 breakdown rows", () => {
     const text = usageText(t3Report(), { mode: "cost", breakdown: "day", width: 200 });

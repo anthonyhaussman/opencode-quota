@@ -58,7 +58,8 @@ export type ServerCommand = {
 /**
  * A fake OpenCode context for the server plugin's `setup`. It records the tools, slash
  * commands and session hooks the plugin adds; `emit` records the RPC events. OpenCode lists
- * the providers `openCodeProviders` names, and `sessionGet` answers for every session.
+ * the providers `openCodeProviders` names (an id alone is also its name), and `sessionGet`
+ * answers for every session.
  */
 export function createServerContext({
   // The test file's own temp home (tests/setup.ts), so OpenCode's project config is read only
@@ -69,7 +70,7 @@ export function createServerContext({
   events = { async *[Symbol.asyncIterator]() {} },
 }: {
   directory?: string;
-  openCodeProviders?: string[];
+  openCodeProviders?: Array<string | { id: string; name: string }>;
   sessionGet?: MockFunction;
   events?: AsyncIterable<{ type: string }>;
 } = {}) {
@@ -80,7 +81,13 @@ export function createServerContext({
   const emit = vi.fn(async (_name: string, _data: unknown) => {});
   const ctx = {
     location: { directory },
-    provider: { list: vi.fn(async () => ({ data: openCodeProviders.map((id) => ({ id })) })) },
+    provider: {
+      list: vi.fn(async () => ({
+        data: openCodeProviders.map((item) =>
+          typeof item === "string" ? { id: item, name: item } : item,
+        ),
+      })),
+    },
     session: {
       get: sessionGet,
       wait: vi.fn(async (_input: { sessionID: string }) => {}),
