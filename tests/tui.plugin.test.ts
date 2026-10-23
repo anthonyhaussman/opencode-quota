@@ -9,7 +9,7 @@ import { readActiveCredentialRowsCached, readCredentialRows } from "../src/lib/o
 import type { QuotaClient } from "../src/tui/client.js";
 import { type DisplaySettings, defaultDisplaySettings } from "../src/tui/display.js";
 import plugin from "../src/tui/index.tsx";
-import { createToasts, type TurnEnd, toastRoom } from "../src/tui/toasts.js";
+import { createToasts, type ToastOptions, type TurnEnd, toastRoom } from "../src/tui/toasts.js";
 import { createFakeTuiHost, type Route, stubJsx } from "./helpers/fake-tui-host.js";
 import { THEME } from "./helpers/jsx-tree.js";
 
@@ -426,6 +426,124 @@ describe("quota toasts", () => {
     // Unshown, the notice shows when a snapshot brings it again.
     toasts.showResetNotices(withNotice);
     expect(titles()).toEqual(["Quota available"]);
+  });
+});
+
+describe("the Toast page's preview", () => {
+  /**
+   * Toasts whose `show` stands for OpenCode's toast: the last toast shown is the one on screen,
+   * and it can tell so when `drawn` (a colored toast) is true.
+   */
+  function startPreview(drawn = true) {
+    const display = defaultDisplaySettings();
+    let onScreen: ToastOptions | undefined;
+    const show = vi.fn((toast: ToastOptions) => {
+      onScreen = toast;
+      return drawn ? { onScreen: () => onScreen === toast } : undefined;
+    });
+    const toasts = createToasts({
+      show,
+      display: () => display,
+      terminalWidth: () => 120,
+      quota: { snapshot: () => OK } as unknown as QuotaClient,
+      isChildSession: () => false,
+      now: () => NOW,
+    });
+    const shown = () => show.mock.calls.map(([toast]) => [toast.message, toast.duration]);
+    /** Another toast, OpenCode's own for example, replaces the one on screen. */
+    const otherToast = () => {
+      onScreen = undefined;
+    };
+    return { toasts, display, shown, otherToast };
+  }
+
+  /** OpenCode draws the toast; the preview's microtask runs first. */
+  const drawn = () => new Promise<void>((resolve) => queueMicrotask(resolve));
+  const SECONDS = defaultDisplaySettings().toast.seconds * 1000;
+  const HOUR = 60 * 60 * 1000;
+  const MESSAGE = "Claude\n  7d ████████████████░░░░  80% left";
+
+  it("shows like a turn's toast, then the same toast again for an hour once it is on screen", async () => {
+    const { toasts, shown } = startPreview();
+    toasts.preview("ses_1");
+    expect(shown()).toEqual([[MESSAGE, SECONDS]]);
+    await drawn();
+    expect(shown()).toEqual([
+      [MESSAGE, SECONDS],
+      [MESSAGE, HOUR],
+    ]);
+  });
+
+  it("shows a change at once and keeps the new toast open", async () => {
+    const { toasts, display, shown } = startPreview();
+    toasts.preview("ses_1");
+    await drawn();
+    display.toast.layout = "detailed";
+    toasts.preview("ses_1");
+    await drawn();
+    const [changed] = shown()[2]!;
+    expect(changed).not.toBe(MESSAGE);
+    expect(shown().slice(2)).toEqual([
+      [changed, SECONDS],
+      [changed, HOUR],
+    ]);
+  });
+
+  it("closes the open preview with a copy that lasts 1 ms", async () => {
+    const { toasts, shown } = startPreview();
+    toasts.preview("ses_1");
+    await drawn();
+    toasts.closePreview();
+    expect(shown().at(-1)).toEqual([MESSAGE, 1]);
+    // Closed once: a second close shows nothing.
+    toasts.closePreview();
+    expect(shown()).toHaveLength(3);
+  });
+
+  it("leaves a toast that replaced the preview alone", async () => {
+    const { toasts, shown, otherToast } = startPreview();
+    toasts.preview("ses_1");
+    await drawn();
+    otherToast();
+    toasts.closePreview();
+    expect(shown()).toHaveLength(2);
+  });
+
+  it("keeps a preview closed in the same turn from staying open, and closes what it showed", async () => {
+    const { toasts, shown } = startPreview();
+    toasts.preview("ses_1");
+    toasts.closePreview();
+    await drawn();
+    expect(shown()).toEqual([
+      [MESSAGE, SECONDS],
+      [MESSAGE, 1],
+    ]);
+  });
+
+  it("keeps a preview that is not on screen yet (queued) to toast.seconds", async () => {
+    const { toasts, shown, otherToast } = startPreview();
+    toasts.preview("ses_1");
+    otherToast();
+    await drawn();
+    toasts.closePreview();
+    expect(shown()).toEqual([[MESSAGE, SECONDS]]);
+  });
+
+  it("shows for toast.seconds and is never closed when it can't tell what is on screen", async () => {
+    const { toasts, shown } = startPreview(false);
+    toasts.preview("ses_1");
+    await drawn();
+    toasts.closePreview();
+    expect(shown()).toEqual([[MESSAGE, SECONDS]]);
+  });
+
+  it("closes the open preview when toasts are turned off", async () => {
+    const { toasts, display, shown } = startPreview();
+    toasts.preview("ses_1");
+    await drawn();
+    display.toast.show = false;
+    toasts.preview("ses_1");
+    expect(shown().slice(2)).toEqual([[MESSAGE, 1]]);
   });
 });
 

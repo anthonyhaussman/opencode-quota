@@ -4,8 +4,14 @@
  * after each reply, after a question, and on a limit reset only when turned on. A quota toast
  * shows its rows in the grouped or detailed layout (`toast.layout`), with bars in the sidebar's
  * bar shape; the host colors them where OpenCode can draw that (`toast-colors.tsx`). It has no
- * title: its rows say what it is. Every quota toast is made here, the Settings Toast tab's
- * preview too.
+ * title: its rows say what it is. Every quota toast is made here, the Toast page's preview too.
+ *
+ * The Toast page's preview stays open while the page shows. The plugin API can only show a
+ * toast, for a duration; quota tells whether its toast is still on screen from the toast's
+ * colored spans (`toast-colors.tsx`). The preview first shows like any quota toast; once it is on
+ * screen, the same toast shows again for an hour. Leaving the page closes it: a copy that lasts
+ * 1 ms replaces it, unless another toast already did. Without the spans the preview shows for
+ * `toast.seconds`, as other quota toasts do.
  *
  * Reset notices that arrive together show as one toast. While a turn's toast is being made,
  * they wait and show after it, so the turn's toast does not replace them at once. When the TUI
@@ -19,6 +25,7 @@ import { visibleRow } from "../view/select.js";
 import { type Line, lineText, type ToastInput, toastInput, toastLines } from "../view/text.js";
 import type { QuotaClient } from "./client.js";
 import type { DisplaySettings } from "./display.js";
+import type { DrawnToast } from "./toast-colors.js";
 
 /** The title of quota's one-line toasts (a hint, a wrong range); quota toasts have none. */
 export const TOAST_TITLE = "OpenCode Quota";
@@ -33,8 +40,11 @@ export type ToastOptions = {
 export type TurnEnd = "reply" | "compaction" | "question";
 
 export type ToastHost = {
-  /** Shows a toast. A quota toast brings its `lines` too; its message is their plain text. */
-  show: (toast: ToastOptions, lines?: Line[]) => void;
+  /**
+   * Shows a toast. A quota toast brings its `lines` too; its message is their plain text.
+   * Returns the toast when it can tell whether it is still on screen.
+   */
+  show: (toast: ToastOptions, lines?: Line[]) => DrawnToast | undefined;
   display: () => DisplaySettings;
   /** The terminal's columns, which a toast's width follows. */
   terminalWidth: () => number;
@@ -52,11 +62,25 @@ export type Toasts = {
   afterTurn(trigger: TurnEnd, sessionID: string): Promise<void>;
   /** Shows the reset notices of a snapshot that this TUI has not shown yet, in one toast. */
   showResetNotices(snapshot: QuotaSnapshot): void;
-  /** The Settings Toast tab's "Show toast": the toast a turn would show in `sessionID` now. */
+  /**
+   * The Toast page's preview: the toast a turn would show in `sessionID` now. It replaces the
+   * page's earlier preview and stays open until `closePreview` (see above).
+   */
   preview(sessionID: string): void;
+  /** The Toast page closed: closes its preview, when that is still the toast on screen. */
+  closePreview(): void;
   /** The TUI left its server: drops the notices still waiting, as not shown. */
   cancel(): void;
 };
+
+/**
+ * How long the Toast page's preview stays open at most. OpenCode pauses a toast under the mouse
+ * and queues the toasts shown meanwhile, so the toast that closes the preview can come late; the
+ * preview then ends after the hour, or at once when clicked.
+ */
+const PREVIEW_OPEN_MS = 60 * 60 * 1000;
+/** A copy of the preview shown this long replaces it and closes right away. */
+const PREVIEW_CLOSE_MS = 1;
 
 /** What a toast without a title keeps right of its text: OpenCode's close "x", 2 columns in. */
 const CLOSE_ROOM = 3;
@@ -113,6 +137,10 @@ export function createToasts(host: ToastHost): Toasts {
   /** Turns whose toast is being made; reset notices wait for them. */
   let turnsRunning = 0;
   let waitingNotices: Array<{ id: string; message: string }> = [];
+  /** The Toast page's latest preview: its toast, its lines, and the toast OpenCode got last. */
+  let preview: { toast: ToastOptions; lines: Line[]; shown: DrawnToast | undefined } | undefined;
+  /** Counts previews and closes: a preview's second toast skips when a newer one came first. */
+  let previewCount = 0;
 
   function showNotices(): void {
     if (turnsRunning > 0 || waitingNotices.length === 0) return;
@@ -138,6 +166,15 @@ export function createToasts(host: ToastHost): Toasts {
       nowMs: now(),
       width: toastRoom(host.terminalWidth()),
     });
+  }
+
+  /** Closes the Toast page's preview when it is still on screen; another toast stays. */
+  function closePreview(): void {
+    previewCount += 1;
+    const open = preview;
+    preview = undefined;
+    if (!open?.shown?.onScreen()) return;
+    host.show({ ...open.toast, duration: PREVIEW_CLOSE_MS }, open.lines);
   }
 
   async function turnToast(trigger: TurnEnd, sessionID: string): Promise<void> {
@@ -200,9 +237,28 @@ export function createToasts(host: ToastHost): Toasts {
     preview(sessionID) {
       const snapshot = host.quota.snapshot(sessionID);
       const display = host.display();
-      if (!snapshot || !display.toast.show) return;
-      showQuota("info", quotaInput(snapshot, display), display.toast.seconds);
+      const lines = snapshot && display.toast.show ? toastLines(quotaInput(snapshot, display)) : [];
+      const message = lines.map(lineText).join("\n");
+      if (!message) {
+        closePreview();
+        return;
+      }
+      previewCount += 1;
+      const count = previewCount;
+      const toast: ToastOptions = {
+        variant: "info",
+        message,
+        duration: display.toast.seconds * 1000,
+      };
+      preview = { toast, lines, shown: host.show(toast, lines) };
+      // Inside a Solid update OpenCode draws the toast only when the update ends: after this call.
+      queueMicrotask(() => {
+        if (count !== previewCount || !preview?.shown?.onScreen()) return;
+        preview.shown = host.show({ ...toast, duration: PREVIEW_OPEN_MS }, lines);
+      });
     },
+
+    closePreview,
 
     cancel() {
       for (const notice of waitingNotices) shownNotices.delete(notice.id);

@@ -119,8 +119,12 @@ describe("colored quota toasts", () => {
     });
     const toast = lines();
     const message = plainMessage(toast);
-    showToast({ variant: "info", message, duration: 9_000 }, toast);
-    return { messages: shown.mock.calls.map(([options]) => options.message), message };
+    const drawnToast = showToast({ variant: "info", message, duration: 9_000 }, toast);
+    return {
+      messages: shown.mock.calls.map(([options]) => options.message),
+      message,
+      drawnToast,
+    };
   }
 
   it("sends the colored spans once the TUI has drawn", () => {
@@ -130,23 +134,40 @@ describe("colored quota toasts", () => {
     expect(spansText(messages[0])).toBe(message);
   });
 
+  it("tells whether the spans' toast is on screen: OpenCode's <text> gives them a parent", () => {
+    const { messages, drawnToast } = showOn();
+    const first = (messages[0] as unknown as Array<string | (Node & { parent?: unknown })>).find(
+      (child) => typeof child !== "string",
+    )!;
+    expect(drawnToast?.onScreen()).toBe(false);
+    first.parent = {};
+    expect(drawnToast?.onScreen()).toBe(true);
+    // Another toast replaced it.
+    first.parent = null;
+    expect(drawnToast?.onScreen()).toBe(false);
+  });
+
   it("sends the plain message when OpenCode's toast throws on the spans", () => {
-    const { messages, message } = showOn({
+    const { messages, message, drawnToast } = showOn({
       show: (toast) => {
         if (typeof toast.message !== "string") throw new Error("message must be a string");
       },
     });
     expect(messages).toHaveLength(2);
     expect(messages[1]).toBe(message);
+    // A plain message can't tell whether it is on screen.
+    expect(drawnToast).toBeUndefined();
   });
 
   it("sends the plain message before the TUI has drawn, or when making the spans fails", () => {
     const before = showOn({ drawn: false });
     expect(before.messages).toEqual([before.message]);
+    expect(before.drawnToast).toBeUndefined();
     // Without a JSX runtime, making a span throws.
     vi.unstubAllGlobals();
-    const { messages, message } = showOn();
+    const { messages, message, drawnToast } = showOn();
     expect(messages).toEqual([message]);
+    expect(drawnToast).toBeUndefined();
   });
 
   it("sends a toast without lines as it is", () => {

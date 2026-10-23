@@ -127,7 +127,7 @@ const plugin = Plugin.define({
       quota,
       isChildSession,
     });
-    const settings = createSettingsEditor(api, display, toasts.preview);
+    const settings = createSettingsEditor(api, display, toasts);
     const host: SurfaceHost = {
       theme: () => api.theme,
       display: display.shown,
