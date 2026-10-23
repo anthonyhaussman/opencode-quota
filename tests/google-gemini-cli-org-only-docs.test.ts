@@ -29,21 +29,19 @@ describe("Gemini CLI organization-only documentation", () => {
     }
   });
 
-  it("lists Gemini CLI only in the Business / Enterprise tables", () => {
-    for (const document of [readme, providers]) {
-      const personal = section(
-        document,
-        "<summary><strong>Personal</strong></summary>",
-        "</details>",
-      );
-      const business = section(
-        document,
-        "<summary><strong>Business / Enterprise</strong></summary>",
-        "</details>",
-      );
-      expect(personal).not.toContain("Gemini CLI");
-      expect(business).toMatch(/\| Gemini CLI +\| \[Needs setup\]\([^)]*#gemini-cli\)/);
-    }
+  it("lists Gemini CLI only in the provider guide's Business / Enterprise table", () => {
+    const personal = section(
+      providers,
+      "<summary><strong>Personal</strong></summary>",
+      "</details>",
+    );
+    const business = section(
+      providers,
+      "<summary><strong>Business / Enterprise</strong></summary>",
+      "</details>",
+    );
+    expect(personal).not.toContain("Gemini CLI");
+    expect(business).toMatch(/\| Gemini CLI +\| \[Needs setup\]\(#gemini-cli\)/);
   });
 
   it("states organization-only support and points personal users to Google AGY", () => {

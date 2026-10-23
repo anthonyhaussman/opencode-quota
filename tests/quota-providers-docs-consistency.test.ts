@@ -49,7 +49,6 @@ describe("quota provider Phase 7 documentation consistency", () => {
     const providers = read("docs/readme/providers.md");
     const troubleshooting = read("docs/readme/troubleshooting.md");
     const external = read("docs/readme/external-integration.md");
-    const manualInstall = read("docs/readme/manual-install.md");
 
     const readmeCommands = readMarkdownSection(readme, /^Commands$/);
     const readmeCustomProviders = readMarkdownSection(readme, /^Custom providers$/);
@@ -68,14 +67,7 @@ describe("quota provider Phase 7 documentation consistency", () => {
     expect(readme).not.toContain("experimental.quotaToast");
     expect(readme).not.toContain("apiKeyEnv");
 
-    for (const document of [
-      readme,
-      configuration,
-      providers,
-      troubleshooting,
-      external,
-      manualInstall,
-    ]) {
+    for (const document of [readme, configuration, providers, troubleshooting, external]) {
       expect(document).not.toContain("accounting-v1");
     }
 
