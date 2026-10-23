@@ -431,15 +431,70 @@ describe("quota toasts", () => {
 
 describe("the Toast page's preview", () => {
   /**
-   * Toasts whose `show` stands for OpenCode's toast: the last toast shown is the one on screen,
-   * and it can tell so when `drawn` (a colored toast) is true.
+   * OpenCode's toast (2.0.26 to 2.0.28): one toast on screen, for its duration. While the mouse
+   * is on it, it pauses, and the toasts shown meanwhile wait in a queue.
+   */
+  function fakeOpenCodeToast() {
+    let current: ToastOptions | undefined;
+    const queue: ToastOptions[] = [];
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let startedAt = 0;
+    let remaining = 0;
+    let paused = false;
+    const start = (duration: number) => {
+      clearTimeout(timer);
+      remaining = duration;
+      startedAt = Date.now();
+      timer = setTimeout(dismiss, duration);
+    };
+    const dismiss = () => {
+      clearTimeout(timer);
+      current = queue.shift();
+      if (!current) {
+        paused = false;
+        return;
+      }
+      remaining = current.duration;
+      if (!paused) start(current.duration);
+    };
+    return {
+      show(toast: ToastOptions) {
+        if (current && (paused || queue.length > 0)) {
+          queue.push(toast);
+          return;
+        }
+        current = toast;
+        start(toast.duration);
+      },
+      /** The mouse moves onto the toast. */
+      hover() {
+        if (!current || paused) return;
+        paused = true;
+        remaining = Math.max(0, remaining - (Date.now() - startedAt));
+        clearTimeout(timer);
+      },
+      /** The mouse moves away. */
+      leave() {
+        if (!current || !paused) return;
+        paused = false;
+        start(remaining);
+      },
+      current: () => current,
+      waiting: () => queue.length,
+    };
+  }
+
+  /**
+   * Toasts on a fake OpenCode toast. A quota toast can tell whether it is the one on screen
+   * when `drawn` (a colored toast) is true.
    */
   function startPreview(drawn = true) {
+    vi.useFakeTimers({ now: NOW, toFake: ["Date", "setTimeout", "clearTimeout"] });
     const display = defaultDisplaySettings();
-    let onScreen: ToastOptions | undefined;
+    const opencode = fakeOpenCodeToast();
     const show = vi.fn((toast: ToastOptions) => {
-      onScreen = toast;
-      return drawn ? { onScreen: () => onScreen === toast } : undefined;
+      opencode.show(toast);
+      return drawn ? { onScreen: () => opencode.current() === toast } : undefined;
     });
     const toasts = createToasts({
       show,
@@ -450,32 +505,49 @@ describe("the Toast page's preview", () => {
       now: () => NOW,
     });
     const shown = () => show.mock.calls.map(([toast]) => [toast.message, toast.duration]);
-    /** Another toast, OpenCode's own for example, replaces the one on screen. */
-    const otherToast = () => {
-      onScreen = undefined;
-    };
-    return { toasts, display, shown, otherToast };
+    /** The message on screen, if any. */
+    const onScreen = () => opencode.current()?.message;
+    return { toasts, display, opencode, shown, onScreen };
   }
 
   /** OpenCode draws the toast; the preview's microtask runs first. */
   const drawn = () => new Promise<void>((resolve) => queueMicrotask(resolve));
   const SECONDS = defaultDisplaySettings().toast.seconds * 1000;
+  const COPY = 3000;
   const HOUR = 60 * 60 * 1000;
   const MESSAGE = "Claude\n  7d ████████████████░░░░  80% left";
+  const NOTICE: ToastOptions = {
+    variant: "success",
+    title: "Quota available",
+    message: "Weekly quota reset: Claude Weekly is available again (100% left).",
+    duration: SECONDS,
+  };
 
-  it("shows like a turn's toast, then the same toast again for an hour once it is on screen", async () => {
+  it("shows like a turn's toast, then a 3 s copy every second while a copy is on screen", async () => {
     const { toasts, shown } = startPreview();
     toasts.preview("ses_1");
     expect(shown()).toEqual([[MESSAGE, SECONDS]]);
     await drawn();
     expect(shown()).toEqual([
       [MESSAGE, SECONDS],
-      [MESSAGE, HOUR],
+      [MESSAGE, COPY],
     ]);
+    vi.advanceTimersByTime(1000);
+    expect(shown().at(-1)).toEqual([MESSAGE, COPY]);
+    expect(shown()).toHaveLength(3);
+  });
+
+  it("stays open while the page shows, past toast.seconds and past an hour", async () => {
+    const { toasts, shown, onScreen } = startPreview();
+    toasts.preview("ses_1");
+    await drawn();
+    vi.advanceTimersByTime(2 * HOUR);
+    expect(onScreen()).toBe(MESSAGE);
+    expect(shown().at(-1)).toEqual([MESSAGE, COPY]);
   });
 
   it("shows a change at once and keeps the new toast open", async () => {
-    const { toasts, display, shown } = startPreview();
+    const { toasts, display, shown, onScreen } = startPreview();
     toasts.preview("ses_1");
     await drawn();
     display.toast.layout = "detailed";
@@ -485,28 +557,96 @@ describe("the Toast page's preview", () => {
     expect(changed).not.toBe(MESSAGE);
     expect(shown().slice(2)).toEqual([
       [changed, SECONDS],
-      [changed, HOUR],
+      [changed, COPY],
     ]);
+    vi.advanceTimersByTime(HOUR);
+    expect(onScreen()).toBe(changed);
   });
 
-  it("closes the open preview with a copy that lasts 1 ms", async () => {
-    const { toasts, shown } = startPreview();
+  it("closes the open preview with a copy that lasts 1 ms, and shows no more copies", async () => {
+    const { toasts, shown, onScreen } = startPreview();
     toasts.preview("ses_1");
     await drawn();
     toasts.closePreview();
     expect(shown().at(-1)).toEqual([MESSAGE, 1]);
-    // Closed once: a second close shows nothing.
+    vi.advanceTimersByTime(1);
+    expect(onScreen()).toBeUndefined();
+    // Closed once: a second close shows nothing, and no copy comes later.
     toasts.closePreview();
+    vi.advanceTimersByTime(HOUR);
     expect(shown()).toHaveLength(3);
   });
 
-  it("leaves a toast that replaced the preview alone", async () => {
-    const { toasts, shown, otherToast } = startPreview();
+  it("leaves a titled toast that replaced the preview alone, and stops showing copies", async () => {
+    const { toasts, opencode, shown, onScreen } = startPreview();
     toasts.preview("ses_1");
     await drawn();
-    otherToast();
+    opencode.show(NOTICE);
+    vi.advanceTimersByTime(1000);
+    expect(onScreen()).toBe(NOTICE.message);
     toasts.closePreview();
+    expect(onScreen()).toBe(NOTICE.message);
+    vi.advanceTimersByTime(HOUR);
     expect(shown()).toHaveLength(2);
+  });
+
+  it("keeps the preview open while the mouse is on it, with one copy held back", async () => {
+    const { toasts, opencode, shown, onScreen } = startPreview();
+    toasts.preview("ses_1");
+    await drawn();
+    vi.advanceTimersByTime(500);
+    opencode.hover();
+    vi.advanceTimersByTime(HOUR);
+    expect(onScreen()).toBe(MESSAGE);
+    // OpenCode holds back the next copy; quota adds none until that one shows.
+    expect(opencode.waiting()).toBe(1);
+    expect(shown()).toHaveLength(3);
+    opencode.leave();
+    vi.advanceTimersByTime(HOUR);
+    expect(onScreen()).toBe(MESSAGE);
+    expect(opencode.waiting()).toBe(0);
+  });
+
+  it("ends a preview whose page closed while the mouse was on it within 6 s of the mouse leaving", async () => {
+    const { toasts, display, opencode, onScreen } = startPreview();
+    toasts.preview("ses_1");
+    await drawn();
+    vi.advanceTimersByTime(500);
+    opencode.hover();
+    vi.advanceTimersByTime(10_000);
+    // A change on the page waits for the held-back copy instead of adding another.
+    display.toast.layout = "detailed";
+    toasts.preview("ses_1");
+    expect(opencode.waiting()).toBe(1);
+    // Leaving the page with the keyboard: OpenCode holds back the closing copy too.
+    toasts.closePreview();
+    expect(opencode.waiting()).toBe(2);
+    vi.advanceTimersByTime(HOUR);
+    expect(onScreen()).toBe(MESSAGE);
+    opencode.leave();
+    vi.advanceTimersByTime(6000);
+    expect(onScreen()).toBeUndefined();
+  });
+
+  it("shows a change made while the mouse was on the preview once the held-back copy shows", async () => {
+    const { toasts, display, opencode, shown, onScreen } = startPreview();
+    toasts.preview("ses_1");
+    await drawn();
+    vi.advanceTimersByTime(500);
+    opencode.hover();
+    vi.advanceTimersByTime(10_000);
+    display.toast.layout = "detailed";
+    toasts.preview("ses_1");
+    await drawn();
+    opencode.leave();
+    vi.advanceTimersByTime(6000);
+    const [changed] = shown().at(-1)!;
+    expect(changed).not.toBe(MESSAGE);
+    expect(onScreen()).toBe(changed);
+    expect(shown().filter(([message]) => message === changed)).not.toContainEqual([
+      changed,
+      SECONDS,
+    ]);
   });
 
   it("keeps a preview closed in the same turn from staying open, and closes what it showed", async () => {
@@ -514,25 +654,31 @@ describe("the Toast page's preview", () => {
     toasts.preview("ses_1");
     toasts.closePreview();
     await drawn();
+    vi.advanceTimersByTime(HOUR);
     expect(shown()).toEqual([
       [MESSAGE, SECONDS],
       [MESSAGE, 1],
     ]);
   });
 
-  it("keeps a preview that is not on screen yet (queued) to toast.seconds", async () => {
-    const { toasts, shown, otherToast } = startPreview();
+  it("shows a preview held back behind another toast once that one ends, then keeps it open", async () => {
+    const { toasts, opencode, onScreen } = startPreview();
+    opencode.show(NOTICE);
+    opencode.hover();
     toasts.preview("ses_1");
-    otherToast();
     await drawn();
-    toasts.closePreview();
-    expect(shown()).toEqual([[MESSAGE, SECONDS]]);
+    vi.advanceTimersByTime(HOUR);
+    expect(onScreen()).toBe(NOTICE.message);
+    opencode.leave();
+    vi.advanceTimersByTime(HOUR);
+    expect(onScreen()).toBe(MESSAGE);
   });
 
   it("shows for toast.seconds and is never closed when it can't tell what is on screen", async () => {
     const { toasts, shown } = startPreview(false);
     toasts.preview("ses_1");
     await drawn();
+    vi.advanceTimersByTime(HOUR);
     toasts.closePreview();
     expect(shown()).toEqual([[MESSAGE, SECONDS]]);
   });

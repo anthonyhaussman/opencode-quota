@@ -119,6 +119,7 @@ const plugin = Plugin.define({
       theme: () => api.theme,
       display: display.shown,
       owner: () => appOwner,
+      root: () => api.renderer.root,
     });
     const toasts = createToasts({
       show: showToast,

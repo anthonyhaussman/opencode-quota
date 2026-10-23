@@ -10,10 +10,9 @@
  * under its renderer). Any error while making or showing the spans shows the plain message: the
  * same characters.
  *
- * The spans also tell whether their toast is still the one on screen: OpenCode's <text> holds
- * them, so they have a parent, until the toast closes or another toast replaces it. The plugin
- * API has no way to ask that or to close a toast; the Toast page's preview needs both
- * (`toasts.ts`).
+ * The spans also tell whether their toast is still the one on screen: while it is, they hang
+ * under the renderer's root through OpenCode's <text> and the toast's boxes. The plugin API has
+ * no way to ask that or to close a toast; the Toast page's preview needs both (`toasts.ts`).
  */
 import type { JSX } from "@opentui/solid";
 import { catchError, createRoot, type Owner, runWithOwner } from "solid-js";
@@ -35,7 +34,20 @@ export type ColoredToastHost = {
   display: () => DisplaySettings;
   /** A Solid owner inside OpenCode's renderer, where spans can be made; none before it draws. */
   owner: () => Owner | undefined;
+  /** The renderer's root: everything on screen hangs under it. */
+  root: () => unknown;
 };
+
+/** What the on-screen check reads of an OpenTUI node: a span, a root text node, a renderable. */
+type RenderNode = {
+  parent?: RenderNode | null;
+  /** A root text node's <text>: a <text> keeps its spans under one. */
+  textParent?: RenderNode;
+  isDestroyed?: boolean;
+};
+
+/** More levels than a TUI has: a loop in the parents answers false instead of hanging. */
+const MAX_DEPTH = 1000;
 
 /**
  * The children of OpenCode's toast <text>: each segment a <span> in its color, "\n" between
@@ -75,13 +87,22 @@ function spansOf(owner: Owner, lines: Line[], host: ColoredToastHost): JSX.Eleme
 }
 
 /**
- * Whether OpenCode's <text> holds `spans`' first span. A span it holds has a parent; OpenCode
- * takes the spans out when their toast goes. Any error answers false.
+ * Whether `spans`' first span hangs under `root`, with nothing on the way destroyed. When a toast
+ * goes, OpenTUI unlinks its box (or, for a new message, the spans) at once and destroys the box
+ * a moment later. Destroying a <text> empties its span list but leaves each span's parent, so a
+ * parent alone does not tell. Any error answers false.
  */
-function spansOnScreen(spans: JSX.Element): boolean {
+function spansOnScreen(spans: JSX.Element, root: unknown): boolean {
   try {
-    const first = (spans as unknown[]).find((child) => child !== null && typeof child === "object");
-    return (first as { parent?: unknown } | undefined)?.parent != null;
+    let node = (spans as unknown[]).find((child) => child !== null && typeof child === "object") as
+      | RenderNode
+      | undefined;
+    for (let depth = 0; node != null && depth < MAX_DEPTH; depth += 1) {
+      if (node === root) return true;
+      if (node.isDestroyed === true) return false;
+      node = node.parent ?? node.textParent;
+    }
+    return false;
   } catch {
     return false;
   }
@@ -101,7 +122,7 @@ export function createToastShow(host: ColoredToastHost) {
         if (spans !== undefined) {
           // The API types the message as a string; OpenCode's toast draws the spans as they are.
           host.show({ ...toast, message: spans as unknown as string });
-          return { onScreen: () => spansOnScreen(spans) };
+          return { onScreen: () => spansOnScreen(spans, host.root()) };
         }
       } catch {
         // The plain message below.
