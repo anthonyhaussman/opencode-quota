@@ -59,7 +59,7 @@ Add the plugin to `opencode.jsonc` or `opencode.json`, and keep your other plugi
 
 - **Built for OpenCode 2:** settings apply live, in every open OpenCode.
 - **Terminal:** `npx @slkiser/opencode-quota@latest show` works even with OpenCode closed.
-- **Web and Desktop:** `/quota`, `/quota_usage` and `/quota_status` post their report in the chat as your message. The AI never answers it, and the plugin filters it out of every AI request. Web's font may not line up the columns.
+- **Web and Desktop:** `/quota`, `/quota_usage` and `/quota_status` post their report in the chat as your message. The AI never answers it, and the plugin filters it out of every AI request. After you uninstall the plugin, old reports in past chats are no longer filtered. Web's font may not line up the columns.
 - **Scripts and status bars:** JSON, an export file, and metrics. See [External integration](docs/readme/external-integration.md).
 
 ## Commands

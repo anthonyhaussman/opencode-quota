@@ -762,6 +762,20 @@ describe("server quota RPC", () => {
     expect(commands.map((command) => command.name)).not.toContain("quota_announcements");
   });
 
+  it("ends the /quota report of Web and Desktop with the active notices", async () => {
+    useGeminiCli();
+    vi.spyOn(Date, "now").mockReturnValue(Date.parse("2026-10-10T12:00:00.000Z"));
+    const { BUNDLED_MAINTAINER_ANNOUNCEMENTS } =
+      await import("../src/lib/maintainer-announcements.js");
+    const notice = BUNDLED_MAINTAINER_ANNOUNCEMENTS.find(
+      (announcement) => announcement.id === "google-gemini-cli-org-only",
+    );
+    const { quota } = await setupServer();
+
+    const report = await quota();
+    expect(report.split("\n").slice(-3)).toEqual(["", "Notices", `- ${notice?.message}`]);
+  });
+
   it("treats a session the server cannot find as a session without a model", async () => {
     const sessionGet = vi.fn().mockRejectedValue(new Error("Session not found"));
     const { call } = await setupServer({ sessionGet });

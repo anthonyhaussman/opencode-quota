@@ -66,6 +66,9 @@ function readGuideProviders(guide: string, region: Region): ProviderPlans {
         throw new Error(`${region} ${plan} ${provider}: unexpected Auth/setup cell ${authSetup}`);
       }
       const plans = providers.get(provider) ?? new Map<Plan, string | undefined>();
+      if (plans.has(plan)) {
+        throw new Error(`${region} ${plan} table in providers.md lists ${provider} twice`);
+      }
       plans.set(plan, setupAnchor);
       providers.set(provider, plans);
     }
@@ -108,6 +111,9 @@ function readReadmeProviders(readme: string, region: Region): Map<string, Readme
     expect([...plans.keys()], `${name.word} plans`).toEqual(
       PLANS.filter((plan) => plans.has(plan)),
     );
+    if (providers.has(name.word)) {
+      throw new Error(`README ${region} table lists ${name.word} twice`);
+    }
     providers.set(name.word, { nameIsLink: name.setupAnchor !== undefined, plans });
   }
   return providers;
