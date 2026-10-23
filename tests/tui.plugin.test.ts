@@ -649,6 +649,31 @@ describe("the Toast page's preview", () => {
     ]);
   });
 
+  it("shows a copy held back behind another toast for its 3 s after the page closed, then none", async () => {
+    const { toasts, opencode, shown, onScreen } = startPreview();
+    toasts.preview("ses_1");
+    await drawn();
+    vi.advanceTimersByTime(500);
+    opencode.hover();
+    vi.advanceTimersByTime(1000);
+    // A reset notice comes while the mouse is on the preview: OpenCode holds it back too.
+    opencode.show(NOTICE);
+    opencode.leave();
+    // The held-back copy shows, then the notice; the next copy waits behind the notice.
+    vi.advanceTimersByTime(6000);
+    expect(onScreen()).toBe(NOTICE.message);
+    expect(opencode.waiting()).toBe(1);
+    // A closing copy would wait behind that copy, which OpenCode shows for its whole 3 s.
+    toasts.closePreview();
+    expect(opencode.waiting()).toBe(1);
+    vi.advanceTimersByTime(SECONDS);
+    expect(onScreen()).toBe(MESSAGE);
+    vi.advanceTimersByTime(COPY);
+    expect(onScreen()).toBeUndefined();
+    vi.advanceTimersByTime(HOUR);
+    expect(shown()).toHaveLength(4);
+  });
+
   it("keeps a preview closed in the same turn from staying open, and closes what it showed", async () => {
     const { toasts, shown } = startPreview();
     toasts.preview("ses_1");

@@ -614,8 +614,9 @@ export function createSettingsEditor(
       display.edit(surfaceEditor(current, snapshot()).drag(id, pointer));
     }
 
-    // On the Toast page the real toast stays open and shows again after every change of what it
-    // shows. Another page or tab, or closing the window, closes it.
+    // On the Toast page the real toast stays open until another toast replaces it, and shows
+    // again after every change of what it shows. Another page or tab, or closing the window,
+    // closes it (`toasts.ts`).
     createEffect(
       on(
         () => {
