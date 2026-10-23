@@ -13,25 +13,36 @@
   <a href="https://www.npmjs.com/package/@slkiser/opencode-quota"><img alt="npm downloads" src="https://img.shields.io/npm/dm/%40slkiser%2Fopencode-quota?style=flat-square" /></a>
   <a href="https://github.com/slkiser/opencode-quota/actions/workflows/ci.yml"><img alt="CI" src="https://img.shields.io/github/actions/workflow/status/slkiser/opencode-quota/ci.yml?style=flat-square&branch=main&label=CI" /></a>
   <a href="./LICENSE"><img alt="License: MIT" src="https://img.shields.io/badge/License-MIT-yellow.svg?style=flat-square" /></a>
-  <a href="https://github.com/anomalyco/opencode/issues/38281"><img alt="Help us get listed: opencode#38281" src="https://img.shields.io/badge/%F0%9F%91%8D_help_us_get_listed-opencode%2338281-blue?style=flat-square" /></a>
 </p>
 
 [![OpenCode Quota sidebar](https://shawnkiser.com/opencode-quota/opencode-quota-sidebar.webp)](https://github.com/slkiser/opencode-quota)
 
 ---
 
-## Quick start
+## Install
 
 ```bash
 opencode plugin add @slkiser/opencode-quota
 ```
 
-Then restart OpenCode and type `/quota`.
+Restart OpenCode and type `/quota`. A window opens with your limits. Click a tab (Usage, Limits, Plugin, Settings) or press `tab` to move between them; click or press `esc` to close it.
 
 > [!IMPORTANT]
 > You need OpenCode `2.0.26+`; the terminal commands also need Node.js `22.13+` or `23.4+`. Still on OpenCode 1? Run `npx @slkiser/opencode-quota@4 init` instead.
 
-Upgrading from 4.x? Read [what changed in 5.0](#breaking-changes-in-500).
+<details>
+<summary>Edit <code>opencode.json</code> yourself</summary>
+
+Add the plugin to `opencode.jsonc` or `opencode.json`, and keep your other plugins. In `~/.config/opencode` it works in every project; in a project's folder, only there. This one entry loads both the server and the TUI:
+
+```jsonc
+{
+  "$schema": "https://opencode.ai/config.json",
+  "plugin": ["@slkiser/opencode-quota"],
+}
+```
+
+</details>
 
 ## What you get
 
@@ -46,13 +57,75 @@ Upgrading from 4.x? Read [what changed in 5.0](#breaking-changes-in-500).
   </tr>
 </table>
 
-Also:
-
+- **Built for OpenCode 2:** settings apply live, in every open OpenCode.
 - **Terminal:** `npx @slkiser/opencode-quota@latest show` works even with OpenCode closed.
-- **Web and Desktop:** slash commands post the report in the chat.
+- **Web and Desktop:** `/quota`, `/quota_usage` and `/quota_status` post their report in the chat as your message. The AI never answers it, and the plugin filters it out of every AI request. After you uninstall the plugin, old reports in past chats are no longer filtered. Web's font may not line up the columns.
 - **Scripts and status bars:** JSON, an export file, and metrics. See [External integration](docs/readme/external-integration.md).
-- **Your words:** used or left, reset style, and more. See [Configuration](docs/readme/configuration.md).
-- **Retry at the reset:** when a request hits a limit and that provider's quota shows a used-up window, OpenCode retries after it resets. Turn off with `providers.checking.waitForQuotaReset: false`.
+
+## Commands
+
+| Command                | What it shows                                                                                                                 |
+| ---------------------- | ----------------------------------------------------------------------------------------------------------------------------- |
+| `/quota`               | Limits. Web and Desktop: limits next to the last 7 days of usage                                                              |
+| `/quota_usage [range]` | Tokens and API cost: `today` (default), `24h`, `7d`, `30d`, `90d`, `all`, `session` (with its subagents), `between` two dates |
+| `/quota_status`        | Setup check: logins, providers, pricing, and notices                                                                          |
+| `/quota_settings`      | Settings tabs (TUI only)                                                                                                      |
+
+For example `/quota_usage 30d` or `/quota_usage between 2026-09-01 2026-09-25`. In a terminal, with OpenCode open or closed, `npx @slkiser/opencode-quota@latest show` shows your quota and `npx @slkiser/opencode-quota@latest status` checks your setup ([how they differ](docs/readme/troubleshooting.md#terminal-commands)). Add `--help` to see all options.
+
+## Settings
+
+Change the sidebar, status line, toasts, colors, words and providers in `/quota_settings`. **Save** writes only what you changed to `opencode-quota/settings.jsonc` in OpenCode's config folder and keeps your comments. A file edit reaches every open TUI within a few seconds. Custom providers, the Claude CLI path and the export path are set only in the file. [Settings and defaults](docs/readme/configuration.md).
+
+## Providers
+
+Log in with `/connect` and the provider shows up. Switch providers on or off in `/quota_settings` → **Providers**.
+
+<table>
+<tr>
+<td valign="top">
+
+| American | Plans |
+| --- | --- |
+| [Anthropic (Claude)](docs/readme/providers.md#anthropic-claude)\* | Personal · Business |
+| [Cursor](docs/readme/providers.md#cursor)\* | Personal · Business |
+| [Gemini CLI](docs/readme/providers.md#gemini-cli)\* | Business |
+| GitHub Copilot | Personal · [Business](docs/readme/providers.md#github-copilot)\* |
+| [Google AGY](docs/readme/providers.md#google-agy-quick-setup)\* | Personal · Business |
+| Ollama Cloud | Personal |
+| OpenAI | Personal · Business |
+| OpenCode Go | Personal |
+| OpenCode Zen | Personal · Business |
+| OpenRouter | Personal · Business |
+| xAI | Personal · Business |
+
+</td>
+<td valign="top">
+
+| Chinese | Plans |
+| --- | --- |
+| Alibaba Coding Plan | Personal |
+| [Alibaba Personal Token Plan](docs/readme/providers.md#alibaba-personal-token-plan)\* | Personal |
+| DeepSeek | Personal |
+| Kimi Code | Personal · Business |
+| Kimi Code (CN) | Personal · Business |
+| MiniMax Token Plan | Personal · Business |
+| MiniMax Token Plan (CN) | Personal · Business |
+| [Xiaomi MiMo](docs/readme/providers.md#xiaomi-mimo)\* | Personal |
+| Z.ai Coding Plan | Personal |
+| Zhipu Coding Plan | Personal · Business |
+
+</td>
+</tr>
+</table>
+
+\* Linked names need one more step; the rest work once you log in. [What each one reports](docs/readme/providers.md#pre-configured-providers).
+
+OpenAI ChatGPT quota needs a Codex login ([how](docs/readme/providers.md#openai-and-xai)). Gemini CLI works only with Gemini Code Assist Standard or Enterprise (organization) accounts. Personal Google users should use Google AGY. Business plans of the Chinese providers show only your own member API key's usage. API keys come from OpenCode or an [environment variable](docs/readme/providers.md#api-keys).
+
+### Custom providers
+
+Track any other provider, from its quota API or from a local estimate. Ask your agent to add a custom provider: it is saved switched off, and you switch it on in `/quota_settings` → **Providers**. [Copy-paste prompt](docs/readme/providers.md#custom-providers).
 
 ## Updating
 
@@ -60,129 +133,7 @@ Also:
 opencode plugin update
 ```
 
-Restart OpenCode. Coming from 5.x? Your old settings are converted automatically on the first start; see [Moving from 5.x](docs/readme/updating.md#moving-from-5x).
-
-### Breaking changes in 5.0.0
-
-> [!WARNING]
-> - OpenCode 1 is no longer supported. OpenCode 1 users stay on 4.x (`@slkiser/opencode-quota@4`).
-> - Logins come from OpenCode 2, never from `auth.json`. If a provider is missing, log in again.
-> - Web and Desktop get the slash commands, but no toasts or panels.
-> - TUI reports open in the quota window and leave no chat message.
-> - OpenCode Zen uses your OpenCode Console sign-in: `opencode auth login opencode`.
-
-Full list: [Moving to OpenCode 2](docs/readme/updating.md#moving-to-opencode-2).
-
-All quota settings live in `opencode-quota/settings.jsonc`, which holds only the ones you change (a 6.0.0-beta.1 file holds them all; see [Updating](docs/readme/updating.md#updating)), in sections for Sidebar, Collapsed, Status line, Toast, Colors, Layout, Words, Providers and System. Save in `/quota_settings` keeps comments; file edits reach every open TUI within a few seconds. [Settings and defaults](docs/readme/configuration.md).
-
-## Commands
-
-### Slash commands
-
-Type these in OpenCode. Add a range after `/quota_usage`, like `/quota_usage 30d` or `/quota_usage between 2026-09-01 2026-09-25`.
-
-| Command                | What it shows                                                                                                                 |
-| ---------------------- | ----------------------------------------------------------------------------------------------------------------------------- |
-| `/quota`               | Limits. Web and Desktop: limits next to the last 7 days of usage                                                              |
-| `/quota_usage [range]` | Tokens and API cost: `today` (default), `24h`, `7d`, `30d`, `90d`, `all`, `session` (with its subagents), `between` two dates |
-| `/quota_status`        | Setup check: logins, providers, pricing, and notices                                                                          |
-| `/quota_settings`      | TUI: quota window, Settings tabs                                                                                              |
-
-In the terminal, `/quota_usage` opens the window's Usage tab on that range. The model table's Cache column is the share of each model's input tokens read from the cache, with ⚠ below 50% once the model read 200K input tokens. ↑↓ pick a range in its list, → moves to the model rows, enter or a click opens a model's details. `c` cost, `t` tokens, `b` by model or day, `d` types the Between dates, `p` updates pricing from `models.dev`.
-
-Moving from 4.x or 5.x? Your `/tokens_*` commands still work. See [Updating](docs/readme/updating.md#moving-from-5x).
-
-### CLI commands
-
-| Command                                     | What it does                      |
-| ------------------------------------------- | --------------------------------- |
-| `npx @slkiser/opencode-quota@latest show`   | Show current quota                |
-| `npx @slkiser/opencode-quota@latest status` | Check setup and provider problems |
-
-`show` and `status` work with OpenCode closed ([how they differ](docs/readme/troubleshooting.md#terminal-commands)). Add `--help` to see all options.
-
-## Providers
-
-Most providers work automatically once you log in through OpenCode. **Needs setup** links show the extra step.
-OpenAI ChatGPT quota needs a Codex login (`/connect` → OpenAI → **Codex browser (legacy)** or **Codex device code (legacy)**). OpenAI doesn't share ChatGPT usage with **Sign in with ChatGPT** logins or API keys, so those show a "ChatGPT quota unavailable" row without a ChatGPT request.
-
-### Pre-configured American providers
-
-<details open>
-<summary><strong>Personal</strong></summary>
-
-| Provider           | Auth/setup                                                     | Data from          | Reports            |
-| ------------------ | -------------------------------------------------------------- | ------------------ | ------------------ |
-| Anthropic (Claude) | [Needs setup](docs/readme/providers.md#anthropic-claude)       | Local CLI/OAuth    | Quota              |
-| Cursor             | [Needs setup](docs/readme/providers.md#cursor)                 | Local estimate     | Budget and spend   |
-| GitHub Copilot     | Automatic                                                      | Remote API         | Budget and usage   |
-| Google AGY         | [Needs setup](docs/readme/providers.md#google-agy-quick-setup) | Remote API         | Quota              |
-| Ollama Cloud       | Automatic                                                      | Remote API         | Quota and balance  |
-| OpenAI             | Automatic                                                      | Remote API         | Quota              |
-| OpenCode Go        | Automatic                                                      | Remote API         | Quota              |
-| OpenCode Zen       | Automatic                                                      | Remote API         | Budget and balance |
-| OpenRouter         | Automatic                                                      | Remote API         | Budget and spend   |
-| xAI SuperGrok      | Automatic                                                      | Remote API         | Quota              |
-
-</details>
-
-<details>
-<summary><strong>Business / Enterprise</strong></summary>
-
-| Provider                | Auth/setup                                                     | Data from          | Reports            |
-| ----------------------- | -------------------------------------------------------------- | ------------------ | ------------------ |
-| Anthropic (Claude)      | [Needs setup](docs/readme/providers.md#anthropic-claude)       | Local CLI/OAuth    | Quota              |
-| Cursor                  | [Needs setup](docs/readme/providers.md#cursor)                 | Local estimate     | Budget and spend   |
-| Gemini CLI              | [Needs setup](docs/readme/providers.md#gemini-cli)             | Remote API         | Quota              |
-| GitHub Copilot          | [Needs setup](docs/readme/providers.md#github-copilot)         | Remote API         | Budget and usage   |
-| Google AGY              | [Needs setup](docs/readme/providers.md#google-agy-quick-setup) | Remote API         | Quota              |
-| OpenAI                  | Automatic                                                      | Remote API         | Quota              |
-| OpenCode Zen            | Automatic                                                      | Remote API         | Budget and balance |
-| OpenRouter              | Automatic                                                      | Remote API         | Budget and spend   |
-| xAI SuperGrok           | Automatic                                                      | Remote API         | Quota              |
-
-Gemini CLI works only with Gemini Code Assist Standard or Enterprise (organization) accounts. Personal Google users should use Google AGY.
-
-</details>
-
-### Pre-configured Chinese providers
-
-<details open>
-<summary><strong>Personal</strong></summary>
-
-| Provider                      | Auth/setup                                                                   | Data from      | Reports            |
-| ----------------------------- | ---------------------------------------------------------------------------- | -------------- | ------------------ |
-| Alibaba Coding Plan           | Automatic                                                                    | Local estimate | Quota              |
-| Alibaba Personal Token Plan   | [Needs setup](docs/readme/providers.md#alibaba-personal-token-plan)          | Official CLI   | Quota              |
-| DeepSeek                      | Automatic                                                                    | Remote API     | Balance and status |
-| Kimi Code                     | Automatic                                                                    | Remote API     | Quota              |
-| Kimi Code (CN)                | Automatic                                                                    | Remote API     | Quota              |
-| MiniMax Token Plan            | Automatic                                                                    | Remote API     | Quota              |
-| MiniMax Token Plan (CN)       | Automatic                                                                    | Remote API     | Quota              |
-| Xiaomi MiMo                   | [Needs setup](docs/readme/providers.md#xiaomi-mimo)                          | Dashboard API  | Quota and balance  |
-| Z.ai Coding Plan              | Automatic                                                                    | Remote API     | Quota              |
-| Zhipu Coding Plan             | Automatic                                                                    | Remote API     | Quota              |
-
-</details>
-
-<details>
-<summary><strong>Business / Team</strong></summary>
-
-| Provider                 | Auth/setup | Data from  | Reports |
-| ------------------------ | ---------- | ---------- | ------- |
-| Kimi Code                | Automatic  | Remote API | Quota   |
-| Kimi Code (CN)           | Automatic  | Remote API | Quota   |
-| MiniMax Token Plan       | Automatic  | Remote API | Quota   |
-| MiniMax Token Plan (CN)  | Automatic  | Remote API | Quota   |
-| Zhipu Coding Plan        | Automatic  | Remote API | Quota   |
-
-These show only your own member API key's usage, not the whole organization's.
-
-</details>
-
-### Custom providers
-
-Track a provider that is not listed, from its quota API or from a local estimate. Ask your agent to add a custom provider: its `quota_provider_add` tool saves one switched off, and you switch it on (`"enabled": true` in `opencode-quota/settings.jsonc`, or `/quota_settings` → **Providers**); [docs/readme/providers.md#custom-providers](docs/readme/providers.md#custom-providers) has a copy-paste prompt.
+Restart OpenCode. Coming from 4.x or 5.x? Your settings convert on the first start, and the old `/tokens_*` commands still work. See [Updating](docs/readme/updating.md).
 
 ## Troubleshooting
 
@@ -196,7 +147,7 @@ More fixes: [Troubleshooting](docs/readme/troubleshooting.md).
 
 ## Reference
 
-Guides: [Manual install](docs/readme/manual-install.md) · [Configuration](docs/readme/configuration.md) · [Providers](docs/readme/providers.md) · [Troubleshooting](docs/readme/troubleshooting.md) · [External integration](docs/readme/external-integration.md) · [Updating](docs/readme/updating.md)
+Guides: [Configuration](docs/readme/configuration.md) · [Providers](docs/readme/providers.md) · [Troubleshooting](docs/readme/troubleshooting.md) · [External integration](docs/readme/external-integration.md) · [Updating](docs/readme/updating.md)
 
 Outside links: [OpenCode docs](https://opencode.ai/docs/) · [OpenCode config](https://opencode.ai/docs/config/) · [OpenCode plugins](https://opencode.ai/docs/plugins/) · [OpenCode TUI](https://opencode.ai/docs/tui/) · [models.dev pricing data](https://models.dev/) · [Node.js downloads](https://nodejs.org/en/download)
 

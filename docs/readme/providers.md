@@ -85,38 +85,58 @@ These show only your own member API key's usage, not the whole organization's.
 
 </details>
 
-### How rows are shown
-
-- `Quota` covers quota and rate-limit windows; both export as `quota`.
-- OpenCode Zen, Xiaomi MiMo, DeepSeek, and Cursor keep quota, rate limit, budget, usage, spend, credits, and balance as separate rows. A balance is not remaining allowance, and spend is not a budget percentage.
-- Money shows USD with a `$` prefix, such as `$12.50`, and other currencies with an uppercase currency code after the amount, such as `8.25 CNY`. OpenCode Quota never converts, combines, or picks a preferred currency.
-- `words.detail: "detailed"` adds supplementary balance, status, and spend rows. See [All settings](configuration.md#all-settings).
-
 ## Custom providers
 
-Providers OpenCode Quota doesn't include (for example Chutes AI, NanoGPT, Synthetic, Kilo Gateway) can be added as a custom provider: ask your agent with the prompt below.
-
-Custom providers can report quota, rate limit, usage, spend, budget, balance, or status. Ask your agent to add a custom provider: paste this into OpenCode and replace `<provider>`:
+Providers OpenCode Quota doesn't include (for example Chutes AI, NanoGPT, Synthetic, Kilo Gateway) can be added as a custom provider, read from the provider's quota API (`remote-api`) or estimated by counting OpenCode's requests (`local-estimate`). Ask your agent to add a custom provider: paste this into OpenCode and replace `<provider>`:
 
 ```text
 Add a custom OpenCode Quota provider for <provider> with the quota_provider_add tool, following docs/readme/providers.md#custom-providers in https://github.com/slkiser/opencode-quota. Never put a key or other secret in the definition: set apiKeyEnv to the name of the environment variable that holds the key, or leave it out to use the key OpenCode has for that provider. The tool saves the provider switched off; tell me the address and key source it returns. After I switch it on, test it with quota_provider_test, and fix what it reports (add it again with the same id; I switch it on again) until it shows rows.
 ```
 
-Then switch the provider on by setting `"enabled": true` in `opencode-quota/settings.jsonc` in the OpenCode config folder (`~/.config/opencode/` by default), or in the TUI's `/quota_settings` → **Providers**. An agent saves every provider it adds or replaces switched off: until you switch it on, it is never fetched and its key is never sent. No agent tool can switch it on. The Providers tab switches on only the definition it shows: if its address or key source changed since, Save saves nothing and shows the new ones to check.
+The agent saves the provider switched off: until you switch it on, it is never fetched and its key is never sent, and no agent tool can switch it on. Switch it on by setting `"enabled": true` in `opencode-quota/settings.jsonc`, or tick it in `/quota_settings` → **Providers**, which shows its address and the key it sends. The agent tools change only OpenCode Quota's own settings file, never `opencode.json`, and refuse a definition holding anything that looks like a key.
 
-The `quota_settings_*` and `quota_provider_*` tools change only OpenCode Quota's own settings file (through a symlink, its target), never `opencode.json`. A definition holding anything that looks like a key is refused. `quota_provider_test` and `quota_provider_remove` take a provider's `id`.
+To write one yourself, add it to `providers.custom` in `settings.jsonc` ([where](configuration.md#where-settings-live)); `/quota_status` checks it with the plugin's own validator.
 
-To edit it yourself, put definitions in `providers.custom` in `settings.jsonc` ([where](configuration.md#where-settings-live)). Changes apply without a restart.
-
-- **Remote API:** real quota data from a supported endpoint (formats below).
-- **Local estimate:** counts matching completed OpenCode requests in 1–16 windows, with optional spend estimates. `utc-day` resets at UTC midnight; `rolling` uses `durationMinutes` (up to 366 days). Every window needs `requestLimit`; `usdBudget` is optional.
-- **Credentials:** the variable named by `apiKeyEnv`, then `provider.<providerId>.options.apiKey` in the [OpenCode config files](troubleshooting.md#opencode-config-files) (no `{env:…}` unless it names `apiKeyEnv`), then an API-key login saved in OpenCode 2 (`opencode.db`) for that provider id. A switched-off provider is never fetched and its key is never sent.
-- Switched-on definitions whose `providerId` OpenCode has run automatically unless `providers.off` includes `custom`.
+- **Identity:** `id` is the stable identity; add `providerId` only when it differs. A definition is on unless it has `"enabled": false`. Definitions keep file order, and `custom` in `providers.off` skips them all.
+- **Credentials:** the variable named by `apiKeyEnv`, then `provider.<providerId>.options.apiKey` in the [OpenCode config files](troubleshooting.md#opencode-config-files) (no `{env:…}` unless it names `apiKeyEnv`), then an API-key login saved in OpenCode 2 (`opencode.db`) for that provider id.
+- **Models:** `modelIds` only limits `words.onlyCurrentModel` and which requests a local estimate counts. Use exact, case-sensitive model ids without the provider prefix, or leave it out to cover every model of that provider.
+- **Local estimate:** 1–16 windows; `utc-day` resets at UTC midnight, `rolling` uses `durationMinutes` (up to 366 days). Every window needs `requestLimit`; `usdBudget` is optional. Each check counts the completed requests in OpenCode's own messages; nothing else is stored.
+- **Local estimate prices:** the automatic match comes first (models.dev, and Cursor's own prices for Auto, Composer and Grok); `pricingModelMap` is used only where it finds none and cannot override a successful automatic match. If any request cannot be priced, the request counts stay and the budget percentage is reported unavailable.
+- **Not accepted:** scripts, methods, custom headers, templates, executable mappings, regular expressions, JSONPath, and automatic endpoint discovery.
 - A custom model provider still needs its normal OpenCode provider/model config. `/connect` → **Other** stores its credential, not its model setup.
-- OpenRouter is built in. A custom OpenRouter definition only helps if you need a different endpoint or label.
-- Alibaba Personal Token Plan uses the reserved `alibaba-token-plan` ID and stays a separate official-CLI provider; it is not a local-estimate tuning target.
+- OpenRouter is built in; a custom OpenRouter definition only helps for a different endpoint or label. Alibaba Personal Token Plan's `alibaba-token-plan` id is reserved. The `alibaba-coding-plan` id tunes the built-in Alibaba Coding Plan estimate and needs its five-hour, weekly and monthly rolling windows, in that order.
 
-See [Configuration](configuration.md#custom-providers) for a complete example and the other rules (pricing, what is not allowed).
+<details>
+<summary><strong>Example: a remote API and a local estimate</strong></summary>
+
+```jsonc
+{
+  "providers": {
+    "custom": [
+      {
+        "id": "openrouter-primary",
+        "providerId": "openrouter",
+        "label": "OpenRouter Primary",
+        "mode": "remote-api",
+        "url": "https://openrouter.ai/api/v1/key",
+        "format": "openrouter-key-v1",
+        "apiKeyEnv": "OPENROUTER_API_KEY",
+      },
+      {
+        "id": "private-gateway",
+        "label": "Private Gateway Estimate",
+        "mode": "local-estimate",
+        "modelIds": ["model-a"],
+        "windows": [
+          { "id": "daily", "label": "Daily", "type": "utc-day", "requestLimit": 1000, "usdBudget": 25 },
+        ],
+      },
+    ],
+  },
+}
+```
+
+</details>
 
 <details>
 <summary><strong>Recipes: Vercel AI Gateway, Moonshot, Poe</strong></summary>
@@ -178,9 +198,8 @@ Add the providers you use to `providers.custom` in `settings.jsonc`, then set th
 }
 ```
 
-- Provider docs: [Vercel AI Gateway credits](https://vercel.com/docs/ai-gateway/sdks-and-apis/rest-api#check-credit-balance), [Moonshot balance](https://platform.kimi.ai/docs/api/balance), [Poe usage API](https://creator.poe.com/docs/resources/usage-api).
+- They follow the providers' docs and weren't tested with a real key: [Vercel AI Gateway credits](https://vercel.com/docs/ai-gateway/sdks-and-apis/rest-api#check-credit-balance), [Moonshot balance](https://platform.kimi.ai/docs/api/balance), [Poe usage API](https://creator.poe.com/docs/resources/usage-api).
 - Poe: a Poe sign-in made through OpenCode's OAuth can't be used here. Create a key at [poe.com/api/keys](https://poe.com/api/keys) and set `POE_API_KEY`.
-- These recipes follow the providers' docs and weren't tested with a real key; open an issue if one doesn't work.
 
 </details>
 
@@ -225,14 +244,14 @@ A `json-v1` adapter is built from literal property segments, compatible metric s
 
 Adapter rules:
 
-- **Rows:** optional `rowsPath` and 1–16 `mappings`. Without `rowsPath`, an object is one item and an array is a list of items; with it, the array it names is the list. Each mapping makes one row per item, so a reply can show up to 1,600 rows (100 items × 16 mappings). When the list holds more than one item, the rows are numbered: `Daily 1`, `Daily 2`, `Daily 3`, where item 1 keeps the plain row id and items 2 and later add `.2`, `.3`. One item keeps the plain name `Daily`. Lists hold 1–100 items, responses allow at most 32 container levels, and at most 1,600 item/mapping candidates are checked.
+- **Rows:** optional `rowsPath` and 1–16 `mappings`. Without `rowsPath`, an object is one item and an array is a list of items; with it, the array it names is the list. A list holds 1–100 items, and each mapping makes one row per item. With more than one item, the rows are numbered `Daily 1`, `Daily 2`, …: item 1 keeps the plain row id and later items add `.2`, `.3`, ….
 - **Mapping names:** each name keys its rows, so names must still differ when spaces count as `_` (`Daily limit` and `Daily_limit` clash; `Daily-limit` is fine).
 - **Paths:** 1–8 literal own-property segments of 1–64 Unicode code points. Dots and brackets mean nothing special; array indexes and the segments `__proto__`, `prototype`, and `constructor` are rejected.
-- **Size:** adapter input is limited to 8 container levels, 128 objects, 384 object properties, and 640 array elements. Names and labels are 1–80 code points (a numbered row's label is shortened so its number fits), units 1–32, and status/display output at most 160.
+- **Size:** adapter input is limited to 8 container levels, 128 objects, 384 object properties, and 640 array elements, and a response to 32 container levels. Names and labels are 1–80 code points (a numbered row's label is shortened so its number fits), units 1–32, and status/display output at most 160.
 - **Metrics:** `percentage`, `used-limit`, `remaining-limit`, `spend-budget`, `remaining-budget`, `value`, and `status`. Calculations are fixed; no formulas or fallback parsing.
 - **Numbers:** exactly one `path` or `literal`, finite, with absolute magnitude at most `1e15`. A response may also write a number as text if it is a plain decimal like `"95.50"` or `"-3"` (spaces around it are ignored); other text such as `"95.50 USD"` or `"1e3"` is rejected. Zero is not the same as missing or `null`. Path sources may use `divideBy` with `100`, `1000`, or `1000000`.
 - **Timestamps:** `iso-8601`, `unix-seconds`, or `unix-milliseconds`. ISO needs a time zone, allows 1–3 fractional digits and offsets through `±14:00`, and must fall within years 1970–9999. Output is canonical UTC ISO.
-- **Errors:** a bad mapping candidate gets a fixed, redacted diagnostic while other valid candidates stay visible. At most 16 detailed errors plus one summary are kept.
+- **Errors:** a bad mapping candidate gets a fixed, redacted diagnostic while the valid ones stay visible.
 
 Metric compatibility and fixed output:
 
@@ -263,18 +282,16 @@ Pair denominators (`limit` and pair-form `budget`) must be greater than zero. Re
 
 **Never put secrets in adapter display configuration.** Static `name`, `label`, and `unit` fields and every `literal` can appear in written configuration, cache identity, rendered quota rows, or exports.
 
-OpenCode Quota sends a fixed authenticated `GET` and waits up to `providers.checking.requestTimeoutMs` (5 seconds unset). The URL must use HTTPS, except for loopback testing. Redirects and URLs containing credentials, queries, or fragments are rejected. Responses must be JSON and are limited to 256 KiB. Standard envelopes are limited to 100 rows and `json-v1` lists to 100 items. An HTTP 401 shows as `Sign in again`, a 429 as `Rate limited` (with its `Retry-After` wait, at most a day), an endpoint that cannot be reached as `Can't reach …`, and a redirect or a reply that is not valid JSON as `Unexpected reply`.
+OpenCode Quota sends a fixed authenticated `GET` and waits up to `providers.checking.requestTimeoutMs` (5 seconds unset). The URL must use HTTPS, except for loopback testing. Redirects and URLs containing credentials, queries, or fragments are rejected. Responses must be JSON and are limited to 256 KiB; a `quota-v1` envelope holds at most 100 rows.
 
 </details>
 
 ## API keys
 
-These providers read an API key from, in order: an environment variable, then OpenCode config (`provider.<id>.options.apiKey`), then an API-key login saved in OpenCode 2 (`opencode.db`).
+These providers read an API key from, in order: an environment variable, then `provider.<id>.options.apiKey` (or OpenCode 2's native `providers.<id>.settings.apiKey`) in the session's [OpenCode config files](troubleshooting.md#opencode-config-files), then an API-key login, not an OAuth sign-in, saved in OpenCode 2 (`opencode.db`).
 
-- OpenCode config means the [OpenCode config files](troubleshooting.md#opencode-config-files) of the session, the project's included. For each provider id, the file ranked highest that sets `apiKey` decides, as in OpenCode: `""` there, or `null` in the native form, means no key from config, even when a lower file has one.
-- A whole value `{env:NAME}` is filled in only when `NAME` is one of that provider's own variables and is set; otherwise it gives no key from config. Other templates, such as `{file:…}`, are not filled in.
-- An OpenCode login used as a fallback must be an API-key login, not an OAuth sign-in.
-- `provider.<id>.options.apiKey` can also be written in OpenCode 2's native form, `providers.<id>.settings.apiKey`. Like OpenCode 2, a native `providers.<id>` entry replaces the `provider.<id>` entry with the same id. A `provider.<id>` entry OpenCode 2 drops because a field has the wrong type, such as `"apiKey": null` or a `baseURL` that is not text, sets nothing, so a lower file's key still counts.
+- Config counts as in OpenCode: the highest-ranked file that sets `apiKey` decides, so `""` there (or `null` in the native form) means no key from config, even when a lower file has one. A native `providers.<id>` entry replaces the `provider.<id>` entry with the same id. A `provider.<id>` entry OpenCode 2 drops for a wrong-typed field (such as `"apiKey": null`, or a `baseURL` that is not text) sets nothing, so a lower file's key still counts.
+- A whole value `{env:NAME}` is filled in only when `NAME` is one of that provider's own variables and is set. Other templates, such as `{file:…}`, are not filled in.
 
 | Provider                | Environment variables (first match wins)              | Notes |
 | ----------------------- | ----------------------------------------------------- | ----- |
@@ -299,7 +316,7 @@ If something below does not work, see [Provider fixes](troubleshooting.md#provid
 
 **Personal quota** works automatically from your OpenCode Copilot login. GitHub.com uses `api.github.com`; a GHE.com login uses the `enterpriseUrl` saved with that login and calls `api.<enterprise-host>`.
 
-If Quota shows `<plan> | usage needs billing token`, GitHub reported your plan but no usage for your login. This is normal for Business and Enterprise seats (usage comes from the organization's pool), and it does not mean you are out of credits. Add the token below to see real numbers.
+`<plan> | usage needs billing token` means GitHub reported your plan but no usage for your login: normal for Business and Enterprise seats, whose usage comes from the organization's pool, and not a sign you are out of credits. The token below shows real numbers.
 
 **Organization and enterprise billing** need a separate token with billing access. Create `copilot-quota-token.json` in the OpenCode config folder shown by `opencode debug paths`. Example for a personal Copilot Max plan:
 
@@ -313,6 +330,7 @@ If Quota shows `<plan> | usage needs billing token`, GitHub reported your plan b
 
 - Tiers: `free`, `student`, `pro`, `pro+`, `max`, `business`, and `enterprise`.
 - A configured token always wins. It never falls back to, or borrows the host from, your OpenCode login.
+- An annual Pro or Pro+ plan that stayed on request-based billing after June 1, 2026 adds `"billingModel": "legacy_premium_requests"`; its totals come from the tier, and its percentage and reset are calculated locally.
 
 <details>
 <summary><strong>Organization and enterprise setup</strong></summary>
@@ -340,52 +358,18 @@ Organization example (for an enterprise, use `"tier": "enterprise"`, add `"enter
 
 </details>
 
-<details>
-<summary><strong>What Copilot reports</strong></summary>
-
-- **OpenCode login:** GitHub's undocumented internal `premium_interactions` snapshot, normally labeled **Copilot Premium Interactions** (not assumed to match public AI Credit billing). GitHub supplies the entitlement, remaining amount, optional percentage, unlimited state, and reset. For in-range snapshots, used is derived from entitlement minus remaining; a percentage is calculated only when GitHub omits one. Token-based placeholder responses show the plan only.
-- **Token-based billing over limit:** once token-based billing usage passes the entitlement, GitHub reports a negative remaining amount plus a GitHub-reported `credits_used` AI-credit usage total. OpenCode shows that reported total; if it is missing or invalid, usage falls back to entitlement minus remaining and is marked locally derived. The remaining percentage stays provider-reported and does not exceed 100% when over limit.
-- **Personal token:** GitHub's public billing report for the current UTC calendar month. It is usage only, for example `Used 100 | Included 80 | Billed 20 ($0.20)`, with no allowance, remaining percentage, or reset. A missing percentage is expected.
-- **Organization and enterprise tokens:** the same used/included/billed fields for that payer. If GitHub returns an additional-usage budget, it shows as a separate **Copilot Additional Usage** row comparing billed spend with that budget.
-
-</details>
-
-<details>
-<summary><strong>Older annual Pro and Pro+ plans</strong></summary>
-
-Only if an existing annual Pro or Pro+ plan stayed on request-based billing after June 1, 2026:
-
-```json
-{
-  "token": "github_pat_REPLACE_ME",
-  "tier": "pro+",
-  "billingModel": "legacy_premium_requests",
-  "username": "your-github-login"
-}
-```
-
-Totals come from the configured tier. The remaining percentage and next-month reset are calculated locally, not returned by GitHub.
-
-</details>
-
-GitHub references: [AI Credit billing reports](https://docs.github.com/en/rest/billing/usage?apiVersion=2026-03-10), [billing budgets](https://docs.github.com/en/rest/billing/budgets?apiVersion=2026-03-10), [GHE.com REST hostnames](https://docs.github.com/en/enterprise-cloud@latest/rest/meta/meta), [individual AI Credit allowances](https://docs.github.com/en/copilot/concepts/billing/usage-based-billing-for-individuals), [organization and enterprise pools](https://docs.github.com/en/copilot/concepts/billing/usage-based-billing-for-organizations-and-enterprises), and [legacy annual plans](https://docs.github.com/en/copilot/reference/copilot-billing/request-based-billing-legacy/what-changed-with-billing).
-
 <a id="anthropic-claude"></a>
 
 ### Anthropic (Claude)
 
-OpenCode's Anthropic login is enough; Claude Code is optional. Each OpenCode `anthropic` login is asked once per check at Anthropic's OAuth usage endpoint. Claude Code is started only when Anthropic rejects a login, so `/quota_status` shows whether Claude Code is installed and signed in. An expired login shows "Sign in again". To use Claude Code as the quota source when OpenCode has no Anthropic login, install it and sign in:
+OpenCode's Anthropic login is enough: each `anthropic` login is asked once per check at Anthropic's OAuth usage endpoint, and an expired one shows "Sign in again". Claude Code is optional. Without an OpenCode Anthropic login, quota comes from Claude Code itself or from Anthropic's usage endpoint with Claude Code's credentials (macOS Keychain, then `~/.claude/.credentials.json`). When Anthropic rejects an OpenCode login, `/quota_status` shows whether Claude Code and its credentials still work. To use it, install it and sign in:
 
 ```bash
 claude auth login
 claude auth status
 ```
 
-- OpenCode Quota runs `claude` from OpenCode's `PATH`, or else the first working one of `~/.claude/local/claude`, `~/.local/bin/claude`, `/opt/homebrew/bin/claude`, and `/usr/local/bin/claude` (not on Windows). If Claude lives elsewhere, or on Windows when `claude` is not on OpenCode's `PATH`, set `providers.anthropic.binaryPath`. `/quota_status` shows the one it ran as `binary_path`.
-- When Claude Code does not expose quota windows itself, quota comes from Anthropic's OAuth usage endpoint with Claude Code's own credentials (macOS Keychain, then `~/.claude/.credentials.json`). `/quota_status` shows `oauth_credential_source`: `opencode-auth` for OpenCode logins, `claude-credentials` for Claude Code's.
-- When Anthropic rejects an OpenCode login, that login shows its error, and `/quota_status` shows whether Claude Code and its credentials still work.
-- **Claude Usage Credits:** a separate monthly group when that response includes enabled Usage Credits with numeric utilization. Missing or invalid credit data never changes the regular 5-hour and weekly rows.
-- **Fable:** a separate weekly row when Anthropic returns that model-scoped window. It is never guessed from your plan name. See [Claude Fable models on your plan](https://support.claude.com/en/articles/15424964-claude-fable-models-on-your-plan).
+OpenCode Quota runs `claude` from OpenCode's `PATH`, or else the first working one of `~/.claude/local/claude`, `~/.local/bin/claude`, `/opt/homebrew/bin/claude`, and `/usr/local/bin/claude` (not on Windows). If Claude lives elsewhere, or on Windows when `claude` is not on OpenCode's `PATH`, set `providers.anthropic.binaryPath`. `/quota_status` shows the one it ran as `binary_path`.
 
 <a id="cursor"></a>
 
@@ -401,15 +385,10 @@ Use companion plugin [`cursor-opencode-provider`](https://github.com/oakimov/cur
 
 Restart OpenCode, run `/connect`, choose **Cursor**, then sign in with **Cursor account (browser login)** or paste an **API key** from [cursor.com/settings](https://cursor.com/settings). A `CURSOR_API_KEY` environment variable also works. OpenCode 1 plugins such as `@playwo/opencode-cursor-oauth` and `@rama_nigg/open-cursor` do not run on OpenCode 2; replace them with this entry.
 
-Cursor's three settings sit under Cursor on the Providers tab (`/quota_settings`): **Plan** (Pro includes $20 of API use a month, Pro Plus $70, Ultra $400), **Included API budget** (your own amount instead of the plan's), and **Billing day** (the day your Cursor bill renews).
+Cursor estimates the current billing cycle from your local OpenCode history, priced like the Usage tab: Auto, Composer and Grok 4.5–4.7 at Cursor's own prices, every other model at its models.dev price. These have no price: a request whose prompt passes 200k tokens on Claude Sonnet 4, GPT-5.4, GPT-5.5, GPT-5.6 or Grok 4.7 (Cursor bills those at a higher rate), Gemini 3.6 Flash, GLM 5.3 Flash and the Muse models (Cursor's price is not models.dev's), and the `grok-4.7-500k` models. A cache write costs nothing unless Cursor publishes a cache-write rate for the model, as cursor-opencode-provider bills it.
 
-Cursor estimates the current billing cycle from your local OpenCode history, pricing each model the way the Usage tab does: Auto, Composer and Grok 4.5–4.7 at Cursor's own prices (their spend is the Auto+Composer row), every other model at its models.dev price. These have no price: a request whose prompt passes 200k tokens on Claude Sonnet 4, GPT-5.4, GPT-5.5, GPT-5.6 or Grok 4.7 (Cursor bills those at a higher rate), Gemini 3.6 Flash, GLM 5.3 Flash and the Muse models (Cursor's price is not models.dev's), and the `grok-4.7-500k` models. A cache write costs nothing unless Cursor publishes a cache-write rate for the model, as cursor-opencode-provider bills it.
-
-- With all models known and an allowance (`providers.cursor.plan` or `providers.cursor.includedApiUsd`), it shows an **API budget** percentage with used, limit, and remaining USD.
-- Without an allowance, it shows **API spend**.
-- If any Cursor model or request has no price, it shows only **Known API spend** plus a partial-data issue, never a percentage or a total.
-- **Auto+Composer spend** is a supplementary row shown in detailed output when there is room.
-- Set `providers.cursor.billingCycleStartDay` to your billing day; otherwise the cycle is the local calendar month.
+- With every request priced and a **Plan** or **Included API budget** set under Cursor on the Providers tab, it shows an **API budget** percentage; without one, **API spend**. With any unpriced request, it shows only **Known API spend**, never a percentage or a total.
+- **Billing day** sets the cycle's first day; unset, the cycle is the local calendar month.
 
 <a id="alibaba-personal-token-plan"></a>
 
@@ -427,7 +406,6 @@ bl auth login --console
 - On Windows, use WSL. Native `bl.exe` and `.cmd` shims are not supported.
 - Team plans, China-only `alibaba-token-plan-cn` runtimes, and cookie-based console scraping are not supported.
 - After switching the CLI's console account, restart OpenCode or wait for the next live check.
-- Remove `alibaba-token-plan` from `providers.off` if it is switched off.
 
 OpenCode Quota's Google integrations use independent community companion plugins. They are not endorsed by Google.
 
@@ -442,7 +420,6 @@ opencode auth login google-agy
 ```
 
 - It shows the companion's grouped weekly and five-hour windows for each account. AGY logins copied from OpenCode 1 keep working.
-- Remove `google-agy` from `providers.off` if it is switched off.
 - If the login has no project id, set `OPENCODE_AGY_PROJECT_ID`, or `providers.google-agy.settings.projectId` in [OpenCode config](troubleshooting.md#opencode-config-files) (the OpenCode 1 form `provider.google-agy.options.projectId` also works).
 
 <a id="gemini-cli"></a>
@@ -457,18 +434,13 @@ Use companion plugin [`opencode-gemini-auth`](https://github.com/jenslys/opencod
 opencode auth login google
 ```
 
-Quota checks `google-gemini-cli` when it finds it. Remove it from `providers.off` if you switched it off.
+Quota checks `google-gemini-cli` when it finds it.
 
 <a id="deepseek"></a>
 
 ### DeepSeek
 
-Shows your on-demand account balance from `GET https://api.deepseek.com/user/balance`. DeepSeek has no quota reset window, so there is no quota percentage.
-
-- Each valid **Total balance** is its own currency row. Detailed output can add **Granted balance** and **Topped-up balance**. Currencies are never added up or converted.
-- With no valid total balance, it shows the API's availability status. A malformed number becomes a partial-data issue, not zero.
-- Key: `DEEPSEEK_API_KEY`, or `provider.deepseek.options.apiKey` in OpenCode config (for example `"{env:DEEPSEEK_API_KEY}"`). See [API keys](#api-keys).
-- Remove `deepseek` from `providers.off` if it is switched off.
+Shows your account balance: one **Total balance** row per currency, never added up or converted (detailed output adds **Granted balance** and **Topped-up balance**), or the API's availability status when there is no valid balance. DeepSeek has no reset window, so there is no percentage. Key: `DEEPSEEK_API_KEY`, or see [API keys](#api-keys).
 
 <a id="kimi-code"></a>
 
@@ -483,7 +455,7 @@ Each regional plan has its own key and host. A key is sent only to its own host,
 
 ### Xiaomi MiMo
 
-Reads the signed-in dashboard API: one **Monthly quota** with used/limit tokens, plus optional **Total balance** (primary), **Cash balance**, and **Gift balance** (detailed output). A valid currency code is kept; with none, amounts are credits.
+Reads the signed-in dashboard API: a **Monthly quota** of tokens and the account's balances.
 
 Use exactly one trusted credential source. The environment variable wins:
 
@@ -506,35 +478,27 @@ To copy the cookie:
 3. Refresh the dashboard and select the `/api/v1/balance` request.
 4. Copy its **Request Headers → Cookie** value into the variable or file above.
 
-- The value may start with `Cookie:`. Line breaks are rejected. `api-platform_serviceToken` and `userId` are required, `api-platform_ph` and `api-platform_slh` are kept, and every other cookie is removed before requests.
+- `api-platform_serviceToken` and `userId` are required; every cookie but those and `api-platform_ph` and `api-platform_slh` is removed before requests. The value may start with `Cookie:`; line breaks are rejected.
 - An invalid variable or a higher-priority `mimo.json` blocks lower-priority sources instead of falling back.
-- Provider ids: `xiaomi`, `xiaomi-token-plan-cn`, `xiaomi-token-plan-ams`, and `xiaomi-token-plan-sgp`. With a manual provider list, use `xiaomi`.
-- Plan name and code only label the display. An expired plan is not shown as active, and `currentPeriodEnd` is not a quota reset.
-- The three dashboard requests are independent, so other rows still appear if one fails. Per-API-key costs are not supported.
 
 <a id="ollama-cloud"></a>
 
 ### Ollama Cloud
 
-Create an Ollama API key, then set `OLLAMA_API_KEY` (or use `provider.ollama-cloud.options.apiKey` in OpenCode config, or an `ollama-cloud` API-key login saved in OpenCode 2).
-
-- Calls `https://ollama.com/api/balance`. Credit plans show a **Monthly** row (included credits left, with the period's reset time); legacy plans show **Session** and **Weekly** rows with their reset times.
-- **Purchased** shows unexpired purchased credits in USD when there are some, or when Ollama returns nothing else.
-- The API gives no per-model rows.
-- The old `OLLAMA_USAGE_COOKIE`, `ollama-cloud.json`, and `ollama-usage/config.yaml` cookie setup is no longer supported.
+Create an Ollama API key, then set `OLLAMA_API_KEY` (or see [API keys](#api-keys)). Credit plans show a **Monthly** row, older plans **Session** and **Weekly** rows, and **Purchased** shows unexpired purchased credits. The `OLLAMA_USAGE_COOKIE`, `ollama-cloud.json` and `ollama-usage/config.yaml` cookie setups are not read.
 
 <a id="openai-and-xai"></a>
 
 ### OpenAI and xAI
 
-- **OpenAI:** ChatGPT quota needs a Codex login: `/connect` → OpenAI → **Codex browser (legacy)** or **Codex device code (legacy)**. OpenAI rejects **Sign in with ChatGPT** logins on ChatGPT's usage endpoint (HTTP 401 `no_matching_rule`), so they show "ChatGPT quota unavailable for Sign in with ChatGPT", and stored API keys show "ChatGPT quota unavailable for API key", both without a ChatGPT request. `/quota_status` shows `auth_method: chatgpt-token-sharing` when the active login is Sign in with ChatGPT.
-- **xAI:** reads OpenCode's xAI login and shows its single Weekly window. The credits endpoint sets the quota; a best-effort subscription lookup labels the plan as xAI Lite, xAI SuperGrok, or xAI Heavy. That lookup waits at most 2 seconds (less when `providers.checking.requestTimeoutMs` is lower). If the plan is unknown or the lookup fails, the quota still shows under the xAI SuperGrok label.
+- **OpenAI:** ChatGPT quota needs a Codex login: `/connect` → OpenAI → **Codex browser (legacy)** or **Codex device code (legacy)**. OpenAI rejects **Sign in with ChatGPT** logins on ChatGPT's usage endpoint, so they show "ChatGPT quota unavailable for Sign in with ChatGPT", and stored API keys show "ChatGPT quota unavailable for API key", both without a ChatGPT request.
+- **xAI:** reads OpenCode's xAI login and shows its Weekly window. A lookup of at most 2 seconds labels the plan xAI Lite, xAI SuperGrok or xAI Heavy; when it fails or the plan is unknown, the label is xAI SuperGrok.
 
 <a id="openrouter"></a>
 
 ### OpenRouter
 
-Reads your OpenCode API key and calls OpenRouter's current-key endpoint. Limited keys show the budget's percentage left. Unlimited keys show **This month**: the spend in the current UTC month (`usage_monthly`), or the all-time **Spend** when the reply has no monthly figure. No reset time is invented. `/quota_status` has an `openrouter:` section with the key source and the live check result.
+Reads your OpenCode API key. A limited key shows the budget's percentage left; an unlimited key shows **This month**'s spend, or the all-time **Spend** when OpenRouter reports no monthly figure.
 
 <a id="opencode-go"></a>
 
@@ -550,11 +514,8 @@ API key order:
 4. An `opencode-go` API-key login saved in OpenCode 2 (`opencode.db`). `opencode auth login opencode-go` creates it.
 5. A legacy `opencode` API-key login as the final fallback.
 
-- Without an API key: an expired sign-in shows `Sign in again` (as it does for Zen), a sign-in OpenCode cannot return shows as an error, and a failed Console call (including HTTP 403) shows no Go quota.
-- If the Console reports no Go subscription (for example HTTP 404), no Go rows appear.
-- A window with API status `rate-limited` is shown as used up (0% left) with its reset time. Other windows stay visible.
-- Go shows **Five-hour**, **Weekly**, and **Monthly**. The collapsed sidebar shows the window with the least left.
-- Old workspace/cookie setups (`OPENCODE_GO_WORKSPACE_ID`, `OPENCODE_GO_AUTH_COOKIE`, and the global `opencode-quota/opencode-go.json` file) are not read and cannot be converted to an API key. Remove them once Go works.
+- Go shows **Five-hour**, **Weekly** and **Monthly**; a window the API reports as `rate-limited` shows as 0% left. When the Console reports no Go subscription, no Go rows appear.
+- `OPENCODE_GO_WORKSPACE_ID`, `OPENCODE_GO_AUTH_COOKIE` and the `opencode-quota/opencode-go.json` file are not read and cannot be converted to an API key.
 
 <a id="opencode-zen"></a>
 
@@ -566,12 +527,7 @@ Zen uses your OpenCode Console sign-in from OpenCode 2; no cookie or workspace I
 2. To track another organization, sign in again and pick it. With several saved sign-ins, `opencode auth switch opencode` picks the active one.
 3. Check it with `/quota_status` in OpenCode, or `opencode-quota status` in a terminal.
 
-- Inside OpenCode, an expired token is refreshed; the terminal command does not refresh it.
-- An OpenCode API key alone is not a Console sign-in. Zen appears when a Console sign-in is found and `providers.off` does not include `opencode`.
-- Zen reads unofficial Console routes (`/api/billing/status`, `/api/billing/account`, `/api/billing/auto-recharge`, `/api/policies/members/{account id}`, and `/api/usage/cost-by-day`), so OpenCode may change them.
-- **Monthly budget:** a percentage with used, limit, and remaining USD. It uses your member budget (`/api/policies/members/{account id}`, trusted only when the reply names your account): of the monthly budget rules that apply to you, your own `each` cap or a shared `combined` cap, the one with the least USD left. A $0 budget blocks, so it shows 0% left. A member budget resets at 00:00 UTC on the 1st of the next month. A budget Zen can't evaluate (it covers only some models, it is a non-zero per-model budget, its rule doesn't match, or its amounts are missing) could be the one that binds, so then Zen uses no member budget and `/quota_status` shows `member_budget_note`. Without a usable member budget, Zen uses the Console credit limit (`/api/billing/account`) plus this month's usage costs (`/api/usage/cost-by-day`). `providers.opencode.monthlyLimitUsd` in `settings.jsonc` overrides the budget from either source.
-- **Balance:** always required. It is supplementary when a budget percentage exists, and primary otherwise (next to a **Monthly spend** row when this month's usage is known).
-- **Auto-reload:** a supplementary enabled/disabled row. Its amount and trigger stay in diagnostics.
-- If a non-balance route fails, Zen still shows the balance, hides only the rows that need the failed data, and lists the failed route as an error.
-- `words.detail: "detailed"` shows the supplementary balance and auto-reload rows.
-- The old `opencode-quota/opencode.json` file and `OPENCODE_WORKSPACE_ID` / `OPENCODE_AUTH_COOKIE` variables are no longer read. Remove the file after Zen works. The variables may also belong to OpenCode's workspace feature, so remove them only if they held Zen credentials.
+- An OpenCode API key alone is not a Console sign-in. Inside OpenCode an expired sign-in is refreshed; the terminal command does not refresh it.
+- **Monthly budget** is your member budget in the Console when Zen can use it, else the Console credit limit plus this month's usage. `providers.opencode.monthlyLimitUsd` (Providers tab: **Monthly budget**) overrides both. `/quota_status` shows `member_budget_note` when a member budget can't be used.
+- **Auto-reload** is an extra row (Layout → All places → **Extra rows**), and so is **Balance** when there is a budget. If a route other than the balance fails, Zen still shows the rows that don't need it.
+- The `opencode-quota/opencode.json` file and the `OPENCODE_WORKSPACE_ID` / `OPENCODE_AUTH_COOKIE` variables are not read.

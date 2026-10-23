@@ -67,6 +67,14 @@ function provider(id: string, fetch: unknown, extra: object = {}) {
 
 const ACCOUNT_NEUTRAL = { cachePolicy: { kind: "account-neutral" } };
 
+/** Gemini CLI as the one enabled provider: the bundled notice for its users is active. */
+function useGeminiCli(): void {
+  useSettings({
+    providers: { off: CONFIG_PROVIDER_IDS.filter((id) => id !== "google-gemini-cli") },
+  });
+  mocks.getProviders.mockReturnValue([provider("google-gemini-cli", vi.fn())]);
+}
+
 /** Copilot's answer with `percentRemaining` of its premium requests left. */
 const copilotAnswer = (percentRemaining: number) =>
   answer({
@@ -616,6 +624,7 @@ describe("server quota RPC", () => {
   });
 
   it("serves the daily Home notice line without settings", async () => {
+    useGeminiCli();
     const nowMs = new Date(2026, 9, 10, 9, 0).getTime();
     const clock = vi.spyOn(Date, "now").mockReturnValue(nowMs);
     const { call } = await setupServer();
@@ -627,12 +636,13 @@ describe("server quota RPC", () => {
   });
 
   it("lists the active notices without read state or settings", async () => {
+    useGeminiCli();
     const nowMs = Date.parse("2026-10-10T12:00:00.000Z");
     vi.spyOn(Date, "now").mockReturnValue(nowMs);
     const { getMaintainerAnnouncementsSummary } =
       await import("../src/lib/maintainer-announcements.js");
     const expected = getMaintainerAnnouncementsSummary({
-      enabledProviders: ["copilot"],
+      enabledProviders: ["google-gemini-cli"],
       nowMs,
     }).activeAnnouncements.map(({ announcement }) => ({
       id: announcement.id,
@@ -746,14 +756,24 @@ describe("server quota RPC", () => {
       "Quota · 7 days · $3.00 · 1.00M tokens",
       "● Anthropic  $3.00",
       "● Copilot    Premium requests 81% left",
-      "",
-      "Notices",
-      "- Help OpenCode list this plugin: add a thumbs-up to issue #38281.",
-      "  https://github.com/anomalyco/opencode/issues/38281",
       "[End of OpenCode Quota report]",
     ]);
     expect(message.metadata.opencodeQuota?.command).toBe("quota");
     expect(commands.map((command) => command.name)).not.toContain("quota_announcements");
+  });
+
+  it("ends the /quota report of Web and Desktop with the active notices", async () => {
+    useGeminiCli();
+    vi.spyOn(Date, "now").mockReturnValue(Date.parse("2026-10-10T12:00:00.000Z"));
+    const { BUNDLED_MAINTAINER_ANNOUNCEMENTS } =
+      await import("../src/lib/maintainer-announcements.js");
+    const notice = BUNDLED_MAINTAINER_ANNOUNCEMENTS.find(
+      (announcement) => announcement.id === "google-gemini-cli-org-only",
+    );
+    const { quota } = await setupServer();
+
+    const report = await quota();
+    expect(report.split("\n").slice(-3)).toEqual(["", "Notices", `- ${notice?.message}`]);
   });
 
   it("treats a session the server cannot find as a session without a model", async () => {
