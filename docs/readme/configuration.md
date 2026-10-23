@@ -17,7 +17,7 @@ The file holds only the settings you change, so the rest follow their defaults, 
 
 The TUI quota window's tabs are Usage, Limits, Plugin, then the Settings tabs **Layout** (**All places**, then a page each for Sidebar, Collapsed, Status line and Toast), **Colors** and **Providers**. `/quota_usage`, `/quota`, `/quota_status` and `/quota_settings` open it on Usage, Limits, Plugin and Layout. While you edit, the sidebar, status line, toasts and quota window show your unsaved changes. **Save** writes them and keeps the file's comments, **Discard** drops them, and **Reset page** (**Reset tab** on Colors and Providers) puts that page back to its defaults on Save, except row names. The **Plugin** tab (`/quota_status`) has the **Old command names**, **Quota file (JSON)** and **OpenTelemetry metrics** switches, which save as soon as you change them. A file edit or a Save reaches every open TUI within a few seconds.
 
-Three settings are file only: `providers.custom`, `providers.anthropic.binaryPath` and `system.exportPath`. Credentials never go in this file: see [API keys](providers.md#api-keys).
+Three settings are file only: `providers.custom` ([custom providers](providers.md#custom-providers)), `providers.anthropic.binaryPath` and `system.exportPath`. Credentials never go in this file: see [API keys](providers.md#api-keys).
 
 Nest the keys in the file:
 
@@ -42,54 +42,6 @@ Nest the keys in the file:
 - **Toasts:** after compaction, when every provider fails, and after a reply once a shown limit is getting low.
 
 Web and Desktop have none of these; there `/quota`, `/quota_usage` and `/quota_status` post a report in the chat.
-
-## Custom providers
-
-Ask your agent to add a custom provider: [Custom providers](providers.md#custom-providers) has a copy-paste prompt. To edit one yourself, add it to `providers.custom` in `settings.jsonc`; `/quota_status` checks it with the plugin's own validator.
-
-- `"enabled": false` switches a definition off: it is never fetched, its key is never sent, and `/quota_status` shows it as off. Without `enabled` (or with `true`) it is on. Providers an agent adds start switched off; switch one on by setting `"enabled": true` in `opencode-quota/settings.jsonc`, or tick it in `/quota_settings` → **Providers**, which shows its web address and the key it sends.
-- `custom` in `providers.off` skips every definition.
-- `id` is the stable identity; add `providerId` only when it differs. Definitions keep file order.
-- `modelIds` only limits `words.onlyCurrentModel` and which requests a local estimate counts. Use exact, case-sensitive model ids without the provider prefix, or leave it out to cover every model of that provider.
-- Credentials come from `apiKeyEnv`, then `provider.<providerId>.options.apiKey` in the [OpenCode config files](troubleshooting.md#opencode-config-files), then an API-key login saved in OpenCode 2 (`opencode.db`).
-- A local estimate has 1–16 UTC-day or rolling request windows. Each check counts the completed requests in OpenCode's own messages; nothing else is stored.
-- Prices come from the automatic match first (models.dev, and Cursor's own prices for Auto, Composer and Grok); add `pricingModelMap` only when it finds none. `pricingModelMap` cannot override a successful automatic match. If any request cannot be priced, the request counts stay and the budget percentage is reported unavailable.
-- A remote API gets a fixed authenticated `GET` in one of three formats: `quota-v1`, `json-v1` or `openrouter-key-v1`. See the [response rules](providers.md#custom-providers).
-- To tune the built-in Alibaba Coding Plan estimate, use the reserved `alibaba-coding-plan` id and its window shape.
-- Not accepted: scripts, methods, custom headers, templates, executable mappings, regular expressions, JSONPath, and automatic endpoint discovery.
-- A custom model provider still needs its normal `provider` block in `opencode.json`: that tells OpenCode how to use the model, `providers.custom` tells OpenCode Quota how to measure it.
-
-<details>
-<summary><strong>Example</strong></summary>
-
-```jsonc
-{
-  "providers": {
-    "custom": [
-      {
-        "id": "openrouter-primary",
-        "providerId": "openrouter",
-        "label": "OpenRouter Primary",
-        "mode": "remote-api",
-        "url": "https://openrouter.ai/api/v1/key",
-        "format": "openrouter-key-v1",
-        "apiKeyEnv": "OPENROUTER_API_KEY",
-      },
-      {
-        "id": "private-gateway",
-        "label": "Private Gateway Estimate",
-        "mode": "local-estimate",
-        "modelIds": ["model-a"],
-        "windows": [
-          { "id": "daily", "label": "Daily", "type": "utc-day", "requestLimit": 1000, "usdBudget": 25 },
-        ],
-      },
-    ],
-  },
-}
-```
-
-</details>
 
 ## All settings
 
@@ -158,7 +110,7 @@ Every place follows these, so in the TUI they are on **Layout → All places**. 
 | Setting | Default | Values |
 | --- | --- | --- |
 | `providers.off` | `[]` | Provider ids switched off. `custom` means every custom definition. |
-| `providers.custom` | `[]` | Custom provider definitions, file only. |
+| `providers.custom` | `[]` | [Custom provider](providers.md#custom-providers) definitions, file only. |
 | `providers.anthropic.binaryPath` | `"claude"` | CLI command or absolute or `~/` path without `..`, file only. |
 | `providers.cursor.plan` | `"none"` | `none`, `pro` ($20 of API use a month), `pro-plus` ($70), `ultra` ($400). |
 | `providers.cursor.includedApiUsd` | `null` | Positive monthly USD amount, used instead of the plan's. |

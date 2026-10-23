@@ -62,18 +62,6 @@ A file ranked higher wins. Both kinds may hold comments and trailing commas. Wit
 Run `/quota_status` first. Every known provider has a section named after its id (for example `copilot:` or `opencode-go:`) with its `state` (`ok`, `partial`, `error`, `not checked`, `unavailable`, or `disabled`), `checked_at`, its `rows`, and its own details. An `unavailable` provider is not asked for quota; its section shows whether OpenCode lists it and, for an API-key provider or Cursor, where a key was looked for. The report prints only OpenCode Quota's own words (provider ids, row keys, states, setting keys), numbers and times: logins show as `account 1`, custom definitions as `custom 1`, other paths as `(custom path)`, and provider messages, labels, names, URLs and custom ids never appear. Read the report before you paste it into an issue. Setup steps are in [Providers](providers.md).
 
 <details>
-<summary><strong>Custom providers</strong></summary>
-
-`/quota_status` lists each definition as `custom 1`, `custom 2`, … with a `custom 1 check` line that says which step failed. These results are fetched live for the status command; cached results are not substituted. It hides URLs, request/response contents, raw errors, and secret material.
-
-| Symptom                                    | Fix |
-| ------------------------------------------ | --- |
-| Config is rejected                         | Remove unknown fields, duplicate ids, or overlapping model coverage from `providers.custom` ([where](configuration.md#where-settings-live)). |
-| `Not set up` (`missing_credential`)       | Set the `apiKeyEnv` variable, `provider.<providerId>.options.apiKey` in an [OpenCode config file](#opencode-config-files), or an API-key login saved in OpenCode 2 for that provider id. |
-
-</details>
-
-<details>
 <summary><strong>Anthropic (Claude)</strong></summary>
 
 | Symptom                              | Fix |
@@ -135,27 +123,15 @@ Run `/quota_status` first. Every known provider has a section named after its id
 </details>
 
 <details>
-<summary><strong>Google AGY</strong></summary>
-
-| Symptom                             | Fix |
-| ----------------------------------- | --- |
-| Companion missing                   | Put `@anthonyhaussman/opencode-agy-auth` before `@slkiser/opencode-quota` in `opencode.json`. |
-| Login missing                       | Run `opencode auth login google-agy`. |
-| Project missing                     | Set `OPENCODE_AGY_PROJECT_ID` or `provider.google-agy.options.projectId`. |
-
-</details>
-
-<details>
-<summary><strong>Gemini CLI</strong></summary>
+<summary><strong>Google AGY and Gemini CLI</strong></summary>
 
 Gemini CLI works only with Gemini Code Assist Standard or Enterprise (organization) accounts. Personal Google users should use [Google AGY](providers.md#google-agy-quick-setup) instead.
 
-| Symptom                             | Fix |
-| ----------------------------------- | --- |
-| Companion missing                   | Put `opencode-gemini-auth` before `@slkiser/opencode-quota` in `opencode.json`. |
-| Provider switched off               | Remove `google-gemini-cli` from `providers.off`. |
-| Login missing                       | Run `opencode auth login google`. |
-| Project missing                     | Set `provider.google.options.projectId`, `OPENCODE_GEMINI_PROJECT_ID`, `GOOGLE_CLOUD_PROJECT`, or `GOOGLE_CLOUD_PROJECT_ID`. |
+| Symptom           | Google AGY                                                                | Gemini CLI |
+| ----------------- | ------------------------------------------------------------------------- | --- |
+| Companion missing | Put `@anthonyhaussman/opencode-agy-auth` before `@slkiser/opencode-quota` in `opencode.json`. | Put `opencode-gemini-auth` before `@slkiser/opencode-quota` in `opencode.json`. |
+| Login missing     | Run `opencode auth login google-agy`.                                     | Run `opencode auth login google`. |
+| Project missing   | Set `OPENCODE_AGY_PROJECT_ID` or `provider.google-agy.options.projectId`. | Set `provider.google.options.projectId`, `OPENCODE_GEMINI_PROJECT_ID`, `GOOGLE_CLOUD_PROJECT`, or `GOOGLE_CLOUD_PROJECT_ID`. |
 
 </details>
 

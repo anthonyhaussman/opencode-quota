@@ -32,13 +32,6 @@ It works with OpenCode closed: it reads the quota OpenCode saved last and never 
 | `1` | At least one comparable cached percentage is below the threshold, or the command failed |
 | `2` | Results were incomplete or no comparable percentage was found |
 
-Some rows are values, not percentages, so select a percentage row instead of taking the first one. Copilot's percentage with `jq`:
-
-```bash
-opencode-quota show --json --provider copilot \
-  | jq -r '(.providers.copilot.entries? // []) | map(select(.renderType == "percent" and .percentRemaining != null)) | first | .percentRemaining // empty'
-```
-
 ## 2. Read an export file
 
 For a status bar or another tool that checks quota often. Turn on **Quota file (JSON)** on the Plugin tab (`/quota_status`), or add this to `opencode-quota/settings.jsonc` ([where](configuration.md#where-settings-live)):
@@ -128,37 +121,7 @@ Optional entry fields are `account` (the account the TUI shows, for example `pro
 
 Secrets, credentials, URLs, checked paths, and raw provider responses remain excluded from public JSON. Use `/quota_status` for live diagnostics.
 
-<details>
-<summary><strong>Custom provider rows</strong></summary>
-
-Rows from a `providers.custom` definition appear under `providers["quota-providers"]`. Their `id` is `quota-providers.custom.<definition id>.<key>`, so tools can match each row to its definition:
-
-```json
-{
-  "id": "quota-providers.custom.openrouter-primary.Monthly",
-  "name": "Custom providers (OpenRouter primary) Monthly",
-  "account": "OpenRouter primary",
-  "renderType": "percent",
-  "percentRemaining": 40
-}
-```
-
-After a check, the provider also lists every configured source except the built-in tunings:
-
-```json
-"sources": [
-  {
-    "id": "openrouter-primary",
-    "providerId": "openrouter",
-    "status": "ok",
-    "entryCount": 1
-  }
-]
-```
-
-Each summary is exactly `id`, effective `providerId`, coarse `status`, and `entryCount`. A switched-off definition is never checked, so its summary has `"enabled": false` instead of a `status`, and `entryCount` is `0`. A source can be `ok` after producing valid rows while failed mapping candidates can still make the aggregate provider `partial`.
-
-</details>
+Rows from a `providers.custom` definition appear under `providers["quota-providers"]`, each with the id `quota-providers.custom.<definition id>.<key>`. After a check, that provider's `sources` lists every definition except the built-in tunings, in file order, each with exactly `id`, `providerId`, `status` (`ok`, `error` or `unavailable`) and `entryCount`. A switched-off definition has `"enabled": false` instead of a `status`, and `entryCount` `0`. A definition can be `ok` while failed mapping candidates make the provider `partial`.
 
 <details>
 <summary><strong>Small JSON example</strong></summary>

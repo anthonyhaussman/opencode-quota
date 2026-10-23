@@ -95,12 +95,48 @@ Add a custom OpenCode Quota provider for <provider> with the quota_provider_add 
 
 The agent saves the provider switched off: until you switch it on, it is never fetched and its key is never sent, and no agent tool can switch it on. Switch it on by setting `"enabled": true` in `opencode-quota/settings.jsonc`, or tick it in `/quota_settings` → **Providers**, which shows its address and the key it sends. The agent tools change only OpenCode Quota's own settings file, never `opencode.json`, and refuse a definition holding anything that looks like a key.
 
-- **Credentials:** the variable named by `apiKeyEnv`, then `provider.<providerId>.options.apiKey` in the [OpenCode config files](troubleshooting.md#opencode-config-files) (no `{env:…}` unless it names `apiKeyEnv`), then an API-key login saved in OpenCode 2 (`opencode.db`) for that provider id.
-- **Local estimate:** 1–16 windows; `utc-day` resets at UTC midnight, `rolling` uses `durationMinutes` (up to 366 days). Every window needs `requestLimit`; `usdBudget` is optional.
-- A custom model provider still needs its normal OpenCode provider/model config. `/connect` → **Other** stores its credential, not its model setup.
-- OpenRouter is built in; a custom OpenRouter definition only helps for a different endpoint or label. Alibaba Personal Token Plan's `alibaba-token-plan` id is reserved.
+To write one yourself, add it to `providers.custom` in `settings.jsonc` ([where](configuration.md#where-settings-live)); `/quota_status` checks it with the plugin's own validator.
 
-To write definitions in `providers.custom` yourself, see [Configuration](configuration.md#custom-providers).
+- **Identity:** `id` is the stable identity; add `providerId` only when it differs. A definition is on unless it has `"enabled": false`. Definitions keep file order, and `custom` in `providers.off` skips them all.
+- **Credentials:** the variable named by `apiKeyEnv`, then `provider.<providerId>.options.apiKey` in the [OpenCode config files](troubleshooting.md#opencode-config-files) (no `{env:…}` unless it names `apiKeyEnv`), then an API-key login saved in OpenCode 2 (`opencode.db`) for that provider id.
+- **Models:** `modelIds` only limits `words.onlyCurrentModel` and which requests a local estimate counts. Use exact, case-sensitive model ids without the provider prefix, or leave it out to cover every model of that provider.
+- **Local estimate:** 1–16 windows; `utc-day` resets at UTC midnight, `rolling` uses `durationMinutes` (up to 366 days). Every window needs `requestLimit`; `usdBudget` is optional. Each check counts the completed requests in OpenCode's own messages; nothing else is stored.
+- **Local estimate prices:** the automatic match comes first (models.dev, and Cursor's own prices for Auto, Composer and Grok); `pricingModelMap` is used only where it finds none and cannot override a successful automatic match. If any request cannot be priced, the request counts stay and the budget percentage is reported unavailable.
+- **Not accepted:** scripts, methods, custom headers, templates, executable mappings, regular expressions, JSONPath, and automatic endpoint discovery.
+- A custom model provider still needs its normal OpenCode provider/model config. `/connect` → **Other** stores its credential, not its model setup.
+- OpenRouter is built in; a custom OpenRouter definition only helps for a different endpoint or label. Alibaba Personal Token Plan's `alibaba-token-plan` id is reserved. The `alibaba-coding-plan` id tunes the built-in Alibaba Coding Plan estimate and needs its five-hour, weekly and monthly rolling windows, in that order.
+
+<details>
+<summary><strong>Example: a remote API and a local estimate</strong></summary>
+
+```jsonc
+{
+  "providers": {
+    "custom": [
+      {
+        "id": "openrouter-primary",
+        "providerId": "openrouter",
+        "label": "OpenRouter Primary",
+        "mode": "remote-api",
+        "url": "https://openrouter.ai/api/v1/key",
+        "format": "openrouter-key-v1",
+        "apiKeyEnv": "OPENROUTER_API_KEY",
+      },
+      {
+        "id": "private-gateway",
+        "label": "Private Gateway Estimate",
+        "mode": "local-estimate",
+        "modelIds": ["model-a"],
+        "windows": [
+          { "id": "daily", "label": "Daily", "type": "utc-day", "requestLimit": 1000, "usdBudget": 25 },
+        ],
+      },
+    ],
+  },
+}
+```
+
+</details>
 
 <details>
 <summary><strong>Recipes: Vercel AI Gateway, Moonshot, Poe</strong></summary>
@@ -208,14 +244,14 @@ A `json-v1` adapter is built from literal property segments, compatible metric s
 
 Adapter rules:
 
-- **Rows:** optional `rowsPath` and 1–16 `mappings`. Without `rowsPath`, an object is one item and an array is a list of items; with it, the array it names is the list. Each mapping makes one row per item, so a reply can show up to 1,600 rows (100 items × 16 mappings). When the list holds more than one item, the rows are numbered: `Daily 1`, `Daily 2`, `Daily 3`, where item 1 keeps the plain row id and items 2 and later add `.2`, `.3`. One item keeps the plain name `Daily`. Lists hold 1–100 items, responses allow at most 32 container levels, and at most 1,600 item/mapping candidates are checked.
+- **Rows:** optional `rowsPath` and 1–16 `mappings`. Without `rowsPath`, an object is one item and an array is a list of items; with it, the array it names is the list. A list holds 1–100 items, and each mapping makes one row per item. With more than one item, the rows are numbered `Daily 1`, `Daily 2`, …: item 1 keeps the plain row id and later items add `.2`, `.3`, ….
 - **Mapping names:** each name keys its rows, so names must still differ when spaces count as `_` (`Daily limit` and `Daily_limit` clash; `Daily-limit` is fine).
 - **Paths:** 1–8 literal own-property segments of 1–64 Unicode code points. Dots and brackets mean nothing special; array indexes and the segments `__proto__`, `prototype`, and `constructor` are rejected.
-- **Size:** adapter input is limited to 8 container levels, 128 objects, 384 object properties, and 640 array elements. Names and labels are 1–80 code points (a numbered row's label is shortened so its number fits), units 1–32, and status/display output at most 160.
+- **Size:** adapter input is limited to 8 container levels, 128 objects, 384 object properties, and 640 array elements, and a response to 32 container levels. Names and labels are 1–80 code points (a numbered row's label is shortened so its number fits), units 1–32, and status/display output at most 160.
 - **Metrics:** `percentage`, `used-limit`, `remaining-limit`, `spend-budget`, `remaining-budget`, `value`, and `status`. Calculations are fixed; no formulas or fallback parsing.
 - **Numbers:** exactly one `path` or `literal`, finite, with absolute magnitude at most `1e15`. A response may also write a number as text if it is a plain decimal like `"95.50"` or `"-3"` (spaces around it are ignored); other text such as `"95.50 USD"` or `"1e3"` is rejected. Zero is not the same as missing or `null`. Path sources may use `divideBy` with `100`, `1000`, or `1000000`.
 - **Timestamps:** `iso-8601`, `unix-seconds`, or `unix-milliseconds`. ISO needs a time zone, allows 1–3 fractional digits and offsets through `±14:00`, and must fall within years 1970–9999. Output is canonical UTC ISO.
-- **Errors:** a bad mapping candidate gets a fixed, redacted diagnostic while other valid candidates stay visible. At most 16 detailed errors plus one summary are kept.
+- **Errors:** a bad mapping candidate gets a fixed, redacted diagnostic while the valid ones stay visible.
 
 Metric compatibility and fixed output:
 
@@ -246,7 +282,7 @@ Pair denominators (`limit` and pair-form `budget`) must be greater than zero. Re
 
 **Never put secrets in adapter display configuration.** Static `name`, `label`, and `unit` fields and every `literal` can appear in written configuration, cache identity, rendered quota rows, or exports.
 
-OpenCode Quota sends a fixed authenticated `GET` and waits up to `providers.checking.requestTimeoutMs` (5 seconds unset). The URL must use HTTPS, except for loopback testing. Redirects and URLs containing credentials, queries, or fragments are rejected. Responses must be JSON and are limited to 256 KiB. Standard envelopes are limited to 100 rows and `json-v1` lists to 100 items. An HTTP 401 shows as `Sign in again`, a 429 as `Rate limited` (with its `Retry-After` wait, at most a day), an endpoint that cannot be reached as `Can't reach …`, and a redirect or a reply that is not valid JSON as `Unexpected reply`.
+OpenCode Quota sends a fixed authenticated `GET` and waits up to `providers.checking.requestTimeoutMs` (5 seconds unset). The URL must use HTTPS, except for loopback testing. Redirects and URLs containing credentials, queries, or fragments are rejected. Responses must be JSON and are limited to 256 KiB; a `quota-v1` envelope holds at most 100 rows.
 
 </details>
 
@@ -398,7 +434,7 @@ Use companion plugin [`opencode-gemini-auth`](https://github.com/jenslys/opencod
 opencode auth login google
 ```
 
-Quota checks `google-gemini-cli` when it finds it. Remove it from `providers.off` if you switched it off.
+Quota checks `google-gemini-cli` when it finds it.
 
 <a id="deepseek"></a>
 
