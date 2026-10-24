@@ -14,7 +14,7 @@ import { usageRangeLabel } from "../core/usage-ranges.js";
  * fits in `width` terminal columns.
  */
 import type { UsageByType, UsageModelRow, UsageReport, UsageRow } from "../core/usage.js";
-import { getQuotaProviderLabel } from "../lib/provider-metadata.js";
+import { getQuotaProviderDisplayLabel } from "../lib/provider-metadata.js";
 import {
   columnsOf,
   padEndColumns,
@@ -672,17 +672,17 @@ function breakdownEntries(view: View): BreakdownEntry[] {
 }
 
 /**
- * A provider's name in the usage view: the plugin's label for a quota provider, as the sidebar
- * names it, else OpenCode's name for it (a report's `providerNames`), else its id.
+ * A provider's name in the usage view: OpenCode's name for that exact id (a report's
+ * `providerNames`), like "GitHub Copilot" for "github-copilot"; else, for an id OpenCode
+ * doesn't list, the plugin's label for it, else the id itself.
  */
 export function usageProviderName(
   providerID: string,
   openCodeNames: Record<string, string> = {},
 ): string {
-  const openCodeName = Object.hasOwn(openCodeNames, providerID)
+  return Object.hasOwn(openCodeNames, providerID)
     ? openCodeNames[providerID]
-    : undefined;
-  return getQuotaProviderLabel(providerID) ?? openCodeName ?? providerID;
+    : getQuotaProviderDisplayLabel(providerID);
 }
 
 /** A model's id, with its provider when more than one provider serves that id. */

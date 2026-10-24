@@ -77,15 +77,9 @@ export function getCanonicalQuotaProviderId(id: string): CanonicalQuotaProviderI
   return isCanonicalQuotaProviderId(normalized) ? normalized : undefined;
 }
 
-/** The provider's label; none for an unknown id. */
-export function getQuotaProviderLabel(id: string): string | undefined {
-  const normalized = normalizeQuotaProviderId(id);
-  return Object.hasOwn(LABELS, normalized) ? LABELS[normalized] : undefined;
-}
-
 /** The provider's label; an unknown id is shown as given. */
 export function getQuotaProviderDisplayLabel(id: string): string {
-  return getQuotaProviderLabel(id) ?? id;
+  return LABELS[normalizeQuotaProviderId(id)] ?? id;
 }
 
 /** The OpenCode provider ids that count as this provider (narrower than its synonyms). */

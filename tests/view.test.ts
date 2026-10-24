@@ -742,6 +742,8 @@ describe("view text", () => {
         plan("openai", "OpenAI", "Plus"),
         // The name alone doesn't fit either, so it is cut.
         plan("alibaba-coding-plan", "Alibaba Coding Plan", "Lite"),
+        // A name with its own brackets is the whole name: cut, never "Kimi Code".
+        plan("kimi-code-plan-cn", "Kimi Code (CN)", "Moderato"),
         // A title that fits keeps its account.
         plan("xai", "xAI", "Pro"),
       ]),
@@ -749,7 +751,7 @@ describe("view text", () => {
       width: 40,
       window: {},
     }).map((line) => lineText(line).slice(0, 10));
-    expect(lines).toEqual(["Copilot   ", "OpenAI    ", "Alibaba…  ", "xAI (Pro) "]);
+    expect(lines).toEqual(["Copilot   ", "OpenAI    ", "Alibaba…  ", "Kimi Cod… ", "xAI (Pro) "]);
     // Two accounts keep theirs, cut, so the lines still tell them apart.
     const zai = provider("zai", "Z.ai", [
       row("zai.work", { account: "work", label: "5h", window: "five_hour", percentRemaining: 40 }),

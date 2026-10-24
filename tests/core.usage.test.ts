@@ -804,7 +804,7 @@ describe("usage report provider names", () => {
 
     const named = withProviderNames(report, [
       { id: "moonshotai", name: "Moonshot AI" },
-      { id: "zai-coding-plan", name: " Z.ai\nCoding Plan " },
+      { id: "zai-coding-plan", name: " Z.AI\nCoding Plan " },
       // An empty name is left out, and so is a provider the report doesn't have.
       { id: "acme", name: " " },
       { id: "openai", name: "OpenAI" },
@@ -812,7 +812,7 @@ describe("usage report provider names", () => {
 
     expect(named.providerNames).toEqual({
       moonshotai: "Moonshot AI",
-      "zai-coding-plan": "Z.ai Coding Plan",
+      "zai-coding-plan": "Z.AI Coding Plan",
     });
     expect(named.providers).toBe(report.providers);
     // The shared report is not changed: the next identical question gets it as it was.

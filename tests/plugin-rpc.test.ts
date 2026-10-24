@@ -253,7 +253,7 @@ describe("server quota RPC", () => {
     expect(all.report.totals.tokens.processed).toBe(1_500);
   });
 
-  it("names the usage report's providers as OpenCode does, and keeps their ids when it can't", async () => {
+  it("names the usage report's providers as OpenCode does, and keeps their ids when its list fails or hangs", async () => {
     vi.setSystemTime(new Date(2026, 9, 10, 12));
     const databaseDir = await mkdtemp(join(tmpdir(), "opencode-quota-usage-names-"));
     onTestFinished(() => rm(databaseDir, { recursive: true, force: true }));
@@ -295,6 +295,32 @@ describe("server quota RPC", () => {
     expect(unnamed.report.providers.map((row) => row.providerID)).toEqual(["moonshotai"]);
     expect(warn).toHaveBeenCalledWith(
       "[opencode-quota] provider names failed: provider list offline",
+    );
+
+    // A provider list that never answers holds the report up for 2 s at most.
+    let asked!: () => void;
+    const listAsked = new Promise<void>((resolve) => {
+      asked = resolve;
+    });
+    ctx.provider.list.mockImplementationOnce(() => {
+      asked();
+      return new Promise(() => {});
+    });
+    vi.useFakeTimers({
+      toFake: ["setTimeout", "clearTimeout", "Date"],
+      now: new Date(2026, 9, 10, 12),
+    });
+    onTestFinished(() => {
+      vi.useRealTimers();
+    });
+    const pending = call("usage", { range: "today" });
+    await listAsked;
+    await vi.advanceTimersByTimeAsync(2_000);
+    const hung = (await pending) as { report: UsageReport };
+    expect(hung.report).not.toHaveProperty("providerNames");
+    expect(hung.report.providers.map((row) => row.providerID)).toEqual(["moonshotai"]);
+    expect(warn).toHaveBeenCalledWith(
+      "[opencode-quota] provider names failed: no answer within 2s",
     );
   });
 
