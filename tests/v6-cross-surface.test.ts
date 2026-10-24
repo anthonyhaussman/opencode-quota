@@ -145,7 +145,9 @@ async function startHosts() {
   const disposeServer = await serverPlugin.setup({
     location: { directory: process.cwd() },
     provider: {
-      list: async () => ({ data: ["team-gateway", "failing-gateway"].map((id) => ({ id })) }),
+      list: async () => ({
+        data: ["team-gateway", "failing-gateway"].map((id) => ({ id, name: id })),
+      }),
     },
     session: {
       get: async () => ({ model: { id: "model-one", providerID: "github-copilot" } }),
@@ -1020,7 +1022,7 @@ async function startServer() {
   const tools: AgentTool[] = [];
   const dispose = await serverPlugin.setup({
     location: { directory: process.cwd() },
-    provider: { list: async () => ({ data: [{ id: "team-gateway" }] }) },
+    provider: { list: async () => ({ data: [{ id: "team-gateway", name: "team-gateway" }] }) },
     session: { get: async () => ({}), hook: vi.fn() },
     command: { transform: vi.fn() },
     rpc: { register },

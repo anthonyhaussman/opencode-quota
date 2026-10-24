@@ -23,6 +23,7 @@
  *   questions share one read: see `usageReport`.
  */
 import { parseCalendarDate } from "../lib/calendar-date.js";
+import { sanitizeSingleLineDisplayText } from "../lib/display-sanitize.js";
 import { activePriceList } from "../lib/modelsdev-pricing.js";
 import { getOpenCodeDbPath } from "../lib/opencode-db-path.js";
 import {
@@ -125,6 +126,11 @@ export type UsageReport = {
   models: UsageModelRow[];
   /** Every local day of the range (or from the first to the last message), oldest first. */
   days: UsageDayRow[];
+  /**
+   * OpenCode's name for each provider of `providers` that OpenCode lists, by provider id, like
+   * "Moonshot AI" for "moonshotai". The server plugin adds it (`withProviderNames`).
+   */
+  providerNames?: Record<string, string>;
 };
 
 /** How many local days the rolling ranges cover, today included. */
@@ -503,6 +509,23 @@ async function buildUsageReport(query: UsageQuery, nowMs: number): Promise<Usage
       ),
     days: dayList.map((date) => ({ date, ...toRow(days.get(date) ?? emptyTally(), rowTotal) })),
   };
+}
+
+/**
+ * The report with OpenCode's names for its providers, from OpenCode's provider list: each on
+ * one line, and an empty name left out.
+ */
+export function withProviderNames(
+  report: UsageReport,
+  openCodeProviders: ReadonlyArray<{ id: string; name: string }>,
+): UsageReport {
+  const used = new Set(report.providers.map((row) => row.providerID));
+  const providerNames: Record<string, string> = {};
+  for (const provider of openCodeProviders) {
+    const name = sanitizeSingleLineDisplayText(provider.name);
+    if (used.has(provider.id) && name) providerNames[provider.id] = name;
+  }
+  return { ...report, providerNames };
 }
 
 /**

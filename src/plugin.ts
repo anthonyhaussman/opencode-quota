@@ -17,7 +17,7 @@ import {
 } from "./core/provider-source.js";
 import { safeErrorText } from "./core/redact.js";
 import { createSnapshotPublisher } from "./core/snapshot-publisher.js";
-import { createQuotaStore } from "./core/store.js";
+import { createQuotaStore, withTimeout } from "./core/store.js";
 import type { QuotaSnapshot, SessionModel } from "./core/types.js";
 import { OLD_USAGE_COMMANDS } from "./core/usage-ranges.js";
 import {
@@ -26,6 +26,7 @@ import {
   type UsageQuery,
   type UsageReport,
   usageReport,
+  withProviderNames,
 } from "./core/usage.js";
 import { findGitWorktreeRoot } from "./lib/config-file-utils.js";
 import { sanitizeDisplayText } from "./lib/display-sanitize.js";
@@ -52,6 +53,9 @@ import { QuotaRpc } from "./rpc.js";
 import { clientSettings, createLiveSettings, loadSettings } from "./settings/index.js";
 import { DEFAULT_QUICK_LOOK_RANGE } from "./view/quick-look.js";
 import { usageText } from "./view/usage.js";
+
+/** How long a usage report waits for OpenCode's provider names. */
+const PROVIDER_NAMES_TIMEOUT_MS = 2_000;
 
 type ModelMessage = {
   readonly role: string;
@@ -207,10 +211,25 @@ export function createQuotaServerPlugin(
         };
       };
 
-      // The usage report with the configured price list, after a due price download had its chance.
+      // The usage report with the configured price list, after a due price download had its
+      // chance, and OpenCode's names for its providers, asked for alongside it. When OpenCode's
+      // provider list fails or takes longer than PROVIDER_NAMES_TIMEOUT_MS, the report has no
+      // names and shows the plugin's labels or the ids.
       const loadUsageReport = async (query: UsageQuery): Promise<UsageReport> => {
         await refreshPricesIfDue();
-        return usageReport(query);
+        const openCodeProviders = withTimeout(
+          ctx.provider.list(),
+          PROVIDER_NAMES_TIMEOUT_MS,
+          `no answer within ${PROVIDER_NAMES_TIMEOUT_MS / 1000}s`,
+        ).then(
+          ({ data }) => data,
+          (error) => {
+            console.warn(`[opencode-quota] provider names failed: ${safeErrorText(error)}`);
+            return undefined;
+          },
+        );
+        const [report, providers] = await Promise.all([usageReport(query), openCodeProviders]);
+        return providers ? withProviderNames(report, providers) : report;
       };
 
       // A notice can target the users of some providers: the enabled and available ones,

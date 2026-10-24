@@ -318,7 +318,7 @@ function metricSpans(
  */
 function providerLines(view: View, width: number): UsageLine[] {
   const rows = inModeOrder(view.report.providers, view.mode);
-  const names = rows.map((row) => getQuotaProviderDisplayLabel(row.providerID));
+  const names = rows.map((row) => usageProviderName(row.providerID, view.report.providerNames));
   const nameWidest = Math.max(columnsOf("Provider") - columnsOf(DOT), ...names.map(columnsOf));
   let metrics = metricsOf(view.mode);
   let widths = metricWidths(view, metrics, rows);
@@ -671,6 +671,20 @@ function breakdownEntries(view: View): BreakdownEntry[] {
   }));
 }
 
+/**
+ * A provider's name in the usage view: OpenCode's name for that exact id (a report's
+ * `providerNames`), like "GitHub Copilot" for "github-copilot"; else, for an id OpenCode
+ * doesn't list, the plugin's label for it, else the id itself.
+ */
+export function usageProviderName(
+  providerID: string,
+  openCodeNames: Record<string, string> = {},
+): string {
+  return Object.hasOwn(openCodeNames, providerID)
+    ? openCodeNames[providerID]
+    : getQuotaProviderDisplayLabel(providerID);
+}
+
 /** A model's id, with its provider when more than one provider serves that id. */
 function modelName(report: UsageReport, model: UsageModelRow): string {
   const providers = report.models.filter((row) => row.modelID === model.modelID).length;
@@ -937,7 +951,7 @@ export function modelDetailView(
 
   const lines: UsageLine[] = [
     modelDetailTitle(report, model, width),
-    [span(`${getQuotaProviderDisplayLabel(model.providerID)} · ${share}`, "muted")],
+    [span(`${usageProviderName(model.providerID, report.providerNames)} · ${share}`, "muted")],
     [],
     ...grid(
       [

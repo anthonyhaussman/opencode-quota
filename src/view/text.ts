@@ -362,6 +362,17 @@ type CollapsedInput = {
 };
 
 /**
+ * A provider's name in a collapsed line's provider column: its title, or its name alone when
+ * the title with its account doesn't fit ("Copilot", not "Copilot…"); cut only when even the
+ * name doesn't fit. A provider that shows several accounts keeps them, as on the status line.
+ */
+function collapsedName(groups: Group[], group: Group, width: number): string {
+  const accounts = groups.filter((other) => other.providerId === group.providerId).length;
+  const name = accounts === 1 && columnsOf(group.title) > width ? group.name : group.title;
+  return fit(name, width);
+}
+
+/**
  * §4.2: one line per provider with its preferred window. When the last check failed, the
  * error's words take the place of the reset time next to the rows kept from before. The bar
  * takes the room the names, the percent and the longest reset time leave, at most 10 cells.
@@ -382,7 +393,11 @@ export function collapsedLines(input: CollapsedInput): Line[] {
     layout.bar === "none" ? 0 : Math.max(0, Math.min(wanted, COLLAPSED_BAR_MOST, room));
   const providerLine = (group: Group, picked: RowFacts | undefined): Line => {
     const percent = picked?.percent;
-    const name: Segment = { text: `${fit(group.title, 9)} `, role: "provider", percent };
+    const name: Segment = {
+      text: `${collapsedName(input.groups, group, 9)} `,
+      role: "provider",
+      percent,
+    };
     const state = groupState(group, nowMs);
     if (!picked || percent === undefined) {
       const value: Segment = state ?? { text: picked?.value ?? "", role: "value" };

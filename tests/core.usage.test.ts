@@ -5,7 +5,13 @@ import { dirname, join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
-import { sessionUsage, type UsageQuery, type UsageRow, usageReport } from "../src/core/usage.js";
+import {
+  sessionUsage,
+  type UsageQuery,
+  type UsageRow,
+  usageReport,
+  withProviderNames,
+} from "../src/core/usage.js";
 import { usePricingSettings } from "../src/lib/modelsdev-pricing.js";
 import { resolveSessionTree } from "../src/lib/opencode-storage.js";
 import {
@@ -784,6 +790,33 @@ describe("usage report cost", () => {
       expect(sum(rows, "costShare")).toBeCloseTo(item.costShares, 10);
       expect(sum(rows, "tokenShare")).toBeCloseTo(1, 10);
     }
+  });
+});
+
+describe("usage report provider names", () => {
+  it("adds OpenCode's names for the report's providers, each on one line", async () => {
+    writeHistory([
+      message({ providerID: "moonshotai", modelID: "kimi-k3", created: at(0, 8) }),
+      message({ providerID: "zai-coding-plan", modelID: "glm-5", created: at(0, 9) }),
+      message({ providerID: "acme", modelID: "mystery-1", created: at(0, 10) }),
+    ]);
+    const report = await usageReport({ range: "today" }, NOW);
+
+    const named = withProviderNames(report, [
+      { id: "moonshotai", name: "Moonshot AI" },
+      { id: "zai-coding-plan", name: " Z.AI\nCoding Plan " },
+      // An empty name is left out, and so is a provider the report doesn't have.
+      { id: "acme", name: " " },
+      { id: "openai", name: "OpenAI" },
+    ]);
+
+    expect(named.providerNames).toEqual({
+      moonshotai: "Moonshot AI",
+      "zai-coding-plan": "Z.AI Coding Plan",
+    });
+    expect(named.providers).toBe(report.providers);
+    // The shared report is not changed: the next identical question gets it as it was.
+    expect(report).not.toHaveProperty("providerNames");
   });
 });
 
