@@ -19,7 +19,10 @@ import {
   QUOTA_PROVIDERS_AGGREGATE_ID,
   selectEligibleQuotaProviderDefinitions,
 } from "../lib/quota-providers.js";
-import { deriveResolvedAuthIdentity } from "../lib/resolved-auth-identity.js";
+import {
+  deriveResolvedAuthIdentity,
+  isResolvedAuthIdentityKeyDurable,
+} from "../lib/resolved-auth-identity.js";
 import { createRuntimeProviderIdResolver } from "../lib/runtime-provider-ids.js";
 import { getProviders } from "../providers/registry.js";
 import type { LoadedSettings, Settings } from "../settings/index.js";
@@ -173,14 +176,15 @@ async function accountIdentity(
   }
 }
 
-/** Keys logins while the install's protected key can't be read; no account is saved then. */
+/** Keys logins while the identity key can't be read; no account is saved then. */
 const processLoginKey = randomBytes(32);
 
 /**
  * Each login (a source id: an account number, a credential id, often an email) as an opaque id
- * keyed with the install's protected key, so the snapshot file and notice ids can't be matched
- * against guessed emails. Without that key no account identity exists either, so the store
- * keeps such rows in memory only, and a key of this process is enough.
+ * keyed with the identity key (the install's protected key, or one held in memory where it
+ * can't be protected), so the snapshot file and notice ids can't be matched against guessed
+ * emails. Without that key no account identity exists either, so the store keeps such rows in
+ * memory only, and a key of this process is enough.
  */
 export async function keyedLogins(
   providerId: string,
@@ -216,9 +220,11 @@ function storeProvider(
     ...(isLiveLocalUsageProviderId(provider.id) ? { minIntervalMs: 0 } : {}),
     async identity(): Promise<ProviderIdentity> {
       const account = await accountIdentity(provider, ctx, await cacheContextFor(provider, ctx));
-      return account === null
-        ? { key: settingsKey, persist: false }
-        : { key: `${account}\u001f${settingsKey}`, persist: true };
+      if (account === null) return { key: settingsKey, persist: false };
+      // An account keyed in memory only is another one after a reload: its rows stay in memory.
+      const persist =
+        provider.cachePolicy.kind !== "resolved-auth" || isResolvedAuthIdentityKeyDurable();
+      return { key: `${account}\u001f${settingsKey}`, persist };
     },
     async fetch() {
       const result = await provider.fetch(ctx, await cacheContextFor(provider, ctx));

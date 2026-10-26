@@ -8,6 +8,7 @@ const TEST_RUNTIME_ROOT = useOpencodeFolders().root;
 const TEST_SYMLINK_TARGET = `${TEST_RUNTIME_ROOT}-symlink-target`;
 const RESOLVED_AUTH_IDENTITY_PATTERN = /^rai1_[A-Za-z0-9_-]{43}$/u;
 const POSIX_IDENTITY_STORAGE = process.platform !== "win32" && typeof process.getuid === "function";
+const originalPlatform = Object.getOwnPropertyDescriptor(process, "platform");
 
 describe("resolved-auth identity", () => {
   beforeEach(async () => {
@@ -19,6 +20,7 @@ describe("resolved-auth identity", () => {
   });
 
   afterEach(async () => {
+    if (originalPlatform) Object.defineProperty(process, "platform", originalPlatform);
     vi.resetModules();
     await Promise.all([
       rm(TEST_RUNTIME_ROOT, { recursive: true, force: true }),
@@ -105,6 +107,7 @@ describe("resolved-auth identity", () => {
       );
 
       expect(new Set(values).size).toBe(1);
+      expect(identity.isResolvedAuthIdentityKeyDurable()).toBe(true);
       const keyPath = identity.getResolvedAuthIdentityKeyPath();
       const raw = await readFile(keyPath, "utf8");
       expect(raw).toMatch(/^v1:[A-Za-z0-9_-]{43}\n$/u);
@@ -190,6 +193,32 @@ describe("resolved-auth identity", () => {
     expect(
       isProtectedResolvedAuthStorageSupported({ platform: "linux", hasOwnerIdentity: true }),
     ).toBe(true);
+  });
+
+  it("keys identities in memory only on Windows, stable until a reload", async () => {
+    Object.defineProperty(process, "platform", { configurable: true, value: "win32" });
+    const derive = (module: typeof import("../src/lib/resolved-auth-identity.js")) =>
+      module.deriveResolvedAuthIdentity({
+        providerId: "anthropic",
+        principal: { kind: "credential", value: "windows-secret" },
+      });
+
+    const identity = await import("../src/lib/resolved-auth-identity.js");
+    const first = await derive(identity);
+
+    expect(first).toMatch(RESOLVED_AUTH_IDENTITY_PATTERN);
+    expect(await derive(identity)).toBe(first);
+    expect(identity.isResolvedAuthIdentityKeyDurable()).toBe(false);
+    await expect(readFile(identity.getResolvedAuthIdentityKeyPath(), "utf8")).rejects.toMatchObject(
+      { code: "ENOENT" },
+    );
+
+    // A reload loads the module afresh with another key.
+    vi.resetModules();
+    const reloaded = await import("../src/lib/resolved-auth-identity.js");
+    const afterReload = await derive(reloaded);
+    expect(afterReload).toMatch(RESOLVED_AUTH_IDENTITY_PATTERN);
+    expect(afterReload).not.toBe(first);
   });
 
   it.runIf(POSIX_IDENTITY_STORAGE)(

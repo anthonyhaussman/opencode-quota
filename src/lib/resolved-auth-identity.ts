@@ -45,6 +45,14 @@ function canProtectIdentityStorage(): boolean {
   });
 }
 
+/**
+ * Whether identities stay the same after a reload: true where the key lives in the protected
+ * key file, false where it is held in memory only (Windows, or no owner uid).
+ */
+export function isResolvedAuthIdentityKeyDurable(): boolean {
+  return canProtectIdentityStorage();
+}
+
 export function getResolvedAuthIdentityKeyPath(): string {
   return join(
     getOpencodeRuntimeDirs().stateDir,
@@ -125,7 +133,9 @@ async function writeTemporaryIdentityKey(path: string, key: Buffer): Promise<voi
 }
 
 async function createOrReadIdentityKey(): Promise<Buffer | null> {
-  if (!canProtectIdentityStorage()) return null;
+  // Where the key file can't be protected, a random key held in memory keeps identities stable
+  // while this plugin instance runs. It is never written to disk.
+  if (!canProtectIdentityStorage()) return randomBytes(RESOLVED_AUTH_KEY_BYTES);
 
   const path = getResolvedAuthIdentityKeyPath();
   const directory = join(getOpencodeRuntimeDirs().stateDir, RESOLVED_AUTH_KEY_DIRNAME);

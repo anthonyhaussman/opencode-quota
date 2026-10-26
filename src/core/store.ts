@@ -73,7 +73,7 @@ export type ProviderFetch = {
   rows: QuotaRow[];
   /**
    * The login each row came from, in the order of `rows`; omitted for one login. An opaque id
-   * keyed with the install's secret (`keyedLogins`), never a source id such as an email.
+   * keyed with the identity key (`keyedLogins`), never a source id such as an email.
    */
   rowLogins?: string[];
   error?: QuotaError;
@@ -89,7 +89,10 @@ export type CheckForExport = { rows: QuotaRow[]; error?: QuotaError; checkedAtMs
 export type ProviderIdentity = {
   /** Changes whenever the rows would differ: another account or other provider settings. */
   key: string;
-  /** False when the account can't be told apart safely: rows stay in memory only. */
+  /**
+   * False when the account can't be told apart safely, or only until a reload (its key is held
+   * in memory): rows stay in memory only.
+   */
   persist: boolean;
 };
 

@@ -3,11 +3,16 @@ import { readFile, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
+import { readSavedState } from "../src/core/persist.js";
 import { keyedLogins, loadProviderSource, providerContext } from "../src/core/provider-source.js";
 import { createQuotaStore } from "../src/core/store.js";
 import type { QuotaProvider } from "../src/lib/entries.js";
 import { buildQuotaExportFromSnapshot } from "../src/lib/quota-export.js";
-import { __resetResolvedAuthIdentityForTests } from "../src/lib/resolved-auth-identity.js";
+import {
+  __resetResolvedAuthIdentityForTests,
+  deriveResolvedAuthIdentity,
+  getResolvedAuthIdentityKeyPath,
+} from "../src/lib/resolved-auth-identity.js";
 import type { ProviderFetchResult } from "../src/providers/contract.js";
 import { minimaxChinaCodingPlanProvider } from "../src/providers/minimax-coding-plan.js";
 import { defaultSettings } from "../src/settings/index.js";
@@ -292,5 +297,58 @@ describe("export of a check and of the saved snapshot", () => {
 
     expect(checked).toMatchObject({ status: "error", error: "Nothing reported" });
     expect(reloaded).toEqual(checked);
+  });
+});
+
+describe("a resolved-auth login on Windows", () => {
+  const originalPlatform = Object.getOwnPropertyDescriptor(process, "platform");
+
+  beforeEach(() => {
+    Object.defineProperty(process, "platform", { configurable: true, value: "win32" });
+    __resetResolvedAuthIdentityForTests();
+  });
+
+  afterEach(() => {
+    if (originalPlatform) Object.defineProperty(process, "platform", originalPlatform);
+    __resetResolvedAuthIdentityForTests();
+    registry.providers = [];
+  });
+
+  it("is told apart by an in-memory key: a poll within the interval is answered from memory, and only the last check is saved", async () => {
+    const login = { token: "token-one" };
+    const fetch = vi.fn(async () =>
+      answer({ name: "Z.ai", rows: [percentRow("weekly", "Weekly", 60, { window: "week" })] }),
+    );
+    const store = storeFor({
+      id: "zai",
+      cachePolicy: {
+        kind: "resolved-auth",
+        resolveIdentity: async () =>
+          deriveResolvedAuthIdentity({
+            providerId: "zai",
+            principal: { kind: "credential", value: login.token },
+          }),
+      },
+      isAvailable: async () => true,
+      fetch,
+    });
+
+    await store.refresh({ reason: "poll" });
+    const second = await store.refresh({ reason: "poll" });
+    expect(fetch).toHaveBeenCalledTimes(1);
+    expect(second.providers[0]?.rows).toHaveLength(1);
+
+    // Another account is checked at once, not answered with the first one's rows.
+    login.token = "token-two";
+    await store.refresh({ reason: "poll" });
+    expect(fetch).toHaveBeenCalledTimes(2);
+    await store.dispose();
+
+    const saved = await readSavedState(join(runtime.root, "state", "snapshot-v6.json"));
+    expect(saved.entries.size).toBe(0);
+    expect(saved.lastChecks.get("zai")).toMatchObject({ failures: 0 });
+    await expect(readFile(getResolvedAuthIdentityKeyPath(), "utf8")).rejects.toMatchObject({
+      code: "ENOENT",
+    });
   });
 });
