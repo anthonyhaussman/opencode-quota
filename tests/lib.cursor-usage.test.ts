@@ -134,6 +134,17 @@ describe("getCurrentCursorUsageSummary", () => {
       { auto: [0, 0], api: [4, 2.50006], total: 4, unknown: [], unpriced: 0 },
     ],
     [
+      "prompts over 200k tokens on -1m ids of models Cursor bills at the base rate there, at that rate",
+      [
+        message("cursor", "claude-haiku-5-5-1m", 250_000, 1),
+        message("cursor", "claude-fable-5-1m", 250_000, 1),
+        message("cursor", "claude-fable-5-1-1m", 250_000, 1),
+        message("cursor", "gpt-5.6-luna-1m", 250_000, 1),
+        message("cursor", "gpt-5.6-terra-1m", 250_000, 1),
+      ],
+      { auto: [0, 0], api: [5, 5.5751137], total: 5, unknown: [], unpriced: 0 },
+    ],
+    [
       "models Cursor prices on its own, without models.dev's different price",
       [
         message("cursor", "gemini-3.6-flash", 100_000, 1),

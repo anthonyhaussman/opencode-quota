@@ -64,17 +64,21 @@ const CURSOR_MODELS_WITHOUT_CACHE_WRITE_RATE = new Set(["kimi-k3", "kimi-k3-1m"]
 export const CURSOR_OFFICIAL_MODEL_ALIASES: Readonly<
   Record<string, { providerHint: string; modelHint: string }>
 > = {
-  // `-1m` ids are the long-context entries of cursor-opencode-provider. Only models that
-  // Cursor bills at their base per-token rates over 200k tokens map to the base price.
+  // `-1m` ids are the long-context entries of cursor-opencode-provider, which prices each at
+  // its base model's rate. Models Cursor bills at a higher rate over 200k tokens (Claude
+  // Sonnet 4, Grok 4.7) have no `-1m` alias here, so those ids stay unknown.
   "claude-4.5-sonnet": { providerHint: "anthropic", modelHint: "claude-sonnet-4-5" },
   "claude-4.6-opus-high": { providerHint: "anthropic", modelHint: "claude-opus-4-6" },
   "claude-4.6-opus": { providerHint: "anthropic", modelHint: "claude-opus-4-6" },
   "claude-4.6-sonnet-medium": { providerHint: "anthropic", modelHint: "claude-sonnet-4-6" },
   "claude-4.6-sonnet": { providerHint: "anthropic", modelHint: "claude-sonnet-4-6" },
   "claude-fable-5": { providerHint: "anthropic", modelHint: "claude-fable-5" },
+  "claude-fable-5-1m": { providerHint: "anthropic", modelHint: "claude-fable-5" },
   "claude-fable-5-1": { providerHint: "anthropic", modelHint: "claude-fable-5-1" },
+  "claude-fable-5-1-1m": { providerHint: "anthropic", modelHint: "claude-fable-5-1" },
   "claude-haiku-4-5": { providerHint: "anthropic", modelHint: "claude-haiku-4-5" },
   "claude-haiku-5-5": { providerHint: "anthropic", modelHint: "claude-haiku-5-5" },
+  "claude-haiku-5-5-1m": { providerHint: "anthropic", modelHint: "claude-haiku-5-5" },
   "claude-opus-4-5": { providerHint: "anthropic", modelHint: "claude-opus-4-5" },
   "claude-opus-4-6": { providerHint: "anthropic", modelHint: "claude-opus-4-6" },
   "claude-opus-4-6-1m": { providerHint: "anthropic", modelHint: "claude-opus-4-6" },
@@ -120,9 +124,11 @@ export const CURSOR_OFFICIAL_MODEL_ALIASES: Readonly<
   "gpt-5.5": { providerHint: "openai", modelHint: "gpt-5.5" },
   "gpt-5.5-1m": { providerHint: "openai", modelHint: "gpt-5.5" },
   "gpt-5.6-luna": { providerHint: "openai", modelHint: "gpt-5.6-luna" },
+  "gpt-5.6-luna-1m": { providerHint: "openai", modelHint: "gpt-5.6-luna" },
   "gpt-5.6-sol": { providerHint: "openai", modelHint: "gpt-5.6-sol" },
   "gpt-5.6-sol-1m": { providerHint: "openai", modelHint: "gpt-5.6-sol" },
   "gpt-5.6-terra": { providerHint: "openai", modelHint: "gpt-5.6-terra" },
+  "gpt-5.6-terra-1m": { providerHint: "openai", modelHint: "gpt-5.6-terra" },
   grok: { providerHint: "xai", modelHint: "grok-code-fast-1" },
   "grok-code-fast-1": { providerHint: "xai", modelHint: "grok-code-fast-1" },
   "kimi-k2.5": { providerHint: "moonshotai", modelHint: "kimi-k2.5" },

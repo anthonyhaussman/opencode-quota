@@ -154,6 +154,9 @@ describe("resolvePricingKey snapshot coverage", () => {
 
   it("prices -1m ids at the base rate only where Cursor documents no long-context surcharge", () => {
     const sameRate = [
+      "claude-fable-5",
+      "claude-fable-5-1",
+      "claude-haiku-5-5",
       "claude-opus-4-6",
       "claude-opus-4-7",
       "claude-opus-4-8",
@@ -165,7 +168,9 @@ describe("resolvePricingKey snapshot coverage", () => {
       "claude-sonnet-5-5",
       "gpt-5.4",
       "gpt-5.5",
+      "gpt-5.6-luna",
       "gpt-5.6-sol",
+      "gpt-5.6-terra",
       "kimi-k3",
     ];
     for (const base of sameRate) {
@@ -176,9 +181,6 @@ describe("resolvePricingKey snapshot coverage", () => {
     // Unpublished (Auto) or tiered long-context prices stay unknown instead of a guess.
     const unconfirmed = [
       "default",
-      "claude-haiku-5-5-1m",
-      "claude-fable-5-1m",
-      "claude-fable-5-1-1m",
       "claude-sonnet-4-1m",
       "grok-4.7-1m",
       "grok-4.7-1m-fast",
