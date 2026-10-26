@@ -18,11 +18,10 @@ export type ImageSaveToolContext = {
     worktree: string;
     directory: string;
     /**
-     * Classic OpenCode 1.x `ToolContext.ask`. A host whose tool context has no
-     * permission prompt (OpenCode 2.0's public `ToolContext`) passes `null`
-     * explicitly: the commit then writes after containment, gated only by the
-     * tool's catalog permission. A missing `ask` is refused, never treated as
-     * permission.
+     * Classic OpenCode supplies ToolContext.ask; OpenCode 2 adapts the public
+     * plugin permission.assert API. Native entrypoints require that callback.
+     * Explicit null preserves the public API for callers that own authorization;
+     * an omitted callback is refused, never treated as permission.
      */
     ask: ((input: {
         permission: string;

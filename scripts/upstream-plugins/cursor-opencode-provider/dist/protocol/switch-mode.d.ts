@@ -10,8 +10,9 @@
  *
  * OpenCode 1.x mapping (advertisement-gated):
  * - plan, spec → plan_enter
- * - every other non-empty target → plan_exit (leave plan for OpenCode build),
- *   then inject the Cursor CLI-shaped mode reminder for that target
+ * - chat, ask, search (read-only Ask) → no host tool; the current agent stays
+ * - every other non-empty target → plan_exit (leave plan for OpenCode build)
+ * Each then injects the Cursor CLI-shaped mode reminder for that target.
  *
  * Upstream OpenCode's plan tools are not mode flags. Each one asks the user
  * through the Question service and, on "Yes", injects a synthetic user message
@@ -67,6 +68,14 @@ export declare const PLAN_EXIT_BY_USER_REASON: string;
  * plan mode goes through CreatePlan, whose `question` prompt is the approval.
  */
 export declare const PLAN_EXIT_VIA_CREATE_PLAN_REASON: string;
+/**
+ * Leaving plan would select the host build agent. A session edit deny survives
+ * that switch, so the user changes the rule in the client instead.
+ */
+export declare const SESSION_EDITS_DENIED_SWITCH_REASON: string;
+/** Chronological reminder while that rule is set. It is not part of the frozen baseline. */
+export declare const SESSION_EDITS_DENIED_REMINDER: string;
+export declare const SESSION_EDITS_ALLOWED_REMINDER: string;
 export type SwitchModeHostTool = "plan_enter" | "plan_exit";
 /**
  * How a SwitchMode query is satisfied this turn.
@@ -97,22 +106,21 @@ export type DecodedSwitchModeQuery = {
     args: CursorSwitchModeArgs;
     toolCallId: string;
 };
+/** A read-only target needs no host tool: it keeps the current primary agent. */
 export type SwitchModeMapping = {
     ok: true;
-    toolName: SwitchModeHostTool;
+    toolName?: SwitchModeHostTool;
 } | {
     ok: false;
     reason: string;
 };
-/** Normalize Cursor mode ids for comparison. */
-export declare function normalizeSwitchModeId(targetModeId: string): string;
 /**
  * Map a Cursor unified-mode id onto an OpenCode plan enter/exit tool.
  * Does not check advertisement — callers gate on the host catalog.
  *
- * plan/spec enter plan; every other non-empty target leaves plan via plan_exit
- * (host-portable primary switch) and relies on {@link cursorModeSystemReminder}
- * for CLI-shaped behavioral guidance.
+ * plan/spec enter plan; an implementing target leaves plan via plan_exit
+ * (host-portable primary switch); a read-only target needs neither. Each
+ * relies on {@link cursorModeSystemReminder} for CLI-shaped guidance.
  */
 export declare function mapSwitchModeTarget(targetModeId: string): SwitchModeMapping;
 /**
@@ -131,6 +139,9 @@ export declare function resolveSwitchModeBridge(targetModeId: string, options: {
     activeModeId?: string;
     /** Host primary agent of this Run, when the host reported it. */
     hostAgent?: string;
+    /** The session's last `edit` rule on `*` is deny. Leaving plan cannot lift it. */
+    sessionEditsDenied?: boolean;
+    sessionPermissionsUnavailable?: boolean;
 }): SwitchModeBridge;
 /** Decode a `switch_mode_request_query` body, or undefined when unusable. */
 export declare function decodeSwitchModeQuery(queryBytes: Uint8Array): DecodedSwitchModeQuery | undefined;
@@ -158,7 +169,9 @@ export declare function isBridgedCursorPlanModeActive(sessionKey: string | undef
  * mode follows its own mode switch (Shift+Tab, `/plan`).
  *
  * - A turn under the host plan agent puts Cursor in plan mode, however the
- *   host got there (its agent picker, a plan_enter approval).
+ *   host got there (its agent picker, a plan_enter approval). A read-only
+ *   mode approved while that agent already ran is kept: the agent stays
+ *   read-only, and only a transition into it re-enters plan mode.
  * - The host's own exit from that agent (a plan_exit approval, or an agent
  *   switch in its UI) ends Cursor plan mode. Only an observed `plan` → other
  *   transition counts, so Cursor-only modes (debug, ask, …) under the host's
@@ -166,12 +179,6 @@ export declare function isBridgedCursorPlanModeActive(sessionKey: string | undef
  *   reminder instead of a stale "plan mode is still active" one.
  */
 export declare function followHostPlanAgent(sessionKey: string | undefined, previousHostAgent: string | undefined, hostAgent: string | undefined): "entered" | "left" | undefined;
-/**
- * `agent.v1.AgentMode` for a Cursor mode id, as Cursor CLI derives
- * `UserMessage.mode` from its current mode: plan, ask, and debug are their own
- * modes; every other mode (agent, spec, triage, …) runs as agent.
- */
-export declare function cursorAgentModeWireValue(modeId: string | undefined): number;
 /**
  * One-shot translation of the host plan agent's workflow into Cursor terms,
  * delivered once per Cursor conversation while that agent owns the turn.
@@ -214,4 +221,6 @@ export declare function takeActiveCursorModeReminder(sessionKey: string | undefi
     advertisedTools?: ReadonlySet<string> | Iterable<string>;
     /** Host primary agent of this request; when known it, not the catalog, says whether planning ended. */
     hostAgent?: string;
+    /** The session's last `edit` rule on `*` is deny. Appended, never frozen into the baseline. */
+    sessionEditsDenied?: boolean;
 }): string | undefined;

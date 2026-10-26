@@ -122,7 +122,7 @@ describe("getCurrentCursorUsageSummary", () => {
         message("cursor", "gpt-5.4", 250_000, 1),
         message("cursor", "claude-sonnet-4-5", 250_000, 1),
       ],
-      { auto: [1, 0.4], api: [2, 1.25003], total: 6, unknown: [], unpriced: 3 },
+      { auto: [1, 0.4], api: [3, 1.875045], total: 6, unknown: [], unpriced: 2 },
     ],
     [
       "models Cursor prices on its own, without models.dev's different price",

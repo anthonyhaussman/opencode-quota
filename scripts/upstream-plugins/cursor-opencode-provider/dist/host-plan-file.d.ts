@@ -23,6 +23,8 @@ export declare function resetHostPlanFilesForTests(): void;
 export declare function resolveHostPlanFile(input: {
     sessionID: string;
     getSession: (sessionID: string) => Promise<unknown>;
+    /** Already loaded session payload, so a caller that also reads permissions fetches once. */
+    session?: unknown;
     worktree: string | undefined;
     vcs: boolean;
 }): Promise<string | undefined>;

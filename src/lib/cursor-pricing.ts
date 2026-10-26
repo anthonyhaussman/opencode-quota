@@ -46,13 +46,6 @@ type CursorLocalPricingModel = keyof typeof CURSOR_LOCAL_PRICING;
 const CURSOR_LONG_CONTEXT_PROMPT_TOKENS = 200_000;
 const CURSOR_MODELS_WITH_LONG_CONTEXT_RATE = new Set([
   "claude-sonnet-4",
-  "gpt-5.4",
-  "gpt-5.4-high",
-  "gpt-5.4-medium",
-  "gpt-5.5",
-  "gpt-5.6-luna",
-  "gpt-5.6-sol",
-  "gpt-5.6-terra",
   "grok-4.7",
   "grok-4.7-fast",
 ]);

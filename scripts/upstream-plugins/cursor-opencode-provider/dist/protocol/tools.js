@@ -688,8 +688,7 @@ export function cursorEditReadAnswer(absolutePath, workspaceRoot) {
         const stat = fs.statSync(absolutePath);
         if (!stat.isFile() || stat.size > MAX_EDIT_SOURCE_BYTES)
             return "host";
-        fs.closeSync(fs.openSync(absolutePath, "r"));
-        return "complete";
+        return "host-complete";
     }
     catch {
         return "host";
@@ -703,25 +702,43 @@ export function cursorEditReadAnswer(absolutePath, workspaceRoot) {
  */
 export function cursorEditReadReachesHost(absolutePath, workspaceRoot) {
     const answer = cursorEditReadAnswer(absolutePath, workspaceRoot);
-    if (answer !== "external" && answer !== "host")
+    if (answer !== "external" && answer !== "host-complete" && answer !== "host")
         return false;
     return classifyMissingReadTarget(absolutePath) === undefined;
 }
-/**
- * Complete the private read inside Cursor's legacy edit transaction without
- * routing it through OpenCode's user-facing `read` tool. The latter caps every
- * result at 50 KB, while Cursor's editor needs the complete file to calculate
- * the correlated whole-file `write_args` that follows.
- *
- * The caller is responsible for proving that `filePath` is the same regular
- * file named by an active `edit_tool_call` and is contained by the workspace.
- */
-export function buildCompleteEditReadMessages(execId, sourcePath, resultPath = sourcePath) {
+export function editReadIdentity(sourcePath) {
     try {
-        const stat = fs.statSync(sourcePath);
-        if (!stat.isFile() || stat.size > MAX_EDIT_SOURCE_BYTES)
+        const realPath = fs.realpathSync(sourcePath);
+        const stat = fs.statSync(realPath);
+        if (!stat.isFile())
             return undefined;
-        const content = fs.readFileSync(sourcePath, "utf8");
+        return { realPath, dev: stat.dev, ino: stat.ino };
+    }
+    catch {
+        return undefined;
+    }
+}
+/**
+ * Upgrade a successful host-authorized read inside Cursor's legacy edit
+ * transaction. The host may cap its result at 50 KB, while Cursor's editor
+ * needs the complete file to calculate the correlated whole-file write.
+ *
+ * The caller must prove an active edit owns this exact, successfully authorized
+ * read. Never call this after a denied or failed read.
+ */
+export function buildCompleteEditReadMessages(execId, sourcePath, resultPath = sourcePath, authorizedIdentity) {
+    let fd;
+    try {
+        const current = editReadIdentity(sourcePath);
+        if (!current || (authorizedIdentity && (current.realPath !== authorizedIdentity.realPath
+            || current.dev !== authorizedIdentity.dev || current.ino !== authorizedIdentity.ino)))
+            return undefined;
+        fd = fs.openSync(current.realPath, fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW ?? 0));
+        const stat = fs.fstatSync(fd);
+        if (!stat.isFile() || stat.dev !== current.dev || stat.ino !== current.ino
+            || stat.size > MAX_EDIT_SOURCE_BYTES)
+            return undefined;
+        const content = fs.readFileSync(fd, "utf8");
         return [
             encodeMessage("AgentClientMessage", {
                 exec_client_message: {
@@ -744,6 +761,10 @@ export function buildCompleteEditReadMessages(execId, sourcePath, resultPath = s
     }
     catch {
         return undefined;
+    }
+    finally {
+        if (fd !== undefined)
+            fs.closeSync(fd);
     }
 }
 /** 1x1 transparent PNG: satisfies Cursor's binary-attachment check without file bytes. */
@@ -1397,6 +1418,12 @@ function shellStreamResultMetadata(raw) {
         ...(hardTimeout !== undefined && hardTimeout > 0 ? { hard_timeout_ms: hardTimeout } : {}),
     };
 }
+/** Rebuilt file-tool args drop unknown keys; a shell command must survive that. */
+function copyShellCommand(args, cleaned) {
+    const command = str(cleaned.command);
+    if (command)
+        args.command = command;
+}
 /**
  * Remap Cursor exec / MCP arg shapes onto OpenCode's Effect Schema keys.
  * Without this, OpenCode rejects calls with InvalidArgumentsError
@@ -1418,7 +1445,9 @@ export function mapCursorArgsToOpencode(toolName, raw, execVariant, dialect = OP
     // Native ls_args → OpenCode read (directory listing via read).
     if (execVariant === "ls_args") {
         const filePath = str(cleaned.path) ?? str(cleaned.filePath);
-        return { toolName: "read", args: filePath ? { [dialect.filePathKey]: filePath } : {} };
+        const args = filePath ? { [dialect.filePathKey]: filePath } : {};
+        copyShellCommand(args, cleaned);
+        return { toolName: "read", args };
     }
     // F11: Cursor native delete_args → OpenCode bash. No delete builtin exists, so
     // we emulate with `rm -f -- <path>` (shell-quoted). Same permission boundary
@@ -1442,6 +1471,7 @@ export function mapCursorArgsToOpencode(toolName, raw, execVariant, dialect = OP
             const limit = num(cleaned.limit);
             if (limit !== undefined && limit > 0)
                 args.limit = limit;
+            copyShellCommand(args, cleaned);
             return { toolName: "read", args };
         }
         case "write": {
@@ -1458,6 +1488,7 @@ export function mapCursorArgsToOpencode(toolName, raw, execVariant, dialect = OP
                 if (content === undefined) {
                     // Binary. Surface the raw bytes to the caller instead of a lossy
                     // decode; `binaryWritePayload` picks them up after parsing.
+                    copyShellCommand(args, cleaned);
                     return { toolName: "write", args, binaryBytes: bytes };
                 }
             }
@@ -1470,6 +1501,7 @@ export function mapCursorArgsToOpencode(toolName, raw, execVariant, dialect = OP
             }
             if (content !== undefined)
                 args.content = content;
+            copyShellCommand(args, cleaned);
             return { toolName: "write", args };
         }
         case "edit": {
@@ -1477,7 +1509,9 @@ export function mapCursorArgsToOpencode(toolName, raw, execVariant, dialect = OP
             // accepts that generic shape; rebuilding only OpenCode's targeted fields
             // would silently turn a valid call into `{}`.
             if (typeof cleaned.input === "string") {
-                return { toolName: "edit", args: { input: cleaned.input } };
+                const args = { input: cleaned.input };
+                copyShellCommand(args, cleaned);
+                return { toolName: "edit", args };
             }
             const args = {};
             const filePath = str(cleaned.filePath) ?? str(cleaned.path) ?? str(cleaned.file_path);
@@ -1490,6 +1524,7 @@ export function mapCursorArgsToOpencode(toolName, raw, execVariant, dialect = OP
                 args.newString = newString;
             if (typeof cleaned.replaceAll === "boolean")
                 args.replaceAll = cleaned.replaceAll;
+            copyShellCommand(args, cleaned);
             return { toolName: "edit", args };
         }
         case "bash":
@@ -1526,17 +1561,22 @@ export function mapCursorArgsToOpencode(toolName, raw, execVariant, dialect = OP
             // (e.g. "**/*") when the model is really listing files. OpenCode's grep
             // requires a non-empty string pattern — remap to glob instead of
             // forwarding a call that will fail and loop.
-            if (!pattern) {
+            // A shell command is not a file listing. Inventing `**/*` here would run
+            // glob and hide the command from the misplaced-shell refusal.
+            if (!pattern && !str(cleaned.command)) {
                 const args = { pattern: include ?? "**/*" };
                 if (path)
                     args.path = path;
                 return { toolName: "glob", args };
             }
-            const args = { pattern };
+            const args = {};
+            if (pattern)
+                args.pattern = pattern;
             if (path)
                 args.path = path;
-            if (include)
+            if (include && pattern)
                 args.include = include;
+            copyShellCommand(args, cleaned);
             return { toolName: "grep", args };
         }
         case "glob": {
@@ -1547,6 +1587,7 @@ export function mapCursorArgsToOpencode(toolName, raw, execVariant, dialect = OP
             const path = str(cleaned.path) ?? str(cleaned.target_directory) ?? str(cleaned.targetDirectory);
             if (path)
                 args.path = path;
+            copyShellCommand(args, cleaned);
             return { toolName: "glob", args };
         }
         case "skill": {

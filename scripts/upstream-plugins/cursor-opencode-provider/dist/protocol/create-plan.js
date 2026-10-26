@@ -19,6 +19,7 @@ import { mkdirSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { hostPlansDir } from "../context/paths.js";
+import { isHostPlanAgent } from "./cursor-mode.js";
 import { decodeMessageSparse } from "./messages.js";
 import { errorMessage } from "../debug.js";
 import { parseAnswerSegments, } from "./ask-question.js";
@@ -98,9 +99,29 @@ export const CREATE_PLAN_HOST_PLAN_PENDING_REASON = "Plan mode starts in the hos
 export const CREATE_PLAN_HOST_PLAN_WORKFLOW_REASON = "This host's plan agent owns the plan file and its approval. Write the plan where the " +
     "plan-mode instructions say, then call `plan_exit` to ask the user to approve it. Do " +
     "not implement until it is approved.";
-/** Cursor-visible reason when the user wants the plan revised instead of run. */
-export const CREATE_PLAN_NOT_APPROVED_REASON = "The user did not approve executing this plan. Keep planning: refine the plan and "
-    + "propose it again when it is ready.";
+/**
+ * Cursor-visible reason when the user picks No or dismisses the approval
+ * prompt. Ends the owning turn; a new user message is required before more work.
+ */
+export const CREATE_PLAN_NOT_APPROVED_REASON = "The user did not approve executing this plan. End this turn without further tool calls. "
+    + "Stay in plan mode and wait for the user's next message before refining or proposing it again.";
+/**
+ * Cursor-visible reason when the user typed freeform feedback instead of Yes/No.
+ * The owning turn continues in plan mode so the model can revise.
+ */
+export function createPlanRefineReason(feedback) {
+    const text = feedback.trim();
+    return ("The user did not approve executing this plan and asked for these changes:\n"
+        + `${text}\n`
+        + "Stay in plan mode and revise the plan accordingly. Do not start implementing yet.");
+}
+/** Cursor-visible reason when a session edit deny still blocks execution. */
+export function createPlanSessionEditsDeniedReason(planPath) {
+    const where = planPath.trim() || "the saved plan";
+    return `The plan is saved at ${where}. Execution remains blocked by the session's edit rule. `
+        + "Do not implement, and do not write files through the shell. End this turn. "
+        + "The user changes that rule in the client.";
+}
 /** Upstream `PlanExitTool` wording, with the plan the provider just wrote. */
 export function createPlanApprovalQuestion(planLabel) {
     const where = planLabel.trim();
@@ -122,13 +143,19 @@ export function resolveCreatePlanBridge(options) {
     }
     if (options.canStage)
         return { kind: "stage" };
+    // After the host stage and a pending plan-agent handoff. A Yes, a plan_exit
+    // review, and the no-question success ack would all tell Cursor execution
+    // may start. The session rule is still in force, so none of those apply.
+    if (options.sessionEditsDenied)
+        return { kind: "hold" };
     const names = options.advertised instanceof Set ? options.advertised : new Set(options.advertised);
-    if (options.hostAgent === "plan" && names.has("plan_exit")) {
+    const hostPlanAgent = isHostPlanAgent(options.hostAgent);
+    if (hostPlanAgent && names.has("plan_exit")) {
         return options.hostPlanFile
             ? { kind: "exit", planPath: options.hostPlanFile }
             : { kind: "defer", reason: CREATE_PLAN_HOST_PLAN_WORKFLOW_REASON };
     }
-    const planModeActive = options.planModeActive === true || options.hostAgent === "plan";
+    const planModeActive = options.planModeActive === true || hostPlanAgent;
     if (planModeActive && names.has("question"))
         return { kind: "approve" };
     return { kind: "ack" };
@@ -158,22 +185,37 @@ export function createPlanApprovalQuestionInput(planLabel) {
                     },
                     {
                         label: CREATE_PLAN_APPROVAL_NO,
-                        description: "Stay with plan agent to continue refining the plan",
+                        description: "Stay in plan mode and end this turn without implementing",
                     },
                 ],
             },
         ],
     };
 }
+/** Classify an emulated CreatePlan approval `question` result. */
+export function createPlanApprovalOutcome(output, isError, question) {
+    if (isError)
+        return { kind: "declined" };
+    const [segment] = parseAnswerSegments([createPlanApprovalItem(question)], output, { singleChoice: true });
+    const answer = (segment ?? "").trim();
+    if (!answer || answer === "Unanswered")
+        return { kind: "declined" };
+    const lower = answer.toLowerCase();
+    if (lower === CREATE_PLAN_APPROVAL_YES.toLowerCase())
+        return { kind: "approved" };
+    if (lower === CREATE_PLAN_APPROVAL_NO.toLowerCase())
+        return { kind: "declined" };
+    // Cursor CLI substitutes "Other" when the freeform row was chosen with no text.
+    if (lower === "other")
+        return { kind: "declined" };
+    return { kind: "refine", feedback: answer };
+}
 /**
  * True when the emulated approval prompt came back as an explicit "Yes".
- * An unanswered, dismissed, or failed prompt keeps the model planning.
+ * An unanswered, dismissed, failed, No, or freeform prompt is not approval.
  */
 export function createPlanApproved(output, isError, question) {
-    if (isError)
-        return false;
-    const [segment] = parseAnswerSegments([createPlanApprovalItem(question)], output);
-    return (segment ?? "").trim().toLowerCase() === CREATE_PLAN_APPROVAL_YES.toLowerCase();
+    return createPlanApprovalOutcome(output, isError, question).kind === "approved";
 }
 function asRecord(value) {
     return value && typeof value === "object" && !Array.isArray(value)

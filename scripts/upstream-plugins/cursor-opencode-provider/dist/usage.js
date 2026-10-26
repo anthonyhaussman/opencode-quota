@@ -90,12 +90,17 @@ export function formatCursorTokenCategories(details) {
  * Explain Cursor's aggregate cache counters using the state visible to this
  * client. `stepStarts` is deliberately not called a model-call count: Cursor
  * does not expose per-model-call cache accounting on the Run stream.
+ *
+ * `counters` is undefined for a Run that ended without TurnEnded, such as one
+ * cancelled for a plan handoff. Its continuity and context fields still apply;
+ * the request counters print as unavailable rather than as zero.
  */
 export function formatCursorCacheDiagnostics(counters, current, prior, stats) {
-    const rawInput = Math.max(0, Math.trunc(counters.inputTokens));
-    const rawRead = Math.min(rawInput, Math.max(0, Math.trunc(counters.cacheRead)));
-    const rawWrite = Math.min(rawInput - rawRead, Math.max(0, Math.trunc(counters.cacheWrite)));
+    const rawInput = Math.max(0, Math.trunc(counters?.inputTokens ?? 0));
+    const rawRead = Math.min(rawInput, Math.max(0, Math.trunc(counters?.cacheRead ?? 0)));
+    const rawWrite = Math.min(rawInput - rawRead, Math.max(0, Math.trunc(counters?.cacheWrite ?? 0)));
     const rawUncached = Math.max(0, rawInput - rawRead - rawWrite);
+    const raw = (value) => counters ? String(value) : "unavailable";
     const priorCategories = categoryTokens(prior);
     const currentCategories = categoryTokens(current);
     const categoriesComparable = !!currentCursorTokenBreakdown(prior) && !!currentCursorTokenBreakdown(current);
@@ -135,7 +140,8 @@ export function formatCursorCacheDiagnostics(counters, current, prior, stats) {
             : "none";
     // Occupancy measures context size, not cache reuse. A zero counter on an
     // interaction turn cannot distinguish omitted accounting from a cache miss.
-    const interactionZeroRead = stats.startedWithCheckpoint
+    const interactionZeroRead = !!counters
+        && stats.startedWithCheckpoint
         && rawRead === 0
         && typeof prior?.usedTokens === "number"
         && prior.usedTokens > 0
@@ -148,18 +154,19 @@ export function formatCursorCacheDiagnostics(counters, current, prior, stats) {
         `model=${stats.modelId ?? "-"}`,
         `continuity=${continuity}`,
         `coldReason=${continuity === "cold" ? stats.coldReason ?? "unknown" : "-"}`,
-        `rawInput=${rawInput}`,
-        `rawCacheRead=${rawRead}`,
-        `rawCacheWrite=${rawWrite}`,
-        `rawUncached=${rawUncached}`,
-        `rawReadRatio=${usageRatio(rawRead, rawInput)}`,
-        `rawWriteRatio=${usageRatio(rawWrite, rawInput)}`,
+        ...(counters ? [] : ["turnEnded=unavailable"]),
+        `rawInput=${raw(rawInput)}`,
+        `rawCacheRead=${raw(rawRead)}`,
+        `rawCacheWrite=${raw(rawWrite)}`,
+        `rawUncached=${raw(rawUncached)}`,
+        `rawReadRatio=${raw(usageRatio(rawRead, rawInput))}`,
+        `rawWriteRatio=${raw(usageRatio(rawWrite, rawInput))}`,
         `priorContext=${prior?.usedTokens ?? "unavailable"}`,
         `currentContext=${current?.usedTokens ?? "unavailable"}`,
         `contextDelta=${contextDelta ?? "unavailable"}`,
         // Several model calls in one Run each re-read the prefix, so this multiple
         // routinely exceeds 1 and is not a percentage.
-        `rawReadVsPriorContext=${prior && prior.usedTokens > 0 ? `${(rawRead / prior.usedTokens).toFixed(2)}x` : "n/a"}`,
+        `rawReadVsPriorContext=${counters && prior && prior.usedTokens > 0 ? `${(rawRead / prior.usedTokens).toFixed(2)}x` : "n/a"}`,
         `sameSizedCategoryTokens=${categoriesComparable ? sameSizedCategoryTokens : "unavailable"}`,
         `categoryDelta=${categoriesComparable && Object.keys(categoryDelta).length > 0 ? JSON.stringify(categoryDelta) : "unavailable"}`,
         `toolsCategoryChurn=${toolsCategoryChurn}`,

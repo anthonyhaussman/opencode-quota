@@ -153,6 +153,20 @@ export declare function sanitizeRegisteredCursorShellOutput(toolCallId: string, 
 export declare function captureCursorShellResult(toolCallId: string, output: string, metadata?: Record<string, unknown>): string;
 /** Record the host's authoritative error status, even if its SDK drops that flag. */
 export declare function captureCursorShellFailure(toolCallId: string, error: unknown): void;
+/**
+ * OpenCode 2 appends `Exited with code N` as the result's last text block
+ * (packages/core/src/shell/result.ts `notice`, v2.1.4), and sends that block
+ * alone as a text result when the command printed nothing
+ * (session/runner/to-llm-message.ts `toolResult`). Cursor gets the code
+ * structurally and its stdout is only what the command printed, so the live
+ * result drops that block, or the suffix the classic projection adds, when it
+ * matches the captured exit. Stored history keeps it: a rebuilt transcript has
+ * no other record of the code.
+ */
+export declare function withoutHostShellExitNotice(toolCallId: string, output: unknown): unknown;
+export declare function hostShellExitNotice(code: number): string;
+/** OpenCode 1 keeps the exit only in metadata; give its request projection OpenCode 2's notice. */
+export declare function withHostShellExitNotice(output: string, code: number): string;
 /** Consume the structured result, with an inline fallback when no plugin hook ran. */
 export declare function consumeCursorShellResult(toolCallId: string, output: string): {
     output: string;

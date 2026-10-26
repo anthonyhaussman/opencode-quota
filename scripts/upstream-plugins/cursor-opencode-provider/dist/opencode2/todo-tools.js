@@ -1,4 +1,5 @@
 import { TODOREAD_TOOL, TODOWRITE_TOOL, getSessionTodos, setSessionTodos, } from "../todo-store.js";
+import { assertToolPermission } from "./permissions.js";
 /**
  * OpenCode 2 snapshot: only `codemode === false` tools join the AI SDK catalog.
  * Everything else is Code Mode-only (`packages/core/src/tool.ts` direct vs
@@ -117,7 +118,7 @@ export function hostHasTool(draft, name) {
  * gate is off (default), on OpenCode 1.x (this function is not called), and
  * on any 2.x host that restores the tools.
  */
-export function registerTodoTools(draft) {
+export function registerTodoTools(draft, ctx) {
     if (!isOpenCode2TodosEnabled())
         return;
     if (!hostHasTool(draft, TODOWRITE_TOOL)) {
@@ -140,6 +141,7 @@ export function registerTodoTools(draft) {
             options: OPENCODE2_DIRECT_TOOL_OPTIONS,
             execute: async (input, context) => {
                 const sessionID = sessionIDFromContext(context);
+                await assertToolPermission(ctx, context, { action: TODOWRITE_TOOL, resources: ["*"], save: ["*"], metadata: {} });
                 const todos = setSessionTodos(sessionID, input?.todos);
                 return todoResult(todos);
             },
@@ -158,6 +160,7 @@ export function registerTodoTools(draft) {
             options: OPENCODE2_DIRECT_TOOL_OPTIONS,
             execute: async (_input, context) => {
                 const sessionID = sessionIDFromContext(context);
+                await assertToolPermission(ctx, context, { action: TODOREAD_TOOL, resources: ["*"], save: ["*"], metadata: {} });
                 return todoResult(getSessionTodos(sessionID));
             },
         });

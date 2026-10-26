@@ -1,7 +1,7 @@
 import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, delimiter, dirname as pathDirectory, join, resolve } from "node:path";
-import { releaseUnstartedTerminal } from "./terminal-runner.js";
+import { releaseUnstartedTerminal, TIMEOUT_EXIT_CODE } from "./terminal-runner.js";
 import { processShared } from "./process-shared.js";
 /** Cursor agent.v1 TimeoutBehavior enum values. */
 export const CURSOR_TIMEOUT_CANCEL = 1;
@@ -260,9 +260,11 @@ export function buildSoftBackgroundCommand(policy) {
     "  cursor_shell_poll=0", `  while [ "$cursor_shell_poll" -lt ${Math.ceil(TIMEOUT_SETTLE_MS / POLL_INTERVAL_MS)} ] && kill -0 "$cursor_shell_pid" 2>/dev/null; do`, `    sleep ${POLL_INTERVAL_MS / 1000}`, "    cursor_shell_poll=$((cursor_shell_poll + 1))", "  done", "fi", 'cat "$cursor_shell_log"', "if cursor_shell_timed_out; then", 
     // Stop the watchdog once the payload has exited, so its delayed KILL cannot
     // reach a reused PID; while the payload lives, that KILL is still due.
-    '  if [ -n "$cursor_shell_watchdog_pid" ] && ! kill -0 "$cursor_shell_pid" 2>/dev/null; then kill "$cursor_shell_watchdog_pid" 2>/dev/null || true; wait "$cursor_shell_watchdog_pid" 2>/dev/null || true; fi', `  printf '\n${TIMEOUT_MARKER}%s\n' ${policy.hardTimeoutMs ?? policy.timeoutMs}`, "else", 
+    '  if [ -n "$cursor_shell_watchdog_pid" ] && ! kill -0 "$cursor_shell_pid" 2>/dev/null; then kill "$cursor_shell_watchdog_pid" 2>/dev/null || true; wait "$cursor_shell_watchdog_pid" 2>/dev/null || true; fi', `  printf '\n${TIMEOUT_MARKER}%s\n' ${policy.hardTimeoutMs ?? policy.timeoutMs}`, `  cursor_shell_code=${TIMEOUT_EXIT_CODE}`, "else", 
     // Only an exited payload reaches here, so this wait cannot block.
-    '  wait "$cursor_shell_pid" 2>/dev/null', "  cursor_shell_code=$?", '  if [ -n "$cursor_shell_watchdog_pid" ]; then kill "$cursor_shell_watchdog_pid" 2>/dev/null || true; wait "$cursor_shell_watchdog_pid" 2>/dev/null || true; fi', `  printf '\n${EXIT_MARKER}%s\n' "$cursor_shell_code"`, "fi", 'rm -f -- "$cursor_shell_log"', 'if [ -n "$cursor_shell_status" ]; then rm -f -- "$cursor_shell_status"; fi');
+    '  wait "$cursor_shell_pid" 2>/dev/null', "  cursor_shell_code=$?", '  if [ -n "$cursor_shell_watchdog_pid" ]; then kill "$cursor_shell_watchdog_pid" 2>/dev/null || true; wait "$cursor_shell_watchdog_pid" 2>/dev/null || true; fi', `  printf '\n${EXIT_MARKER}%s\n' "$cursor_shell_code"`, "fi", 'rm -f -- "$cursor_shell_log"', 'if [ -n "$cursor_shell_status" ]; then rm -f -- "$cursor_shell_status"; fi', 
+    // The host records this status; the marker alone reaches only the live turn.
+    'exit "$cursor_shell_code"');
     return lines.join("\n");
 }
 /**
@@ -743,6 +745,44 @@ export function captureCursorShellFailure(toolCallId, error) {
         return;
     const message = (error instanceof Error ? error.message : String(error ?? "")) || "Shell execution failed";
     remember(failures, toolCallId, message);
+}
+/**
+ * OpenCode 2 appends `Exited with code N` as the result's last text block
+ * (packages/core/src/shell/result.ts `notice`, v2.1.4), and sends that block
+ * alone as a text result when the command printed nothing
+ * (session/runner/to-llm-message.ts `toolResult`). Cursor gets the code
+ * structurally and its stdout is only what the command printed, so the live
+ * result drops that block, or the suffix the classic projection adds, when it
+ * matches the captured exit. Stored history keeps it: a rebuilt transcript has
+ * no other record of the code.
+ */
+export function withoutHostShellExitNotice(toolCallId, output) {
+    const outcome = outcomes.get(toolCallId);
+    const code = outcome?.kind === "exit" ? outcome.code : outcome?.kind === "timeout" ? TIMEOUT_EXIT_CODE : undefined;
+    if (!code || !output || typeof output !== "object")
+        return output;
+    const { type, value } = output;
+    const notice = hostShellExitNotice(code);
+    if (type === "text" && typeof value === "string") {
+        if (value === notice)
+            return { ...output, value: "" };
+        if (value.endsWith(`\n\n${notice}`))
+            return { ...output, value: value.slice(0, -notice.length - 2) };
+        return output;
+    }
+    if (type !== "content" || !Array.isArray(value) || value.length === 0)
+        return output;
+    const last = value.at(-1);
+    if (last?.type !== "text" || last.text !== notice)
+        return output;
+    return { ...output, value: value.slice(0, -1) };
+}
+export function hostShellExitNotice(code) {
+    return `Exited with code ${code}`;
+}
+/** OpenCode 1 keeps the exit only in metadata; give its request projection OpenCode 2's notice. */
+export function withHostShellExitNotice(output, code) {
+    return `${output}\n\n${hostShellExitNotice(code)}`;
 }
 /** Consume the structured result, with an inline fallback when no plugin hook ran. */
 export function consumeCursorShellResult(toolCallId, output) {

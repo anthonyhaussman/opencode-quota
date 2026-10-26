@@ -35,8 +35,8 @@ function tokensFor(usd: number): number {
 }
 
 /**
- * This month's Cursor messages: API spend, Auto+Composer spend, unknown models, and GPT-5.4
- * requests over 200k tokens (Cursor's long-context rate).
+ * This month's Cursor messages: API spend, Auto+Composer spend, unknown models, and Claude
+ * Sonnet 4 requests over 200k tokens (Cursor's long-context rate).
  */
 function storeHistory(spend: {
   api?: number;
@@ -61,7 +61,7 @@ function storeHistory(spend: {
       message(10 + index, "cursor/future-model", 10),
     ),
     ...Array.from({ length: spend.longRequests ?? 0 }, (_, index) =>
-      message(20 + index, "cursor/gpt-5.4", 250_000),
+      message(20 + index, "cursor/claude-sonnet-4", 250_000),
     ),
   ];
   writeSessionDatabase(join(world.configDir, "..", "..", "data", "opencode", "opencode.db"), {

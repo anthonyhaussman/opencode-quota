@@ -5,6 +5,8 @@ export type PersistedConversation = {
     conversationId: string;
     updatedAt: number;
     checkpoint?: Uint8Array;
+    /** Last measured occupancy, as a token-details-only checkpoint; separate from resumable state. */
+    occupancyCheckpoint?: Uint8Array;
     blobs: ConversationBlobSnapshot[];
     requestContext: Record<string, unknown>;
     toolCatalog: OpencodeToolDef[];
@@ -26,6 +28,8 @@ export type PersistedConversation = {
     sentImageHashes?: string[];
     /** SHA-256 hex of the checkpoint `sentImageHashes` belongs to; without it no image counts as held. */
     sentImagesCheckpoint?: string;
+    /** A session-edit-deny reminder may be in this conversation; absent means none was ever sent. */
+    sessionEditsDenySent?: boolean;
 };
 export type ConversationLoadStatus = "restored" | "missing" | "invalid" | "expired";
 export type PersistedConversationLoad = {

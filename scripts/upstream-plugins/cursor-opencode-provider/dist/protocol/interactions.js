@@ -1,9 +1,10 @@
 import { encodeMessage } from "./messages.js";
 import { readAllFields } from "./struct.js";
+import { SESSION_PERMISSIONS_UNAVAILABLE_REASON } from "./session-edits.js";
 import { decodeAskQuestionQuery, MISSING_ARGS_REASON, MISSING_QUERY_REASON, } from "./ask-question.js";
 import { decodeGenerateImageQuery, } from "./generate-image.js";
-import { CURSOR_PLAN_STAGE_TOOL, decodeCreatePlanQuery, createPlanApprovalQuestionInput, renderPlanReviewMessage, resolveCreatePlanBridge, writeOpencodePlanFile, } from "./create-plan.js";
-import { decodeSwitchModeQuery, MISSING_ARGS_REASON as SWITCH_MODE_MISSING_ARGS_REASON, MISSING_QUERY_REASON as SWITCH_MODE_MISSING_QUERY_REASON, resolveSwitchModeBridge, switchModeApprovedResult, } from "./switch-mode.js";
+import { CURSOR_PLAN_STAGE_TOOL, createPlanApprovalQuestionInput, createPlanSessionEditsDeniedReason, decodeCreatePlanQuery, renderPlanReviewMessage, resolveCreatePlanBridge, writeOpencodePlanFile, } from "./create-plan.js";
+import { decodeSwitchModeQuery, MISSING_ARGS_REASON as SWITCH_MODE_MISSING_ARGS_REASON, MISSING_QUERY_REASON as SWITCH_MODE_MISSING_QUERY_REASON, resolveSwitchModeBridge, switchModeApprovedResult, SESSION_EDITS_DENIED_SWITCH_REASON, } from "./switch-mode.js";
 const HEADLESS_REASON = "This Cursor interaction requires UI approval and is not available through the OpenCode provider.";
 /**
  * Rejection used when AskQuestion cannot be bridged because the current
@@ -218,9 +219,15 @@ function handleSwitchModeQuery(id, variantBytes, options) {
         advertised: options.advertisedTools ?? [],
         ...(options.activeCursorModeId ? { activeModeId: options.activeCursorModeId } : {}),
         ...(options.hostAgent ? { hostAgent: options.hostAgent } : {}),
+        ...(options.sessionEditsDenied ? { sessionEditsDenied: true } : {}),
+        sessionPermissionsUnavailable: options.sessionPermissionsUnavailable,
     });
     if (bridge.kind === "reject")
-        return reject(bridge.reason);
+        return {
+            ...reject(bridge.reason),
+            ...([SESSION_PERMISSIONS_UNAVAILABLE_REASON, SESSION_EDITS_DENIED_SWITCH_REASON].includes(bridge.reason)
+                ? { endTurn: true } : {}),
+        };
     // Lifecycle turn: approve on the wire so the model never sees a rejection, but
     // do not attach switchMode — the real turn owns session mode.
     if (bridge.kind === "ack") {
@@ -327,12 +334,19 @@ function handleCreatePlanQuery(id, variantBytes, options) {
         ...(options.hostAgent ? { hostAgent: options.hostAgent } : {}),
         planModeActive: options.planModeActive === true,
         ...(options.hostPlanFile ? { hostPlanFile: options.hostPlanFile } : {}),
+        ...(options.sessionEditsDenied ? { sessionEditsDenied: true } : {}),
     });
     // The host's plan agent records and reviews the plan; write nothing here.
     if (bridge.kind === "defer") {
         return {
             ...reply({ error: { error: bridge.reason }, plan_uri: "" }),
             ...(decoded.toolCallId ? { deferredCreatePlanToolCallId: decoded.toolCallId } : {}),
+        };
+    }
+    if (options.allowTools && options.sessionPermissionsUnavailable) {
+        return {
+            ...reply({ error: { error: SESSION_PERMISSIONS_UNAVAILABLE_REASON }, plan_uri: "" }),
+            endTurn: true,
         };
     }
     // The host plan agent reviews its own plan file: record the plan there and
@@ -364,6 +378,29 @@ function handleCreatePlanQuery(id, variantBytes, options) {
             outcome: "bridged",
             createPlan: { ...decoded, bridge, toolName: CURSOR_PLAN_STAGE_TOOL },
             reply: undefined,
+        };
+    }
+    // The session rule still denies edits. Keep the plan and show it, and tell
+    // Cursor execution was not approved. Do not ask: the answer cannot lift it.
+    if (bridge.kind === "hold") {
+        const stop = (result) => ({ ...reply(result), endTurn: true });
+        const workspaceRoot = options.workspaceRoot?.trim();
+        if (!workspaceRoot) {
+            return stop({
+                error: { error: "CreatePlan requires a workspace root to write the plan file" },
+                plan_uri: "",
+            });
+        }
+        const written = writeOpencodePlanFile(decoded.args, workspaceRoot, Date.now(), options.hostPlanFile);
+        if (!written.ok) {
+            return stop({ error: { error: written.error }, plan_uri: "" });
+        }
+        return {
+            ...stop({
+                error: { error: createPlanSessionEditsDeniedReason(written.planPath) },
+                plan_uri: "",
+            }),
+            planReview: renderPlanReviewMessage(written.markdown, written.planPath),
         };
     }
     if (bridge.kind === "approve") {

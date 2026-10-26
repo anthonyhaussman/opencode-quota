@@ -31,7 +31,7 @@ export type CursorCacheDiagnosticStats = {
     stepCompletes: number;
     displayToolCalls: number;
     execRequests: number;
-    /** A CreatePlan interaction ran this Run (any outcome). Tags one-time upstream tools expansion. */
+    /** A CreatePlan interaction ran this Run (any outcome). Tags the upstream plan-mode tools expansion. */
     createPlanInTurn?: boolean;
     /** A SwitchMode interaction ran this Run (any outcome). */
     switchModeInTurn?: boolean;
@@ -51,8 +51,12 @@ export declare function formatCursorTokenCategories(details: CursorConversationT
  * Explain Cursor's aggregate cache counters using the state visible to this
  * client. `stepStarts` is deliberately not called a model-call count: Cursor
  * does not expose per-model-call cache accounting on the Run stream.
+ *
+ * `counters` is undefined for a Run that ended without TurnEnded, such as one
+ * cancelled for a plan handoff. Its continuity and context fields still apply;
+ * the request counters print as unavailable rather than as zero.
  */
-export declare function formatCursorCacheDiagnostics(counters: CursorUsageCounters, current: CursorConversationTokenDetails | undefined, prior: CursorConversationTokenDetails | undefined, stats: CursorCacheDiagnosticStats): string;
+export declare function formatCursorCacheDiagnostics(counters: CursorUsageCounters | undefined, current: CursorConversationTokenDetails | undefined, prior: CursorConversationTokenDetails | undefined, stats: CursorCacheDiagnosticStats): string;
 /**
  * One-line proof that Cursor, AI SDK, and projected OpenCode totals agree.
  * `counterKind` names what `counters` hold so the line labels them truthfully:

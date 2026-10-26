@@ -1,4 +1,6 @@
 import type { CursorShellPolicy } from "./shell-timeout.js";
+/** Host-visible status of a launcher that reports a hard timeout, as timeout(1) uses. */
+export declare const TIMEOUT_EXIT_CODE = 124;
 export type ManagedTerminal = {
     command: string;
     directory: string;

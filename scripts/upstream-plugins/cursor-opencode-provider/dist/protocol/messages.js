@@ -77,7 +77,41 @@ export function createMessageTypes() {
         { id: 1, name: "path", type: "string" },
         { id: 6, name: "stream_content", type: "string" },
     ]);
-    addType(root, "EditToolCall", [{ id: 1, name: "args", type: "EditToolArgs" }]);
+    // Cursor's own outcome of an edit; the file contents fields are left undecoded.
+    addType(root, "EditSuccess", [
+        { id: 1, name: "path", type: "string" },
+        { id: 8, name: "message", type: "string" },
+    ]);
+    addType(root, "EditFileNotFound", [{ id: 1, name: "path", type: "string" }]);
+    addType(root, "EditReadPermissionDenied", [{ id: 1, name: "path", type: "string" }]);
+    addType(root, "EditWritePermissionDenied", [
+        { id: 1, name: "path", type: "string" },
+        { id: 2, name: "error", type: "string" },
+    ]);
+    addType(root, "EditRejected", [
+        { id: 1, name: "path", type: "string" },
+        { id: 2, name: "reason", type: "string" },
+    ]);
+    addType(root, "EditError", [
+        { id: 1, name: "path", type: "string" },
+        { id: 2, name: "error", type: "string" },
+        { id: 5, name: "model_visible_error", type: "string" },
+    ]);
+    addType(root, "EditResult", [
+        { id: 1, name: "success", type: "EditSuccess" },
+        { id: 2, name: "file_not_found", type: "EditFileNotFound" },
+        { id: 3, name: "read_permission_denied", type: "EditReadPermissionDenied" },
+        { id: 4, name: "write_permission_denied", type: "EditWritePermissionDenied" },
+        { id: 6, name: "rejected", type: "EditRejected" },
+        { id: 7, name: "error", type: "EditError" },
+    ], [{
+            name: "result",
+            fields: ["success", "file_not_found", "read_permission_denied", "write_permission_denied", "rejected", "error"],
+        }]);
+    addType(root, "EditToolCall", [
+        { id: 1, name: "args", type: "EditToolArgs" },
+        { id: 2, name: "result", type: "EditResult" },
+    ]);
     addType(root, "LsToolCall", [{ id: 1, name: "args", type: "LsArgs" }]);
     addType(root, "McpToolCall", [
         { id: 1, name: "args", type: "McpArgs" },
@@ -416,12 +450,18 @@ export function createMessageTypes() {
     addType(root, "ToolRequestsListedUpdate", [
         { id: 1, name: "call_count", type: "uint32" },
     ]);
+    // The server can append a user message after context injection. This is a
+    // conversation update, not assistant text or a request to send it again.
+    addType(root, "UserMessageAppendedUpdate", [
+        { id: 1, name: "user_message", type: "UserMessage" },
+    ]);
     // InteractionUpdate — the core streaming update message
     addType(root, "InteractionUpdate", [
         { id: 1, name: "text_delta", type: "TextDeltaUpdate" },
         { id: 2, name: "tool_call_started", type: "ToolCallStarted" },
         { id: 3, name: "tool_call_completed", type: "ToolCallCompleted" },
         { id: 4, name: "thinking_delta", type: "ThinkingDeltaUpdate" },
+        { id: 6, name: "user_message_appended", type: "UserMessageAppendedUpdate" },
         { id: 7, name: "partial_tool_call", type: "PartialToolCall" },
         { id: 13, name: "heartbeat", type: "Heartbeat" },
         { id: 14, name: "turn_ended", type: "TurnEnded" },
@@ -430,7 +470,7 @@ export function createMessageTypes() {
         { id: 17, name: "step_completed", type: "StepCompleted" },
         { id: 23, name: "context_injection_state", type: "ContextInjectionStateUpdate" },
         { id: 27, name: "tool_requests_listed", type: "ToolRequestsListedUpdate" },
-    ], [{ name: "update", fields: ["text_delta", "tool_call_started", "tool_call_completed", "thinking_delta", "partial_tool_call", "heartbeat", "turn_ended", "tool_call_delta", "step_started", "step_completed", "context_injection_state", "tool_requests_listed"] }]);
+    ], [{ name: "update", fields: ["text_delta", "tool_call_started", "tool_call_completed", "thinking_delta", "user_message_appended", "partial_tool_call", "heartbeat", "turn_ended", "tool_call_delta", "step_started", "step_completed", "context_injection_state", "tool_requests_listed"] }]);
     // Server status for an `inject_context_action` (InteractionUpdate #23).
     // Cursor CLI only tracks it to show queued steer delivery; it carries no output.
     addType(root, "ContextInjectionQueued", []);

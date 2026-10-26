@@ -121,8 +121,12 @@ export declare function asyncResult(): AskQuestionResultMessage;
  * against commas, quotes and `"="` inside question or answer text, and against
  * duplicate questions. Returns undefined for a question whose anchor is
  * absent, which is treated as unanswered rather than guessed at.
+ * `singleChoice` requires one string in each expected JSON answer row;
+ * malformed structured results cannot become approval or refine feedback.
  */
-export declare function parseAnswerSegments(questions: readonly CursorAskQuestionItem[], output: string): Array<string | undefined>;
+export declare function parseAnswerSegments(questions: readonly CursorAskQuestionItem[], output: string, options?: {
+    singleChoice?: boolean;
+}): Array<string | undefined>;
 /**
  * Map one question's answer labels back onto Cursor option ids.
  *

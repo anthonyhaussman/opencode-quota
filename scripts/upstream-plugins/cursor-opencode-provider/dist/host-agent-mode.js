@@ -12,6 +12,7 @@
  * `plan` agent the 1.x way, with a synthetic user message for that agent.
  */
 import { errorMessage, trace } from "./debug.js";
+import { HOST_PLAN_AGENT, hostAgentForCursorMode, isHostPlanAgent, } from "./protocol/cursor-mode.js";
 /**
  * Live switches, newest last. A host may set the plugin up more than once in
  * one process (one setup per location instance, re-setup on plugin reload) and
@@ -24,14 +25,9 @@ function activeSwitch() {
 const pending = new Map();
 const applying = new Map();
 const MAX_PENDING_HOST_AGENT_SWITCHES = 256;
-/** True for Cursor mode ids served by the host's `plan` primary agent. */
-function isPlanModeID(targetModeID) {
-    const mode = targetModeID.trim().toLowerCase();
-    return mode === "plan" || mode === "spec";
-}
 /** Synthetic user text that carries an OpenCode 1.x primary-agent switch. */
 export function hostAgentSwitchPromptText(agent) {
-    return agent === "plan"
+    return isHostPlanAgent(agent)
         ? "Plan mode is now active. Continue planning the request above under the plan-mode " +
             "instructions, and do not implement anything until the plan is approved."
         : "Plan mode has ended. Continue with the approved work.";
@@ -49,15 +45,16 @@ export function hostAgentSwitchPromptText(agent) {
  */
 export function createPromptHostAgentModeSwitch(prompt, primaryAgents) {
     return {
-        accepts: ({ targetModeID, hostAgent }) => {
+        accepts: ({ agent, hostAgent }) => {
             const agents = primaryAgents();
             const current = hostAgent?.trim();
             if (!agents || !current || !agents.has(current))
                 return false;
-            return isPlanModeID(targetModeID) ? current !== "plan" && agents.has("plan") : current === "plan";
+            return isHostPlanAgent(agent)
+                ? !isHostPlanAgent(current) && agents.has(HOST_PLAN_AGENT)
+                : isHostPlanAgent(current);
         },
-        apply: async ({ sessionID, targetModeID }) => {
-            const agent = isPlanModeID(targetModeID) ? "plan" : "build";
+        apply: async ({ sessionID, agent }) => {
             await prompt({ sessionID, agent, text: hostAgentSwitchPromptText(agent) });
         },
     };
@@ -94,19 +91,24 @@ export function hostAgentModeSwitchKind() {
         return undefined;
     return active.options.resumesTurn === true ? "resumes" : "next-turn";
 }
-/** Queue only when this host installed a native primary-agent switch that accepts the request. */
+/**
+ * Queue only when this host installed a native primary-agent switch that
+ * accepts the request. A read-only mode selects no primary agent.
+ */
 export function queueHostAgentModeSwitch(input) {
     const sessionID = input.sessionID.trim();
     const targetModeID = input.targetModeID.trim();
+    const agent = hostAgentForCursorMode(targetModeID);
     const active = activeSwitch();
-    if (!active || !sessionID || !targetModeID)
+    if (!active || !sessionID || !agent)
         return false;
-    if (active.options.accepts && !active.options.accepts({ ...input, sessionID, targetModeID }))
+    if (active.options.accepts && !active.options.accepts({ ...input, sessionID, targetModeID, agent }))
         return false;
     const hostAgent = input.hostAgent?.trim();
     pending.set(sessionID, {
         sessionID,
         targetModeID,
+        agent,
         ...(input.cursorSessionID ? { cursorSessionID: input.cursorSessionID } : {}),
         ...(hostAgent ? { hostAgent } : {}),
         attempts: 0,
@@ -122,6 +124,19 @@ export function queueHostAgentModeSwitch(input) {
     return true;
 }
 /**
+ * True while this Run owns a switch that starts a replacement host turn.
+ * Both entering plan and approving its execution must end the old Run first.
+ * A request without an owner (a failed apply waiting for a later terminal
+ * boundary) belongs to no Run: the next Run must do its work before applying it.
+ */
+export function isHostAgentHandoffPending(sessionID, cursorSessionID) {
+    if (activeSwitch()?.options.resumesTurn !== true)
+        return false;
+    const key = sessionID?.trim();
+    const state = key ? pending.get(key) : undefined;
+    return !!state?.cursorSessionID && state.cursorSessionID === cursorSessionID;
+}
+/**
  * True while an approved switch into the host `plan` agent waits for its Run to
  * end and will itself start the plan-agent turn that continues the work.
  */
@@ -129,8 +144,7 @@ export function isHostPlanEntryPending(sessionID) {
     if (activeSwitch()?.options.resumesTurn !== true)
         return false;
     const key = sessionID?.trim();
-    const target = key ? pending.get(key)?.targetModeID : undefined;
-    return target !== undefined && isPlanModeID(target);
+    return !!key && isHostPlanAgent(pending.get(key)?.agent);
 }
 export function cancelHostAgentModeSwitch(sessionID) {
     const key = sessionID?.trim();

@@ -449,18 +449,19 @@ export function parseDisplayToolCall(callId, toolCall, priorMirroredTodos) {
         };
     }
     if (variant === "switch_mode_tool_call") {
-        // Display-path mirror of InteractionQuery #4. Same mapping as switch-mode.ts:
-        // plan/spec → plan_enter; every other non-empty target → plan_exit.
-        // Display completions stay non-replayed regardless of mapping.
+        // Display-path mirror of InteractionQuery #4, mapped like switch-mode.ts.
+        // A read-only target has no host tool. Display completions stay
+        // non-replayed regardless of mapping.
         const target = typeof args.target_mode_id === "string" ? args.target_mode_id : "";
         const mapped = mapSwitchModeTarget(target);
+        const toolName = mapped.ok ? mapped.toolName : undefined;
         return {
             callId,
             variant,
-            preferredToolName: mapped.ok ? mapped.toolName : "plan_exit",
+            preferredToolName: toolName ?? "plan_exit",
             // OpenCode plan_enter / plan_exit both advertise an empty input schema.
             args: {},
-            bridgeable: mapped.ok,
+            bridgeable: toolName !== undefined,
         };
     }
     // F11: display-path delete → bash `rm -f` (OpenCode has no delete tool).
@@ -717,6 +718,7 @@ export function extractExecDisplayCallId(execMsg) {
         "grep_args",
         "ls_args",
         "delete_args",
+        "shell_args",
         "shell_stream_args",
         "background_shell_spawn_args",
         "mcp_args",

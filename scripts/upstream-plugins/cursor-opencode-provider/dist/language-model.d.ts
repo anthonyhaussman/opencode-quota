@@ -132,6 +132,8 @@ export declare function preparePriorSessionForFreshTurn(openCodeSessionId: strin
     /** Tool results already in this prompt; deliver any that match held pendings before cancel. */
     toolResults?: ExtractedToolResult[];
     hostAgent?: string;
+    sessionEditsDenied?: boolean;
+    sessionPermissionsUnavailable?: boolean;
 }): Promise<"drained" | "settled-only" | "busy" | "none">;
 /**
  * Write error/reject results for every still-open non-bridged pending on the
@@ -192,6 +194,8 @@ export declare function drainSessionUntilTurnEnded(session: CursorSession, opts?
 }): Promise<"turn-ended" | "cancelled" | "busy" | "timeout" | "interrupted" | "skipped">;
 export declare function deliverContinuationResults(session: CursorSession, trailingToolResults: ExtractedToolResult[], delivery?: {
     hostAgent?: string;
+    sessionEditsDenied?: boolean;
+    sessionPermissionsUnavailable?: boolean;
 }): Promise<CursorSession | undefined>;
 /** Notes the restart snapshot kept for this session's next user turn. */
 export declare function restorePersistedHostNotes(sessionKey: string, persisted: string | undefined): void;

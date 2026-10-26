@@ -11,6 +11,7 @@
  * authoritative; without `plan_enter`, the classic entrypoint selects the
  * `plan` agent the 1.x way, with a synthetic user message for that agent.
  */
+import { type HostPrimaryAgent } from "./protocol/cursor-mode.js";
 export type HostAgentModeSwitchInput = {
     sessionID: string;
     targetModeID: string;
@@ -19,15 +20,19 @@ export type HostAgentModeSwitchInput = {
     /** Host primary agent the owning Run executed under, when the host reported it. */
     hostAgent?: string;
 };
-export type HostAgentModeSwitchFn = (input: HostAgentModeSwitchInput) => void | Promise<void>;
+/** A queued switch with the host primary agent its Cursor mode selects. */
+export type HostAgentModeSwitchRequest = HostAgentModeSwitchInput & {
+    agent: HostPrimaryAgent;
+};
+export type HostAgentModeSwitchFn = (input: HostAgentModeSwitchRequest) => void | Promise<void>;
 export type HostAgentModeSwitchOptions = {
     /** The switch also starts the host turn that continues the conversation. */
     resumesTurn?: boolean;
     /** Queue-time filter: a request the switch would not apply stays provider-owned. */
-    accepts?: (input: HostAgentModeSwitchInput) => boolean;
+    accepts?: (input: HostAgentModeSwitchRequest) => boolean;
 };
 /** Synthetic user text that carries an OpenCode 1.x primary-agent switch. */
-export declare function hostAgentSwitchPromptText(agent: "plan" | "build"): string;
+export declare function hostAgentSwitchPromptText(agent: HostPrimaryAgent): string;
 /**
  * OpenCode 1.x shape of the switch: a 1.x session runs each turn under the
  * agent of its latest user message, which is how the host's own plan_enter /
@@ -41,11 +46,11 @@ export declare function hostAgentSwitchPromptText(agent: "plan" | "build"): stri
  */
 export declare function createPromptHostAgentModeSwitch(prompt: (input: {
     sessionID: string;
-    agent: "plan" | "build";
+    agent: HostPrimaryAgent;
     text: string;
 }) => Promise<unknown>, primaryAgents: () => ReadonlySet<string> | undefined): {
     apply: HostAgentModeSwitchFn;
-    accepts: (input: HostAgentModeSwitchInput) => boolean;
+    accepts: (input: HostAgentModeSwitchRequest) => boolean;
 };
 /**
  * Install this host's native switch; it is used until a newer one is
@@ -59,8 +64,18 @@ export declare function setHostAgentModeSwitch(fn: HostAgentModeSwitchFn | undef
  * next message runs under the new agent, undefined without a native switch.
  */
 export declare function hostAgentModeSwitchKind(): "resumes" | "next-turn" | undefined;
-/** Queue only when this host installed a native primary-agent switch that accepts the request. */
+/**
+ * Queue only when this host installed a native primary-agent switch that
+ * accepts the request. A read-only mode selects no primary agent.
+ */
 export declare function queueHostAgentModeSwitch(input: HostAgentModeSwitchInput): boolean;
+/**
+ * True while this Run owns a switch that starts a replacement host turn.
+ * Both entering plan and approving its execution must end the old Run first.
+ * A request without an owner (a failed apply waiting for a later terminal
+ * boundary) belongs to no Run: the next Run must do its work before applying it.
+ */
+export declare function isHostAgentHandoffPending(sessionID: string | undefined, cursorSessionID: string): boolean;
 /**
  * True while an approved switch into the host `plan` agent waits for its Run to
  * end and will itself start the plan-agent turn that continues the work.

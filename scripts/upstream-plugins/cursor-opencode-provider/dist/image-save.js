@@ -30,7 +30,8 @@ export function resolveContainedImagePath(target, allowedRoots) {
         return { error: "no writable root is configured" };
     const absolute = path.isAbsolute(target) ? path.resolve(target) : path.resolve(roots[0], target);
     // The file need not exist yet; its closest existing ancestor must still
-    // resolve inside an allowed root.
+    // resolve inside an allowed root. A dangling symlink at `probe` makes
+    // `realpathSync` throw ENOENT even though the link itself exists on disk.
     let probe = absolute;
     let realProbe;
     while (true) {
@@ -39,6 +40,11 @@ export function resolveContainedImagePath(target, allowedRoots) {
             break;
         }
         catch {
+            try {
+                if (fs.lstatSync(probe))
+                    break;
+            }
+            catch { /* probe itself does not exist; inspect its parent */ }
             const parent = path.dirname(probe);
             if (parent === probe)
                 break;
@@ -114,7 +120,8 @@ export async function executeCursorImageSave(args, ctx) {
         throw new Error("No pending Cursor image matches that id. It may have already been saved or expired.");
     }
     const workspace = ctx.worktree || ctx.directory;
-    const contained = resolveContainedImagePath(image.path, [image.projectDir, workspace].filter((root) => !!root));
+    const allowedRoots = [image.projectDir, workspace].filter((root) => !!root);
+    const contained = resolveContainedImagePath(image.path, allowedRoots);
     if ("error" in contained) {
         trace(`image save: refused path=${JSON.stringify(image.path)} reason=${contained.error}`);
         throw new Error(`Refusing to save the generated image: ${contained.error}.`);
@@ -165,13 +172,21 @@ export async function executeCursorImageSave(args, ctx) {
         trace(`image save: permission refused path=${JSON.stringify(contained.path)} reason=${reason}`);
         throw new Error(`${IMAGE_PERMISSION_DENIED_PREFIX} ${reason}`);
     }
+    // Permission may wait on the user. Re-resolve afterward so a directory
+    // replaced during that wait cannot redirect the authorized write.
+    const current = resolveContainedImagePath(image.path, allowedRoots);
+    if ("error" in current || current.path !== contained.path) {
+        throw new Error(`${IMAGE_PERMISSION_DENIED_PREFIX} The image target changed while permission was pending.`);
+    }
     // Cursor writes generated images into an `assets/` subdirectory that will not
     // exist on a first generation, so the parent chain is created here — after
     // the permission, so a refusal leaves no directories behind.
     const directory = path.dirname(contained.path);
+    let fd;
     try {
         fs.mkdirSync(directory, { recursive: true });
-        fs.writeFileSync(contained.path, image.data);
+        fd = fs.openSync(contained.path, fs.constants.O_WRONLY | fs.constants.O_CREAT | fs.constants.O_TRUNC | (fs.constants.O_NOFOLLOW ?? 0), 0o666);
+        fs.writeFileSync(fd, image.data);
     }
     catch (error) {
         // Most often something already occupies a path component (EEXIST/ENOTDIR).
@@ -180,6 +195,10 @@ export async function executeCursorImageSave(args, ctx) {
         trace(`image save: write failed path=${JSON.stringify(contained.path)} reason=${reason}`);
         throw new Error(`Could not save the generated image to ${contained.path}: ${reason}. `
             + `Check that ${directory} is a writable directory.`);
+    }
+    finally {
+        if (fd !== undefined)
+            fs.closeSync(fd);
     }
     trace(`image save: wrote path=${JSON.stringify(contained.path)} ` +
         `bytes=${image.data.length} mime=${image.mime}`);

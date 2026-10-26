@@ -73,6 +73,9 @@ export type CursorPlanStageInput = {
  *             carried out yet: an approved switch into it is still pending (it
  *             applies after this Run), or its plan file is unknown. Nothing is
  *             written; the error tells the model which host workflow follows.
+ * - `hold`    the session's edit rule still denies edits. The plan is written
+ *             and shown, and Cursor receives the not-approved error. Nothing
+ *             asks the user or switches agents: an answer cannot lift the rule.
  *
  * The plan is always persisted before any review: writing needs no approval,
  * executing does, and only the host asks for it.
@@ -84,6 +87,8 @@ export type CreatePlanBridge = {
 } | {
     kind: "approve";
 } | {
+    kind: "hold";
+} | {
     kind: "defer";
     reason: string;
 } | {
@@ -94,8 +99,18 @@ export type CreatePlanBridge = {
 export declare const CREATE_PLAN_HOST_PLAN_PENDING_REASON: string;
 /** CreatePlan raised while the host's own plan agent owns the plan file and its review. */
 export declare const CREATE_PLAN_HOST_PLAN_WORKFLOW_REASON: string;
-/** Cursor-visible reason when the user wants the plan revised instead of run. */
+/**
+ * Cursor-visible reason when the user picks No or dismisses the approval
+ * prompt. Ends the owning turn; a new user message is required before more work.
+ */
 export declare const CREATE_PLAN_NOT_APPROVED_REASON: string;
+/**
+ * Cursor-visible reason when the user typed freeform feedback instead of Yes/No.
+ * The owning turn continues in plan mode so the model can revise.
+ */
+export declare function createPlanRefineReason(feedback: string): string;
+/** Cursor-visible reason when a session edit deny still blocks execution. */
+export declare function createPlanSessionEditsDeniedReason(planPath: string): string;
 /** Upstream `PlanExitTool` wording, with the plan the provider just wrote. */
 export declare function createPlanApprovalQuestion(planLabel: string): string;
 export declare const CREATE_PLAN_APPROVAL_HEADER = "Build Agent";
@@ -112,12 +127,36 @@ export declare function resolveCreatePlanBridge(options: {
     planModeActive?: boolean;
     /** The host's own plan file for this session, when the host defines one. */
     hostPlanFile?: string;
+    /**
+     * The session's last `edit` rule on `*` is deny. An approval cannot lift it,
+     * so the plan is saved without asking or switching agents.
+     */
+    sessionEditsDenied?: boolean;
 }): CreatePlanBridge;
 /** Host `question` input mirroring upstream `PlanExitTool`'s own prompt. */
 export declare function createPlanApprovalQuestionInput(planLabel: string): OpencodeQuestionInput;
 /**
+ * How the emulated CreatePlan `question` approval resolved.
+ *
+ * - `approved` — explicit Yes: leave plan and start implementing.
+ * - `declined` — No, unanswered, dismissed, failed, or bare "Other": end the
+ *   owning turn and keep the plan agent.
+ * - `refine` — the user typed freeform feedback: continue this turn in plan
+ *   mode and send that text back through the CreatePlan reply.
+ */
+export type CreatePlanApprovalOutcome = {
+    kind: "approved";
+} | {
+    kind: "declined";
+} | {
+    kind: "refine";
+    feedback: string;
+};
+/** Classify an emulated CreatePlan approval `question` result. */
+export declare function createPlanApprovalOutcome(output: string, isError: boolean, question: string): CreatePlanApprovalOutcome;
+/**
  * True when the emulated approval prompt came back as an explicit "Yes".
- * An unanswered, dismissed, or failed prompt keeps the model planning.
+ * An unanswered, dismissed, failed, No, or freeform prompt is not approval.
  */
 export declare function createPlanApproved(output: string, isError: boolean, question: string): boolean;
 /** Decode a `create_plan_request_query` body, or undefined when unusable. */

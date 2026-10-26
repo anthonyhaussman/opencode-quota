@@ -1,4 +1,4 @@
-/** Shown when an announced edit never becomes a host tool call. */
+/** Shown when an announced edit ends with its Run, never becoming a host tool call. */
 export declare const EARLY_ROW_CLOSED = "Cursor did not finish this tool call.";
 /**
  * Shown when the announced call runs as a host tool the row did not predict,
@@ -7,6 +7,39 @@ export declare const EARLY_ROW_CLOSED = "Cursor did not finish this tool call.";
  * so it completes and names the call that carries on.
  */
 export declare function earlyRowHandoff(toolName: string): string;
+/**
+ * Shown when the step ends on another call's exec while this one is still
+ * running in Cursor: its exec, if any, comes in a later step under its own id.
+ */
+export declare const EARLY_ROW_DEFERRED = "Cursor runs this call after the step's other tool calls.";
+export type EarlyRowClose = {
+    kind: "abandoned";
+} | {
+    kind: "deferred";
+} | {
+    kind: "handoff";
+    toolName: string;
+} | {
+    kind: "outcome";
+    text: string;
+    isError: boolean;
+};
+export declare function earlyRowResult(close: EarlyRowClose): {
+    result: string;
+    isError: boolean;
+};
+export declare function cursorEditFailure(filePath: string, detail: string): {
+    text: string;
+    isError: true;
+};
+/**
+ * The outcome Cursor reports for an edit it finished without a write exec,
+ * such as an `old_string` it could not find. The model saw this result.
+ */
+export declare function cursorEditOutcome(toolCall: unknown, filePath: string): {
+    text: string;
+    isError: boolean;
+} | undefined;
 export type EarlyToolRow = {
     cursorCallId: string;
     toolCallId: string;
@@ -20,6 +53,8 @@ export type EarlyToolRow = {
  * ~90 characters, and the host keeps this id in history for every provider.
  */
 export declare function earlyRowToolCallId(sessionId: string, cursorCallId: string): string;
+/** Distinct from the call's early row, which an earlier step may have closed. */
+export declare function cursorEditFailureToolCallId(sessionId: string, cursorCallId: string): string;
 /** No exec has this id: the result is this provider's, but its exec is unknown. */
 export declare const UNBOUND_EXEC_ID = -1;
 /**

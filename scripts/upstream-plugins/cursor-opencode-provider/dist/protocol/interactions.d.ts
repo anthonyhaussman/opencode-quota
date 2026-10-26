@@ -56,6 +56,14 @@ export type HandledInteraction = {
      * instead. Nothing was written, so its display must not be mirrored as a plan.
      */
     deferredCreatePlanToolCallId?: string;
+    /**
+     * Plan text for the assistant transcript when the plan was written without a
+     * host review tool. A session edit deny uses this: the user still sees the
+     * plan, and Cursor receives the not-approved error.
+     */
+    planReview?: string;
+    /** End the owning Run after this immediate planning refusal has been delivered. */
+    endTurn?: boolean;
     /** Present when an image generation was approved: the target to expect. */
     generateImage?: DecodedGenerateImageQuery;
 };
@@ -102,6 +110,10 @@ export type HandleInteractionQueryOptions = {
      * handler and keeping the host's plan review from running twice.
      */
     activeCursorModeId?: string;
+    /** The session's last `edit` rule on `*` is deny. */
+    sessionEditsDenied?: boolean;
+    /** Session permission evidence was unavailable; no execution approval is safe. */
+    sessionPermissionsUnavailable?: boolean;
 };
 export declare class UnsupportedInteractionQueryError extends Error {
     constructor(info: InteractionQueryWireInfo);

@@ -192,11 +192,6 @@ export declare const CURSOR_MODEL_COSTS: {
         readonly input: 2.5;
         readonly output: 15;
         readonly cache_read: 0.25;
-        readonly context_over_200k: {
-            readonly input: 5;
-            readonly output: 15;
-            readonly cache_read: 0.5;
-        };
     };
     readonly "gpt-5.4-mini": {
         readonly input: 0.75;
@@ -212,47 +207,24 @@ export declare const CURSOR_MODEL_COSTS: {
         readonly input: 5;
         readonly output: 30;
         readonly cache_read: 0.5;
-        readonly context_over_200k: {
-            readonly input: 10;
-            readonly output: 30;
-            readonly cache_read: 1;
-        };
     };
     readonly "gpt-5.6-luna": {
         readonly input: 0.2;
         readonly output: 1.2;
         readonly cache_read: 0.02;
         readonly cache_write: 0.25;
-        readonly context_over_200k: {
-            readonly input: 0.4;
-            readonly output: 1.2;
-            readonly cache_read: 0.04;
-            readonly cache_write: 0.5;
-        };
     };
     readonly "gpt-5.6-sol": {
         readonly input: 4;
         readonly output: 20;
         readonly cache_read: 0.4;
         readonly cache_write: 5;
-        readonly context_over_200k: {
-            readonly input: 8;
-            readonly output: 20;
-            readonly cache_read: 0.8;
-            readonly cache_write: 10;
-        };
     };
     readonly "gpt-5.6-terra": {
         readonly input: 2;
         readonly output: 12;
         readonly cache_read: 0.2;
         readonly cache_write: 2.5;
-        readonly context_over_200k: {
-            readonly input: 4;
-            readonly output: 12;
-            readonly cache_read: 0.4;
-            readonly cache_write: 5;
-        };
     };
     readonly "grok-4.5": {
         readonly input: 2;

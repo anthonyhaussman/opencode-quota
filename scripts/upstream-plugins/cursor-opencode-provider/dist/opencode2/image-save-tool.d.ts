@@ -1,8 +1,7 @@
 import type { PluginContext, ToolDraft } from "./types.js";
 /**
  * Register the handle-only image commit tool on the OpenCode 2.0 direct
- * catalog. Catalog `permission: "edit"` hides it when the host agent denies
- * edits. Per-call `ask` is used when the runtime context provides it;
- * otherwise containment still gates the write (opaque `image_id` only).
+ * catalog. Catalog permission filtering cannot enforce path-specific rules;
+ * permission.assert checks the actual target with the executing agent/session.
  */
 export declare function registerCursorImageSaveTool(draft: ToolDraft, ctx: PluginContext): void;

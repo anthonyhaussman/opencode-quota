@@ -54,7 +54,7 @@ function record(value) {
  */
 export async function resolveHostPlanFile(input) {
     try {
-        const response = record(await input.getSession(input.sessionID));
+        const response = record(input.session !== undefined ? input.session : await input.getSession(input.sessionID));
         const info = record(response?.data) ?? response;
         const slug = typeof info?.slug === "string" ? info.slug : "";
         const created = record(info?.time)?.created;

@@ -1,4 +1,4 @@
-import type { ToolDraft } from "./types.js";
+import type { PluginContext, ToolDraft } from "./types.js";
 /**
  * OpenCode 2 snapshot: only `codemode === false` tools join the AI SDK catalog.
  * Everything else is Code Mode-only (`packages/core/src/tool.ts` direct vs
@@ -61,4 +61,4 @@ export declare function hostHasTool(draft: ToolDraft, name: string): boolean;
  * gate is off (default), on OpenCode 1.x (this function is not called), and
  * on any 2.x host that restores the tools.
  */
-export declare function registerTodoTools(draft: ToolDraft): void;
+export declare function registerTodoTools(draft: ToolDraft, ctx?: Pick<PluginContext, "permission">): void;

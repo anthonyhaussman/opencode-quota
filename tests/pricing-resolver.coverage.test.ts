@@ -141,13 +141,13 @@ describe("resolvePricingKey snapshot coverage", () => {
     expect(failures).toEqual([]);
   });
 
-  it.each(["gpt-5.4-high", "gpt-5.4-medium", "cursor-acp/gpt-5.4"])(
+  it.each(["claude-sonnet-4", "cursor-acp/claude-sonnet-4"])(
     "leaves a request over 200k tokens of %s, a model with a long-context tier, unpriced",
     (modelID) => {
       const tokens = { input: 200_001, output: 1, reasoning: 0, cache_read: 0, cache_write: 0 };
       expect(priceMessage({ providerID: "cursor", modelID }, tokens)).toEqual({
         kind: "unpriced",
-        key: { provider: "openai", model: "gpt-5.4" },
+        key: { provider: "anthropic", model: "claude-sonnet-4-0" },
       });
     },
   );

@@ -4,6 +4,11 @@ import { readAllFieldsStrict } from "./protocol/struct.js";
 const OUTPUT_ONLY_BARRIERS = new Set([
     "visible-text", "visible-reasoning", "visible-tool-row",
 ]);
+/** Whether a host exec claimed every display call Cursor announced, so history holds each one. */
+export function announcedCallsClaimed(state) {
+    const claimed = new Set(state?.execs?.flatMap((exec) => exec.callId ? [exec.callId] : []));
+    return (state?.announcedCalls ?? []).every((callId) => claimed.has(callId));
+}
 export class AttemptReplaySafety {
     sessionId;
     state;
@@ -15,25 +20,49 @@ export class AttemptReplaySafety {
         this.stateful = state.statefulBarrier !== undefined;
     }
     markBarrier(reason) {
-        if (!OUTPUT_ONLY_BARRIERS.has(reason)) {
-            this.stateful = true;
-            this.state.statefulBarrier ??= reason;
-            if (reason !== "non-control-exec")
-                this.state.historyRebaseUnsafe = true;
-        }
-        if (this.barrierReason)
-            return;
-        this.barrierReason = reason;
-        trace(`replay barrier: reason=${reason} sessionId=${this.sessionId}`);
+        this.mark(reason, reason === "non-control-exec");
     }
-    recordExec(id) {
+    /**
+     * A display lifecycle frame. A started call stays a stateful barrier but
+     * blocks a history rebuild only until a host exec claims it; completion of a
+     * claimed call adds nothing history lacks. Calls Cursor runs itself, and
+     * frames without a call id, cannot be rebuilt.
+     */
+    recordToolLifecycle(lifecycle) {
+        const claimed = !!lifecycle && !!this.state.execs?.some((exec) => exec.callId === lifecycle.callId);
+        if (lifecycle?.kind === "completed" && claimed) {
+            trace(`replay: display completion of claimed callId=${lifecycle.callId} sessionId=${this.sessionId}`);
+            return;
+        }
+        if (lifecycle?.kind === "started" && !claimed) {
+            const announced = this.state.announcedCalls ??= [];
+            if (!announced.includes(lifecycle.callId))
+                announced.push(lifecycle.callId);
+            this.mark("display-tool-lifecycle", true);
+            return;
+        }
+        this.mark("display-tool-lifecycle", false);
+    }
+    recordExec(id, callId) {
         const execs = this.state.execs ??= [];
         if (typeof id !== "number" || !Number.isSafeInteger(id)
             || execs.some(exec => exec.sessionId === this.sessionId && exec.id === id)) {
             this.state.historyRebaseUnsafe = true;
             return;
         }
-        execs.push({ sessionId: this.sessionId, id });
+        execs.push({ sessionId: this.sessionId, id, ...(callId ? { callId } : {}) });
+    }
+    mark(reason, historyRepresentable) {
+        if (!OUTPUT_ONLY_BARRIERS.has(reason)) {
+            this.stateful = true;
+            this.state.statefulBarrier ??= reason;
+            if (!historyRepresentable)
+                this.state.historyRebaseUnsafe = true;
+        }
+        if (this.barrierReason)
+            return;
+        this.barrierReason = reason;
+        trace(`replay barrier: reason=${reason} sessionId=${this.sessionId}`);
     }
     applyTo(failure) {
         failure.replaySafe = this.barrierReason === undefined && !this.stateful && failure.replaySafe;
@@ -53,8 +82,9 @@ export class AttemptReplaySafety {
 // `context_injection_state` #23 (status of a client injection, which Cursor
 // CLI only shows for queued steers), `routed_model` #24 (display name) and
 // `tool_requests_listed` #27 (count) carry no output and no state. Other
-// members stay barriers.
-const INTERACTION_UPDATE_FIELDS = new Set([1, 2, 3, 4, 5, 7, 8, 13, 14, 15, 16, 17, 23, 24, 27]);
+// members stay barriers. `user_message_appended` #6 is recognized but stateful:
+// the shipped CLI commits its pending turn and starts one from the user message.
+const INTERACTION_UPDATE_FIELDS = new Set([1, 2, 3, 4, 5, 6, 7, 8, 13, 14, 15, 16, 17, 23, 24, 27]);
 /** `InteractionUpdate.message_started_at_ms` #25: a timestamp beside the oneof member. */
 const INTERACTION_UPDATE_STARTED_AT = 25;
 const INTERACTION_QUERY_FIELDS = new Set([2, 3, 4, 7, 8, 9, 10, 11, 12, 13, 14]);
@@ -109,6 +139,19 @@ function validInteractionUpdateWire(topLevel, decoded) {
     const update = fields.length === 1 ? fields[0] : undefined;
     if (!update || update.wt !== 2 || !INTERACTION_UPDATE_FIELDS.has(update.fn))
         return false;
+    if (update.fn === 6) {
+        const appended = update.bytes ? readAllFieldsStrict(update.bytes) : undefined;
+        return !!decoded.user_message_appended && appended?.length === 1
+            && appended[0].fn === 1 && appended[0].wt === 2;
+    }
+    if (update.fn === 2 || update.fn === 3) {
+        // ToolCallStarted / ToolCallCompleted: call_id #1, tool_call #2,
+        // model_call_id #3. A decoder can discard unknown or repeated fields;
+        // those bytes must not authorize a history rebuild.
+        const lifecycle = update.bytes ? readAllFieldsStrict(update.bytes) : undefined;
+        return !!lifecycle && lifecycle.every((field) => [1, 2, 3].includes(field.fn))
+            && [1, 2, 3].every((field) => optionalField(lifecycle, field, 2));
+    }
     if (![1, 4].includes(update.fn))
         return true;
     const delta = update.bytes ? (readAllFieldsStrict(update.bytes) ?? []) : [];
@@ -171,12 +214,23 @@ export function analyzeReplayFrame(payload, decoded) {
         || !validInteractionQueryWire(topLevel, decoded.interactionQuery)
         || !decodedMatchesWire(topLevel, decoded)
         || !!decoded.execControl;
-    let barrier;
-    if (decoded.interactionUpdate?.tool_call_started || decoded.interactionUpdate?.tool_call_completed) {
-        barrier = "display-tool-lifecycle";
+    const started = decoded.interactionUpdate?.tool_call_started;
+    const completed = decoded.interactionUpdate?.tool_call_completed;
+    if (started || completed) {
+        const callId = (started ?? completed)?.call_id;
+        return {
+            barrier: "display-tool-lifecycle",
+            ...(!malformed && typeof callId === "string" && callId.length > 0
+                ? { toolLifecycle: { kind: started ? "started" : "completed", callId } }
+                : {}),
+        };
     }
-    else if (malformed || (topLevel.fn === 4 && !validKv)) {
+    let barrier;
+    if (malformed || (topLevel.fn === 4 && !validKv)) {
         barrier = "unknown-or-malformed-frame";
+    }
+    else if (topLevel.fn === 1 && decoded.interactionUpdate?.user_message_appended) {
+        barrier = "stateful-interaction";
     }
     else if (topLevel.fn === 2 && !exec.exactRequestContext && !exec.exactMcpState) {
         barrier = "non-control-exec";
