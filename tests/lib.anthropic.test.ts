@@ -458,6 +458,21 @@ describe("Claude CLI probe", () => {
     ]);
   });
 
+  it.each([
+    ["a .cmd shim run through cmd.exe", "C:\\Users\\alice\\AppData\\Roaming\\npm\\claude.cmd"],
+    ["a .exe run directly", "C:/Users/alice/.local/bin/claude.exe"],
+  ])("hides the console window of Windows Claude checks for %s", async (_label, binaryPath) => {
+    setProcessPlatform("win32");
+    mockExecSequence([{ stdout: "2.1.123 (Claude Code)\n" }, cliQuotaStatus(10, 20)]);
+
+    await getAnthropicDiagnostics({ binaryPath });
+
+    expect(execFileMock).toHaveBeenCalledTimes(2);
+    for (const [, , options] of execFileMock.mock.calls) {
+      expect(options).toMatchObject({ windowsHide: true });
+    }
+  });
+
   it("uses the first install folder that has claude when it is not on PATH", async () => {
     setProcessPlatform("linux");
     const [claudeLocal = "", localBin = ""] = CLAUDE_INSTALL_FOLDER_CANDIDATES;

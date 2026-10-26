@@ -326,8 +326,9 @@ function signalProcessGroup(child: ChildProcess, signal: NodeJS.Signals): void {
 }
 
 /**
- * Run the CLI without a shell, with stdin ignored and stdout/stderr capped. A timeout or an
- * overflow sends SIGTERM to the process group, then SIGKILL after `killGraceMs`.
+ * Run the CLI without a shell or a Windows console window, with stdin ignored and stdout/stderr
+ * capped. A timeout or an overflow sends SIGTERM to the process group, then SIGKILL after
+ * `killGraceMs`.
  */
 export async function runAlibabaTokenPlanProcess(
   request: AlibabaTokenPlanSpawnRequest,
@@ -342,6 +343,7 @@ export async function runAlibabaTokenPlanProcess(
         shell: false,
         detached: true,
         stdio: ["ignore", "pipe", "pipe"],
+        windowsHide: true,
       });
     } catch (error) {
       resolve({

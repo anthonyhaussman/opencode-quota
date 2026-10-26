@@ -1,3 +1,4 @@
+import { spawn } from "node:child_process";
 import { mkdir, mkdtemp, readFile, realpath, rm, stat, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -21,6 +22,11 @@ const KILL_GRACE_MS = 250;
 vi.mock("node:fs/promises", async (importOriginal) => {
   const fs = await importOriginal<typeof import("node:fs/promises")>();
   return { ...fs, stat: vi.fn(fs.stat), realpath: vi.fn(fs.realpath) };
+});
+
+vi.mock("node:child_process", async (importOriginal) => {
+  const childProcess = await importOriginal<typeof import("node:child_process")>();
+  return { ...childProcess, spawn: vi.fn(childProcess.spawn) };
 });
 
 const created: string[] = [];
@@ -526,6 +532,18 @@ process.stdin.on("end", () => {
       expect(seenPayload.cwd.startsWith(workspace)).toBe(false);
     },
   );
+
+  it("runner hides the console window of the CLI on Windows", async () => {
+    vi.mocked(spawn).mockClear();
+
+    const result = await runAlibabaTokenPlanProcess(
+      spawnRequest(process.execPath, { args: ["-e", ""], cwd: await makeDir() }),
+    );
+
+    expect(result.code).toBe(0);
+    expect(vi.mocked(spawn)).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(spawn).mock.calls[0]?.[2]).toMatchObject({ windowsHide: true });
+  });
 
   it.runIf(process.platform !== "win32")(
     "runner kills a POSIX child process group after the 250ms grace",

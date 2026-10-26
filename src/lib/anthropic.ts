@@ -428,7 +428,13 @@ async function runCommand(file: string, args: string[]): Promise<CommandResult> 
     execFile(
       file,
       args,
-      { encoding: "utf8", timeout: CLAUDE_COMMAND_TIMEOUT_MS, maxBuffer: 1024 * 1024 },
+      {
+        encoding: "utf8",
+        timeout: CLAUDE_COMMAND_TIMEOUT_MS,
+        maxBuffer: 1024 * 1024,
+        // Without a console of its own (`opencode serve --service`), Windows shows one per child.
+        windowsHide: true,
+      },
       (error, stdout, stderr) => {
         if (!error) {
           resolve({ code: 0, stdout, stderr, timedOut: false });
