@@ -15,7 +15,7 @@
   <a href="./LICENSE"><img alt="License: MIT" src="https://img.shields.io/badge/License-MIT-yellow.svg?style=flat-square" /></a>
 </p>
 
-[![OpenCode Quota sidebar](https://shawnkiser.com/opencode-quota/opencode-quota-sidebar.webp)](https://github.com/slkiser/opencode-quota)
+[![OpenCode Quota in OpenCode: the sidebar, the quota window's Usage and Limits tabs, and its settings](https://shawnkiser.com/opencode-quota/opencode-quota-v6-hero.gif)](https://github.com/slkiser/opencode-quota)
 
 ---
 
@@ -45,17 +45,6 @@ Add the plugin to `opencode.jsonc` or `opencode.json`, and keep your other plugi
 </details>
 
 ## What you get
-
-<table>
-  <tr>
-    <td width="50%" align="center"><img src="https://shawnkiser.com/opencode-quota/opencode-quota-sidebar.webp" alt="OpenCode Quota TUI sidebar panel" /><br /><strong>Sidebar panel</strong></td>
-    <td width="50%" align="center"><img src="https://shawnkiser.com/opencode-quota/opencode-quota-toast.webp" alt="OpenCode Quota popup toast" /><br /><strong>Popup toast</strong></td>
-  </tr>
-  <tr>
-    <td width="50%" align="center"><img src="https://shawnkiser.com/opencode-quota/opencode-quota-statusbar.webp" alt="OpenCode Quota TUI status line" /><br /><strong>Status line</strong></td>
-    <td width="50%" align="center"><img src="https://shawnkiser.com/opencode-quota/opencode-quota-tokens-command.webp" alt="OpenCode Quota token report" /><br /><strong>Token reports</strong></td>
-  </tr>
-</table>
 
 - **Built for OpenCode 2:** settings apply live, in every open OpenCode.
 - **Terminal:** `npx @slkiser/opencode-quota@latest show` works even with OpenCode closed.
