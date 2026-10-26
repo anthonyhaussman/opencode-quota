@@ -163,6 +163,9 @@ describe("resolvePricingKey snapshot coverage", () => {
       "claude-sonnet-4-6",
       "claude-sonnet-5",
       "claude-sonnet-5-5",
+      "gpt-5.4",
+      "gpt-5.5",
+      "gpt-5.6-sol",
       "kimi-k3",
     ];
     for (const base of sameRate) {
@@ -177,9 +180,6 @@ describe("resolvePricingKey snapshot coverage", () => {
       "claude-fable-5-1m",
       "claude-fable-5-1-1m",
       "claude-sonnet-4-1m",
-      "gpt-5.4-1m",
-      "gpt-5.5-1m",
-      "gpt-5.6-sol-1m",
       "grok-4.7-1m",
       "grok-4.7-1m-fast",
       "grok-4.7-500k",

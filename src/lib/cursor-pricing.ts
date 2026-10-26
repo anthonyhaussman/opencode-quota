@@ -65,7 +65,7 @@ export const CURSOR_OFFICIAL_MODEL_ALIASES: Readonly<
   Record<string, { providerHint: string; modelHint: string }>
 > = {
   // `-1m` ids are the long-context entries of cursor-opencode-provider. Only models that
-  // Cursor documents as 1M context "at the same per-token rates" map to the base price.
+  // Cursor bills at their base per-token rates over 200k tokens map to the base price.
   "claude-4.5-sonnet": { providerHint: "anthropic", modelHint: "claude-sonnet-4-5" },
   "claude-4.6-opus-high": { providerHint: "anthropic", modelHint: "claude-opus-4-6" },
   "claude-4.6-opus": { providerHint: "anthropic", modelHint: "claude-opus-4-6" },
@@ -112,13 +112,16 @@ export const CURSOR_OFFICIAL_MODEL_ALIASES: Readonly<
   "gpt-5.3-codex": { providerHint: "openai", modelHint: "gpt-5.3-codex" },
   "gpt-5.3-codex-spark-preview": { providerHint: "openai", modelHint: "gpt-5.3-codex-spark" },
   "gpt-5.4": { providerHint: "openai", modelHint: "gpt-5.4" },
+  "gpt-5.4-1m": { providerHint: "openai", modelHint: "gpt-5.4" },
   "gpt-5.4-high": { providerHint: "openai", modelHint: "gpt-5.4" },
   "gpt-5.4-medium": { providerHint: "openai", modelHint: "gpt-5.4" },
   "gpt-5.4-mini": { providerHint: "openai", modelHint: "gpt-5.4-mini" },
   "gpt-5.4-nano": { providerHint: "openai", modelHint: "gpt-5.4-nano" },
   "gpt-5.5": { providerHint: "openai", modelHint: "gpt-5.5" },
+  "gpt-5.5-1m": { providerHint: "openai", modelHint: "gpt-5.5" },
   "gpt-5.6-luna": { providerHint: "openai", modelHint: "gpt-5.6-luna" },
   "gpt-5.6-sol": { providerHint: "openai", modelHint: "gpt-5.6-sol" },
+  "gpt-5.6-sol-1m": { providerHint: "openai", modelHint: "gpt-5.6-sol" },
   "gpt-5.6-terra": { providerHint: "openai", modelHint: "gpt-5.6-terra" },
   grok: { providerHint: "xai", modelHint: "grok-code-fast-1" },
   "grok-code-fast-1": { providerHint: "xai", modelHint: "grok-code-fast-1" },

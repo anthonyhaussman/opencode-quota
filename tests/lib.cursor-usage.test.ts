@@ -82,8 +82,9 @@ describe("getCurrentCursorUsageSummary", () => {
         message("cursor", "grok-4.7", 100_000, 500_000),
         message("cursor", "claude-opus-4-8-1m", 1_000_000, 1_000_000),
         message("cursor", "gpt-5.5-1m", 10, 20),
+        message("cursor", "grok-4.7-1m", 10, 20),
       ],
-      { auto: [2, 21.2], api: [1, 30], total: 4, unknown: ["gpt-5.5-1m"], unpriced: 0 },
+      { auto: [2, 21.2], api: [2, 30.00065], total: 5, unknown: ["grok-4.7-1m"], unpriced: 0 },
     ],
     [
       // The last step of a turn, as cursor-opencode-provider's `shapeStepUsage` (billing.js)
@@ -118,11 +119,19 @@ describe("getCurrentCursorUsageSummary", () => {
           tokens: { input: 50_000, cacheRead: 150_001 },
         },
         message("cursor", "grok-4.7-fast", 250_000, 0),
+        message("cursor", "claude-sonnet-4", 250_000, 1),
+      ],
+      { auto: [1, 0.4], api: [0, 0], total: 4, unknown: [], unpriced: 3 },
+    ],
+    [
+      "prompts over 200k tokens on models Cursor bills at the base rate there, at that rate",
+      [
         message("cursor", "gpt-5.4", 200_000, 1),
         message("cursor", "gpt-5.4", 250_000, 1),
+        message("cursor", "gpt-5.4-1m", 250_000, 1),
         message("cursor", "claude-sonnet-4-5", 250_000, 1),
       ],
-      { auto: [1, 0.4], api: [3, 1.875045], total: 6, unknown: [], unpriced: 2 },
+      { auto: [0, 0], api: [4, 2.50006], total: 4, unknown: [], unpriced: 0 },
     ],
     [
       "models Cursor prices on its own, without models.dev's different price",
