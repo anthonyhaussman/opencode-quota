@@ -244,21 +244,22 @@ describe("resolved-auth identity", () => {
     },
   );
 
-  it("refuses malformed key material without permanently memoizing the transient failure", async () => {
-    const identity = await import("../src/lib/resolved-auth-identity.js");
-    const keyPath = identity.getResolvedAuthIdentityKeyPath();
-    await mkdir(dirname(keyPath), { recursive: true });
-    await writeFile(keyPath, "not-a-valid-key\n", { mode: 0o666 });
-    if (process.platform !== "win32") await chmod(keyPath, 0o666);
+  it.runIf(POSIX_IDENTITY_STORAGE)(
+    "refuses malformed key material without permanently memoizing the transient failure",
+    async () => {
+      const identity = await import("../src/lib/resolved-auth-identity.js");
+      const keyPath = identity.getResolvedAuthIdentityKeyPath();
+      await mkdir(dirname(keyPath), { recursive: true });
+      await writeFile(keyPath, "not-a-valid-key\n", { mode: 0o666 });
+      await chmod(keyPath, 0o666);
 
-    const resolved = await identity.deriveResolvedAuthIdentity({
-      providerId: "zai",
-      principal: { kind: "credential", value: "must-not-be-hashed-with-fallback" },
-    });
+      const resolved = await identity.deriveResolvedAuthIdentity({
+        providerId: "zai",
+        principal: { kind: "credential", value: "must-not-be-hashed-with-fallback" },
+      });
 
-    expect(resolved).toBeNull();
-    expect(await readFile(keyPath, "utf8")).toBe("not-a-valid-key\n");
-    if (POSIX_IDENTITY_STORAGE) {
+      expect(resolved).toBeNull();
+      expect(await readFile(keyPath, "utf8")).toBe("not-a-valid-key\n");
       expect((await stat(keyPath)).mode & 0o777).toBe(0o600);
       const publishedKey = `v1:${Buffer.alloc(32, 9).toString("base64url")}\n`;
       await writeFile(keyPath, publishedKey, { mode: 0o600 });
@@ -267,6 +268,6 @@ describe("resolved-auth identity", () => {
         principal: { kind: "credential", value: "must-not-be-hashed-with-fallback" },
       });
       expect(recovered).toMatch(RESOLVED_AUTH_IDENTITY_PATTERN);
-    }
-  });
+    },
+  );
 });
