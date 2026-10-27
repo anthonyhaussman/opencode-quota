@@ -151,5 +151,3 @@ Thanks to everyone who has contributed to OpenCode Quota.
 ## License
 
 MIT. OpenCode Quota is not built by the OpenCode team and is not affiliated with OpenCode or any provider listed above.
-
-[![Star History Chart](https://api.star-history.com/svg?repos=slkiser/opencode-quota&type=date&legend=top-left)](https://www.star-history.com/#slkiser/opencode-quota&Date)
