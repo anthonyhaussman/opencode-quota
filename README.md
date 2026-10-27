@@ -15,7 +15,9 @@
   <a href="./LICENSE"><img alt="License: MIT" src="https://img.shields.io/badge/License-MIT-yellow.svg?style=flat-square" /></a>
 </p>
 
-[![OpenCode Quota in OpenCode: the sidebar, the quota window's Usage and Limits tabs, and its settings](https://shawnkiser.com/opencode-quota/opencode-quota-v6-hero.gif)](https://github.com/slkiser/opencode-quota)
+<p align="center">
+  <a href="https://github.com/slkiser/opencode-quota"><img src="https://shawnkiser.com/opencode-quota/opencode-quota-v6-hero.gif" alt="OpenCode Quota in OpenCode: the sidebar, the quota window's Usage and Limits tabs, and its settings" /></a>
+</p>
 
 ---
 
